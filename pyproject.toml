@@ -1,0 +1,75 @@
+[project]
+name = "kbforge"
+version = "0.1.0"
+description = "Agent-first knowledge bases, forged from your systems of record"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Qing", email = "qingye779@gmail.com" }]
+license = { text = "MIT" }
+keywords = [
+    "okf",
+    "open-knowledge-format",
+    "knowledge-base",
+    "ai-agents",
+    "agent-governance",
+    "connectors",
+    "pluggy",
+    "mcp",
+    "rag",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Documentation",
+]
+dependencies = [
+    "pluggy>=1.5",
+    "pydantic>=2.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/flyersworder/kbforge"
+Repository = "https://github.com/flyersworder/kbforge"
+Issues = "https://github.com/flyersworder/kbforge/issues"
+Documentation = "https://github.com/flyersworder/kbforge/blob/main/docs/architecture.md"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=9.0.3",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.15.10",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/kbforge"]
+
+[tool.hatch.build.targets.sdist]
+# Agent/editor config and process docs are not part of the distributed library.
+exclude = [
+    ".claude",
+    "docs/superpowers",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+src = ["src"]
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP"]
+
+[tool.ty.environment]
+python-version = "3.12"

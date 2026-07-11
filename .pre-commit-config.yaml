@@ -1,0 +1,15 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.20
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+
+  # The rev pins both the ty version and a compatible uv version. The hook runs
+  # `uv check` under the hood, so kbforge's own dependencies resolve for ty --
+  # a local `entry: ty check` hook cannot see them.
+  - repo: https://github.com/astral-sh/ty-pre-commit
+    rev: v0.0.58
+    hooks:
+      - id: ty
