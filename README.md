@@ -55,6 +55,8 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
   over MCP, including the security model and a literature review.
 - [`docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md`](docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md)
   — why the artifact contract exists and how the four emit-side laws are enforced.
+- [`docs/superpowers/specs/2026-07-18-datacontract-bridge-design.md`](docs/superpowers/specs/2026-07-18-datacontract-bridge-design.md)
+  — how kbforge bridges to `agentic-data-contracts` via the OKF bundle (future, cross-project).
 
 ## Related projects
 

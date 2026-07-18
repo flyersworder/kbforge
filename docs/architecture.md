@@ -217,6 +217,21 @@ the bundle, never call the LLM, never touch git. (Rule-of-Two posture from main
 doc §7: the component holding SoR credentials performs no consequential external
 action — publishing is a different plugin family running in a different stage.)
 
+**Transport is below the connector interface.** `fetch` names no protocol. A
+connector may pull over REST, a vendor SDK, GraphQL, or an **MCP client** — the
+core cannot tell and must not care. This is deliberate: baking HTTP (or MCP)
+assumptions into the hookspec would leak transport into the trust boundary for no
+benefit. Note the symmetry — kbforge already assumes MCP on the way *out*
+(serving, §4.4); MCP on the way *in* is just one more transport under `fetch`.
+kbforge can sit between MCP-in and MCP-out without *requiring* either.
+
+*Future convenience (not core):* an optional **MCP-source connector base** — a
+separate package or clearly-optional helper, never the core — so that when a SoR
+already exposes an MCP server, a connector is near-config-only: map which MCP
+resources / read-tools become `RawRecord`s, then `normalize`. One hard constraint:
+such a connector may call only **read/resource** operations — MCP tools can have
+side effects, and the seven-tuple's **R = read-only** (§8) must hold.
+
 ### 4.2 Incremental contract
 
 - `fetch(config, cursor)` where `cursor=None` means full backfill.
@@ -551,8 +566,14 @@ conservation-under-composition argument, worth a footnote there.
 returns hand-authored YAML business context ("revenue is recognized at
 fulfillment") that goes stale. kbforge produces exactly that kind of grounded,
 provenanced, fresh domain knowledge as OKF concepts — so a `type: domain` concept
-could one day *feed and refresh* what `lookup_domain` serves, replacing static YAML
-with a produced, anchored source. Flagged here; deliberately out of scope for v0.1.
+could *feed and refresh* what `lookup_domain` serves, via an `OkfSource` adapter on
+ADC's side (sibling to its `YamlSource` / `DbtSource` / `CubeSource`), carrying
+provenance and freshness across the boundary. The §4.4 laws are exactly what make
+that adapter mechanizable. kbforge grounds *what a metric means and where it came
+from*; ADC keeps owning the executable SQL. Full design (boundary artifact, the
+three capabilities — grounded definitions, shared freshness, drift detection):
+[`superpowers/specs/2026-07-18-datacontract-bridge-design.md`](superpowers/specs/2026-07-18-datacontract-bridge-design.md).
+Cross-project, out of scope for v0.1; kbforge core needs no change for it.
 
 ---
 
