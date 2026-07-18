@@ -15,6 +15,9 @@ from kbforge.models import ConceptFrontmatter, ProposedChange
 
 _SCALAR = (str, int, float, bool)
 
+# OKF reserved filenames that carry no frontmatter, hence no projection.
+_RESERVED = frozenset({"index.md", "log.md"})
+
 
 @dataclass(frozen=True)
 class Failure:
@@ -23,6 +26,40 @@ class Failure:
     concept_path: str
     law: str
     message: str
+
+
+def _basename(path: str) -> str:
+    return path.rsplit("/", 1)[-1]
+
+
+def _check_projection_coherence(proposal: ProposedChange) -> list[Failure]:
+    """The four laws run only over `concepts`, but the publisher writes `files`.
+    If the two disagree, a rendered concept file can ship to the bundle with no
+    projection — silently unvalidated. Bind the carrier: every non-reserved file
+    MUST have a projection, and every projection MUST have a rendered file. Without
+    this, `run_artifact_validators() == []` does not entail "the artifact is
+    conformant" — a producer defeats the gate by omission, not by emitting
+    something wrong."""
+    failures: list[Failure] = []
+    concept_files = {p for p in proposal.files if _basename(p) not in _RESERVED}
+    for path in sorted(concept_files - set(proposal.concepts)):
+        failures.append(
+            Failure(
+                path,
+                "projection-coherence",
+                "rendered file has no ConceptFrontmatter projection; it would "
+                "ship unvalidated (§4.4 gate)",
+            )
+        )
+    for path in sorted(set(proposal.concepts) - set(proposal.files)):
+        failures.append(
+            Failure(
+                path,
+                "projection-coherence",
+                "concept projection has no rendered file in the proposal (§4.4 gate)",
+            )
+        )
+    return failures
 
 
 def _check_type(path: str, concept: ConceptFrontmatter) -> list[Failure]:
@@ -58,6 +95,15 @@ def _check_freshness_legible(path: str, concept: ConceptFrontmatter) -> list[Fai
                 "concept carries no freshness stamp (§4.4 law 4)",
             )
         ]
+    if concept.freshness.utcoffset() is None:
+        return [
+            Failure(
+                path,
+                "freshness-legibility",
+                "concept freshness stamp is timezone-naive; whats_stale needs an "
+                "aware datetime (§4.4 law 4)",
+            )
+        ]
     return []
 
 
@@ -76,7 +122,7 @@ def _check_facets_wellformed(path: str, concept: ConceptFrontmatter) -> list[Fai
             failures.append(
                 Failure(
                     path,
-                    "facet-survival",
+                    "facet-wellformedness",
                     f"facet {key!r} is empty; a filterable facet must carry a "
                     "value (§4.4 law 1)",
                 )
@@ -85,7 +131,7 @@ def _check_facets_wellformed(path: str, concept: ConceptFrontmatter) -> list[Fai
             failures.append(
                 Failure(
                     path,
-                    "facet-survival",
+                    "facet-wellformedness",
                     f"facet {key!r} must be a scalar or flat list to be "
                     "filterable (§4.4 law 1)",
                 )
@@ -116,12 +162,15 @@ def run_artifact_validators(
     proposal: ProposedChange,
     existing_paths: frozenset[str] = frozenset(),
 ) -> list[Failure]:
-    """Run all four §4.4 laws over the proposal's concept projection.
+    """Check projection↔files coherence, then run the four §4.4 laws over the
+    proposal's concept projection.
 
-    Empty result == conformant artifact. `existing_paths` are bundle-root-relative
-    paths already on `main`, so law 2 resolves links to concepts this change does
-    not itself carry."""
+    Empty result == conformant artifact. The coherence check runs first so that
+    `[] == conformant` cannot be defeated by a file that ships without a
+    projection. `existing_paths` are bundle-root-relative paths already on `main`,
+    so law 2 resolves links to concepts this change does not itself carry."""
     failures: list[Failure] = []
+    failures += _check_projection_coherence(proposal)
     for path, concept in proposal.concepts.items():
         failures += _check_type(path, concept)
         failures += _check_facets_wellformed(path, concept)

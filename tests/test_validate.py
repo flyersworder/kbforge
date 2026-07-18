@@ -43,7 +43,7 @@ def test_empty_facet_value_is_reported():
         type="application", facets={"owner": ""}, resources=[ANCHOR], freshness=NOW
     )
     failures = run_artifact_validators(_proposal(c))
-    assert any(f.law == "facet-survival" for f in failures)
+    assert any(f.law == "facet-wellformedness" for f in failures)
 
 
 def test_nested_facet_value_is_reported():
@@ -54,7 +54,7 @@ def test_nested_facet_value_is_reported():
         freshness=NOW,
     )
     failures = run_artifact_validators(_proposal(c))
-    assert any(f.law == "facet-survival" for f in failures)
+    assert any(f.law == "facet-wellformedness" for f in failures)
 
 
 def test_scalar_and_flat_list_facets_pass():
@@ -64,9 +64,8 @@ def test_scalar_and_flat_list_facets_pass():
         resources=[ANCHOR],
         freshness=NOW,
     )
-    facet_failures = [
-        f for f in run_artifact_validators(_proposal(c)) if f.law == "facet-survival"
-    ]
+    failures = run_artifact_validators(_proposal(c))
+    facet_failures = [f for f in failures if f.law == "facet-wellformedness"]
     assert facet_failures == []
 
 
@@ -154,7 +153,9 @@ def test_each_law_catches_its_own_violation():
 
     bad_facet = base.model_copy(deep=True)
     bad_facet.concepts["apps/x/overview.md"].facets = {"owner": ""}
-    assert any(f.law == "facet-survival" for f in run_artifact_validators(bad_facet))
+    assert any(
+        f.law == "facet-wellformedness" for f in run_artifact_validators(bad_facet)
+    )
 
     dangling = base.model_copy(deep=True)
     dangling.concepts["apps/x/overview.md"].links = ["apps/ghost/overview.md"]
@@ -163,3 +164,51 @@ def test_each_law_catches_its_own_violation():
 
 def test_empty_proposal_has_no_failures():
     assert run_artifact_validators(ProposedChange(branch_hint="b")) == []
+
+
+def test_file_without_projection_is_reported():
+    # A rendered concept file with no ConceptFrontmatter would ship unvalidated —
+    # the gate must catch the omission, not greenlight it (red-team finding #1).
+    change = ProposedChange(
+        branch_hint="b",
+        files={"apps/x/overview.md": "...unvalidated garbage..."},
+        concepts={},
+    )
+    failures = run_artifact_validators(change)
+    assert any(f.law == "projection-coherence" for f in failures)
+
+
+def test_projection_without_file_is_reported():
+    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    change = ProposedChange(
+        branch_hint="b", files={}, concepts={"apps/x/overview.md": c}
+    )
+    failures = run_artifact_validators(change)
+    assert any(f.law == "projection-coherence" for f in failures)
+
+
+def test_reserved_files_need_no_projection():
+    # index.md (listing) and log.md (history) carry no frontmatter — exempt.
+    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    change = ProposedChange(
+        branch_hint="b",
+        files={
+            "apps/x/overview.md": "# X",
+            "apps/index.md": "listing",
+            "apps/x/log.md": "history",
+        },
+        concepts={"apps/x/overview.md": c},
+    )
+    coherence = [
+        f for f in run_artifact_validators(change) if f.law == "projection-coherence"
+    ]
+    assert coherence == []
+
+
+def test_naive_freshness_is_reported():
+    # A timezone-naive stamp is "present" but crashes whats_stale's
+    # aware-minus-naive subtraction — law 4 must reject it (red-team finding #4).
+    naive = datetime(2026, 7, 18)  # deliberately naive (no tzinfo)
+    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=naive)
+    failures = run_artifact_validators(_proposal(c))
+    assert any(f.law == "freshness-legibility" for f in failures)
