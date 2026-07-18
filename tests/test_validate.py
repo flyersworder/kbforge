@@ -68,3 +68,50 @@ def test_scalar_and_flat_list_facets_pass():
         f for f in run_artifact_validators(_proposal(c)) if f.law == "facet-survival"
     ]
     assert facet_failures == []
+
+
+def test_dangling_link_is_reported():
+    c = ConceptFrontmatter(
+        type="application",
+        resources=[ANCHOR],
+        freshness=NOW,
+        links=["apps/y/overview.md"],  # y not in the bundle
+    )
+    failures = run_artifact_validators(_proposal(c))
+    assert any(f.law == "link-resolvability" for f in failures)
+
+
+def test_link_to_sibling_in_same_change_resolves():
+    x = ConceptFrontmatter(
+        type="application",
+        resources=[ANCHOR],
+        freshness=NOW,
+        links=["apps/y/overview.md"],
+    )
+    y = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    change = ProposedChange(
+        branch_hint="b",
+        files={"apps/x/overview.md": "...", "apps/y/overview.md": "..."},
+        concepts={"apps/x/overview.md": x, "apps/y/overview.md": y},
+    )
+    link_failures = [
+        f for f in run_artifact_validators(change) if f.law == "link-resolvability"
+    ]
+    assert link_failures == []
+
+
+def test_link_to_existing_bundle_path_resolves():
+    c = ConceptFrontmatter(
+        type="application",
+        resources=[ANCHOR],
+        freshness=NOW,
+        links=["apps/z/overview.md"],
+    )
+    link_failures = [
+        f
+        for f in run_artifact_validators(
+            _proposal(c), existing_paths=frozenset({"apps/z/overview.md"})
+        )
+        if f.law == "link-resolvability"
+    ]
+    assert link_failures == []

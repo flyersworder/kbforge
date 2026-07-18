@@ -93,14 +93,39 @@ def _check_facets_wellformed(path: str, concept: ConceptFrontmatter) -> list[Fai
     return failures
 
 
-def run_artifact_validators(proposal: ProposedChange) -> list[Failure]:
-    """Run the §4.4 laws over the proposal's concept projection.
+def _check_links_resolve(
+    proposal: ProposedChange, existing_paths: frozenset[str]
+) -> list[Failure]:
+    known = set(proposal.files) | set(proposal.concepts) | set(existing_paths)
+    failures: list[Failure] = []
+    for path, concept in proposal.concepts.items():
+        for link in concept.links:
+            if link not in known:
+                failures.append(
+                    Failure(
+                        path,
+                        "link-resolvability",
+                        f"link {link!r} resolves to no concept in the bundle "
+                        "(§4.4 law 2)",
+                    )
+                )
+    return failures
 
-    Empty result == conformant artifact."""
+
+def run_artifact_validators(
+    proposal: ProposedChange,
+    existing_paths: frozenset[str] = frozenset(),
+) -> list[Failure]:
+    """Run all four §4.4 laws over the proposal's concept projection.
+
+    Empty result == conformant artifact. `existing_paths` are bundle-root-relative
+    paths already on `main`, so law 2 resolves links to concepts this change does
+    not itself carry."""
     failures: list[Failure] = []
     for path, concept in proposal.concepts.items():
         failures += _check_type(path, concept)
         failures += _check_facets_wellformed(path, concept)
         failures += _check_anchor_presence(path, concept)
         failures += _check_freshness_legible(path, concept)
+    failures += _check_links_resolve(proposal, existing_paths)
     return failures
