@@ -115,3 +115,47 @@ def test_link_to_existing_bundle_path_resolves():
         if f.law == "link-resolvability"
     ]
     assert link_failures == []
+
+
+def _conformant_change():
+    concept = ConceptFrontmatter(
+        type="application",
+        facets={"owner": "team-a", "criticality": "high"},
+        resources=[ANCHOR],
+        links=["apps/y/overview.md"],
+        freshness=NOW,
+    )
+    sibling = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    return ProposedChange(
+        branch_hint="sync/app-x",
+        files={"apps/x/overview.md": "# X", "apps/y/overview.md": "# Y"},
+        concepts={"apps/x/overview.md": concept, "apps/y/overview.md": sibling},
+    )
+
+
+def test_agent_facing_artifact_conformance():
+    # §9 conformance capstone: a conformant bundle passes all four laws.
+    assert run_artifact_validators(_conformant_change()) == []
+
+
+def test_each_law_catches_its_own_violation():
+    # One targeted break per law, asserting the specific law fires.
+    base = _conformant_change()
+
+    no_anchor = base.model_copy(deep=True)
+    no_anchor.concepts["apps/x/overview.md"].resources = []
+    assert any(f.law == "anchor-presence" for f in run_artifact_validators(no_anchor))
+
+    no_freshness = base.model_copy(deep=True)
+    no_freshness.concepts["apps/x/overview.md"].freshness = None
+    assert any(
+        f.law == "freshness-legibility" for f in run_artifact_validators(no_freshness)
+    )
+
+    bad_facet = base.model_copy(deep=True)
+    bad_facet.concepts["apps/x/overview.md"].facets = {"owner": ""}
+    assert any(f.law == "facet-survival" for f in run_artifact_validators(bad_facet))
+
+    dangling = base.model_copy(deep=True)
+    dangling.concepts["apps/x/overview.md"].links = ["apps/ghost/overview.md"]
+    assert any(f.law == "link-resolvability" for f in run_artifact_validators(dangling))
