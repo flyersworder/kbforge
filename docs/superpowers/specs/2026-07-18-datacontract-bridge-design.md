@@ -60,7 +60,7 @@ exactly the three things those laws guarantee:
 
 | §4.4 law | Guarantees | Fills, on the ADC side |
 |---|---|---|
-| 1 — facet survival | business fields are in **frontmatter**, not prose | `Domain.summary`, `owners`, metric description facets |
+| 1 — facet survival | business fields are in **frontmatter**, not prose | `Domain.summary`, `business_owner`, metric description facets |
 | 3 — anchor presence | every concept has a **`resource` anchor** | provenance for each definition (new to ADC) |
 | 4 — freshness legibility | every concept has a **freshness stamp** | `Domain.last_reviewed` |
 | 2 — link resolvability | cross-links **resolve** | related-concept context, safe to follow |
@@ -105,9 +105,11 @@ anchor + freshness to that identity. Clean seam, no overlap of authority.
 
 - **A concept-type convention** for bridgeable concepts (e.g. `type: domain`,
   `type: metric-definition`) so `OkfSource` knows which concepts to map. This is a
-  *vocabulary* concern (deployment-owned, main doc §5.4 / architecture §5.4), not a
-  core change — the bridge just needs a documented convention both sides honor.
-- **A frontmatter key mapping** (OKF facet → ADC field): `owner`→`owners`,
+  *vocabulary* concern (deployment-owned; see the design doc
+  [`context/knowledge-base-design.md`](../../context/knowledge-base-design.md) §5.4,
+  "OKF format & proposed type vocabulary"), not a core change — the bridge just
+  needs a documented convention both sides honor.
+- **A frontmatter key mapping** (OKF facet → ADC field): `owner`→`business_owner`,
   freshness→`last_reviewed`, etc. Small, lives in the adapter.
 - Nothing in kbforge core. The §4.4 laws already produce everything the adapter
   reads.
@@ -137,7 +139,7 @@ candidate to lift *into* that spine rather than keep re-deriving per library.
 
 - Reverse direction (ADC catalog → kbforge source) — plausible, undesigned.
 - The exact concept-type vocabulary for bridgeable concepts — settle with the
-  deployment's type taxonomy (§5.4), not here.
+  deployment's type taxonomy (design doc §5.4), not here.
 - Whether drift detection (capability 3) lives in the `OkfSource` adapter, in a
   kbforge validator, or in a small standalone checker reading both sides.
 - Lifting "freshness legibility" into `ai-agent-contracts` as a shared primitive.

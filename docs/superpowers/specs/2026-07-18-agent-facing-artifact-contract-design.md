@@ -168,11 +168,12 @@ Notes:
 - `ProposedChange.files` stays `dict[str, str]` for the *rendered* bundle content
   (what the publisher writes). `ConceptFrontmatter` is the *validated projection* the
   synthesis stage must also hand over per concept, so the validators have structure
-  to check. Exact carrier (a parallel `dict[path, ConceptFrontmatter]` on
-  `ProposedChange`, vs. parsing frontmatter back out of `files`) is an
-  implementation detail settled in the plan; the model itself is fixed here.
+  to check. Carrier: a **parallel `dict[path, ConceptFrontmatter]`** on
+  `ProposedChange` (shown as `ProposedChange.concepts` in architecture.md §3) is the
+  working default — you should not re-parse markdown you just emitted. The plan
+  confirms it; the model itself is fixed here.
 - `type` deliberately does not constrain the taxonomy — the type *vocabulary* is the
-  deployment's concern (main doc §5.4 / companion §5.4), not the core's.
+  deployment's concern (companion §5.4), not the core's.
 - `resources` reuses the existing `ResourceAnchor` (architecture §3) unchanged — the
   same anchor produced at ingest flows through to emit; no parallel provenance type.
 
@@ -232,6 +233,9 @@ stand, backed by §4.4 rather than by assumption.
 
 ## 8. What this changes (concrete amendments to `architecture.md`)
 
+**Status: applied.** These amendments are live in `architecture.md` as of this
+note's companion commit; the list below records what changed and why.
+
 - **§3 (models):** add `ConceptFrontmatter`; note that `ProposedChange` carries a
   validated frontmatter projection alongside `files`.
 - **New §4.4:** the four Agent-Facing Artifact Laws (this note §3), as the emit-side
@@ -273,10 +277,11 @@ built in v0.1.
 
 - **Typed relations.** OKF keeps links untyped; we accept that for v0.1 (Law 2). If a
   real multi-hop agent use case demands typed edges, revisit adding a private
-  `depends_on`/`owned_by` frontmatter vocabulary — a governed taxonomy like §5.4
-  types. Deferred deliberately.
-- **Carrier for the validated frontmatter** (parallel dict vs. re-parse `files`) —
-  settled in the implementation plan, not here.
+  `depends_on`/`owned_by` frontmatter vocabulary — a governed taxonomy like the
+  companion §5.4 type vocabulary. Deferred deliberately.
+- **Carrier for the validated frontmatter** — resolved to the parallel
+  `dict[path, ConceptFrontmatter]` (`ProposedChange.concepts`, §4); the plan only
+  confirms wiring, not the choice.
 - **Facet ⇄ serving-filter alignment.** Law 1 says "structured fields used in a
   claim" become facets; the exact required facet keys (owner, env, ...) are a
   deployment/vocabulary concern, not core. The core checks *presence of the fields
