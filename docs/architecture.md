@@ -196,14 +196,14 @@ class ConceptFrontmatter(BaseModel):
     serializes to the OKF `timestamp` key (main doc §6: "last synced from
     source") and each anchor in `resources` to a `resource` entry — so
     `whats_stale`, which reads `timestamp`, sees law 4's stamp."""
-    type: str                      # OKF's one required field (non-empty)
-    facets: dict = Field(default_factory=dict)   # law 1: structured fields used
-                                   # in a claim, emitted as filterable keys
-                                   # (owner, env, tags...) — powers list_concepts
-    resources: list[ResourceAnchor]              # law 3: >=1, provenance to a SoR
-    links: list[str] = Field(default_factory=list)   # law 2: doc_ids / bundle
-                                   # paths that MUST resolve within the bundle
-    freshness: datetime            # law 4: source retrieved_at / last-verified
+    type: str = ""                 # OKF's required field; validate checks non-empty
+    facets: dict = Field(default_factory=dict)   # law 1: filterable keys
+    resources: list[ResourceAnchor] = Field(default_factory=list)  # law 3: >=1,
+                                   # enforced by validate (permissive so a
+                                   # violation is reported, not a construct error)
+    links: list[str] = Field(default_factory=list)   # law 2: must resolve
+    freshness: datetime | None = None            # law 4: retrieved_at; validate
+                                   # requires presence
 ```
 
 ---
@@ -538,7 +538,10 @@ as the no-op and never-auto-merge rules. Synthesis is the LLM step; you *check* 
 output against the laws, you do not trust it to emit them (same posture as
 `assert_stability` for §4.3 law 1). A concept that violates any law fails the run;
 no MR opens for a non-conformant artifact. Law 2 is checkable purely within the
-proposed bundle plus `main` — no network, no running MCP server.
+proposed bundle plus `main` — no network, no running MCP server. Fields are
+permissive by design — the validate stage is the single accountable gate for the
+laws, so a violating concept is constructed and reported, never rejected at
+construction.
 
 ---
 

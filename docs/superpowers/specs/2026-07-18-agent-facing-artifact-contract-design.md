@@ -154,14 +154,15 @@ class ConceptFrontmatter(BaseModel):
     requires consumers to ignore unknown ones. `facets` is where Law 1 lands, and it
     maps onto exactly the fields the MCP serving layer filters on (companion §5.7)."""
 
-    type: str                                  # OKF's one required field (non-empty)
+    type: str = ""                             # OKF's one required field (non-empty)
     facets: dict = Field(default_factory=dict) # Law 1: structured fields used in a
                                                #   claim, emitted as filterable keys
                                                #   (owner, env, tags, ...)
-    resources: list[ResourceAnchor]            # Law 3: ≥1, provenance to a SoR
+    resources: list[ResourceAnchor] = Field(default_factory=list)   # Law 3: ≥1,
+                                               #   provenance to a SoR
     links: list[str] = Field(default_factory=list)   # Law 2: doc_ids / bundle paths
                                                #   that MUST resolve within the bundle
-    freshness: datetime                        # Law 4: source retrieved_at / verified
+    freshness: datetime | None = None          # Law 4: source retrieved_at / verified
 ```
 
 Notes:
@@ -183,6 +184,8 @@ Notes:
   §6's "last synced from source") and each anchor in `resources` to a `resource`
   entry — so `whats_stale`, which reads `timestamp`, sees Law 4's stamp under the
   key the serving layer already expects.
+- Fields are permissive so every law is a runtime validator that reports (spec §5),
+  not a construction constraint — the validate stage is the single accountable gate.
 
 ## 5. Enforcement — core validators in the existing validate stage
 
