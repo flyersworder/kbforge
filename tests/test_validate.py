@@ -36,3 +36,35 @@ def test_empty_type_is_reported():
 def test_conformant_concept_passes_per_concept_checks():
     c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
     assert run_artifact_validators(_proposal(c)) == []
+
+
+def test_empty_facet_value_is_reported():
+    c = ConceptFrontmatter(
+        type="application", facets={"owner": ""}, resources=[ANCHOR], freshness=NOW
+    )
+    failures = run_artifact_validators(_proposal(c))
+    assert any(f.law == "facet-survival" for f in failures)
+
+
+def test_nested_facet_value_is_reported():
+    c = ConceptFrontmatter(
+        type="application",
+        facets={"owner": {"team": "a"}},
+        resources=[ANCHOR],
+        freshness=NOW,
+    )
+    failures = run_artifact_validators(_proposal(c))
+    assert any(f.law == "facet-survival" for f in failures)
+
+
+def test_scalar_and_flat_list_facets_pass():
+    c = ConceptFrontmatter(
+        type="application",
+        facets={"owner": "team-a", "tags": ["prod", "db"], "replicas": 3},
+        resources=[ANCHOR],
+        freshness=NOW,
+    )
+    facet_failures = [
+        f for f in run_artifact_validators(_proposal(c)) if f.law == "facet-survival"
+    ]
+    assert facet_failures == []

@@ -13,6 +13,8 @@ from dataclasses import dataclass
 
 from kbforge.models import ConceptFrontmatter, ProposedChange
 
+_SCALAR = (str, int, float, bool)
+
 
 @dataclass(frozen=True)
 class Failure:
@@ -59,6 +61,38 @@ def _check_freshness_legible(path: str, concept: ConceptFrontmatter) -> list[Fai
     return []
 
 
+def _is_filterable(value: object) -> bool:
+    if isinstance(value, _SCALAR):
+        return True
+    if isinstance(value, list):
+        return all(isinstance(v, _SCALAR) for v in value)
+    return False
+
+
+def _check_facets_wellformed(path: str, concept: ConceptFrontmatter) -> list[Failure]:
+    failures: list[Failure] = []
+    for key, value in concept.facets.items():
+        if value in (None, "", [], {}):
+            failures.append(
+                Failure(
+                    path,
+                    "facet-survival",
+                    f"facet {key!r} is empty; a filterable facet must carry a "
+                    "value (§4.4 law 1)",
+                )
+            )
+        elif not _is_filterable(value):
+            failures.append(
+                Failure(
+                    path,
+                    "facet-survival",
+                    f"facet {key!r} must be a scalar or flat list to be "
+                    "filterable (§4.4 law 1)",
+                )
+            )
+    return failures
+
+
 def run_artifact_validators(proposal: ProposedChange) -> list[Failure]:
     """Run the §4.4 laws over the proposal's concept projection.
 
@@ -66,6 +100,7 @@ def run_artifact_validators(proposal: ProposedChange) -> list[Failure]:
     failures: list[Failure] = []
     for path, concept in proposal.concepts.items():
         failures += _check_type(path, concept)
+        failures += _check_facets_wellformed(path, concept)
         failures += _check_anchor_presence(path, concept)
         failures += _check_freshness_legible(path, concept)
     return failures
