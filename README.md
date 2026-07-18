@@ -21,6 +21,13 @@ losing an afternoon to review.
 | **Production protocol** — connectors, canonicalization, diff, provenance, publish | **kbforge** |
 | Serving protocol | MCP |
 
+"Agent-first" is a *checkable* claim, not a downstream hope. kbforge stays a producer —
+the agent connects over MCP, which kbforge doesn't own — but the artifact it emits is held
+to four **agent-facing artifact laws** (facet survival, link resolvability, anchor
+presence, freshness legibility) enforced in the pipeline, so the frontmatter, links, and
+provenance an agent's serving layer needs are guaranteed to be there. See
+[architecture.md §4.4](docs/architecture.md#44-agent-facing-artifact-laws-the-emit-side).
+
 ## Status
 
 **Pre-alpha.** The architecture is specified; the implementation is not written yet. This
@@ -46,6 +53,19 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
 - [`docs/context/knowledge-base-design.md`](docs/context/knowledge-base-design.md) — the
   system kbforge was extracted from: an OKF knowledge base for application managers served
   over MCP, including the security model and a literature review.
+- [`docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md`](docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md)
+  — why the artifact contract exists and how the four emit-side laws are enforced.
+
+## Related projects
+
+kbforge is one of three *contracts for agents*, split by seam:
+
+- [**ai-agent-contracts**](https://github.com/flyersworder/agent-contracts) — the formal
+  spine: resource, temporal, and lifecycle contracts (the seven-tuple kbforge maps onto).
+- [**agentic-data-contracts**](https://github.com/flyersworder/agentic-data-contracts) —
+  the *consumption* half for **structured** data: domain-driven governance enforced at
+  query time. kbforge is the *production* half for **unstructured** knowledge; both
+  independently converged on making freshness legible to the agent.
 
 ## Development
 

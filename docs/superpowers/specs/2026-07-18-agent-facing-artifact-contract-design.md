@@ -247,7 +247,29 @@ No new pipeline stage, no new plugin family, no change to the no-op or
 never-auto-merge rules. The fix closes the agent gap by *tightening an existing
 contract*, which is the right-sized response.
 
-## 9. Open items (deferred, not blocking)
+## 9. Relationship to the agent-contracts family
+
+kbforge is one of three sibling projects, each a *contract for agents* at a
+different seam. The full table and the formal (seven-tuple) mapping now live in
+`architecture.md` §8; the essentials:
+
+- **`ai-agent-contracts`** — the formal spine (resource / temporal / lifecycle
+  contracts). The §4.4 laws are emit-side **Φ** postconditions on the
+  `synthesize → validate` composition; `run_validators` is their **Ψ** verifier.
+  This extends the §8 mapping, which previously covered only connectors (ingest),
+  to the emit side.
+- **`agentic-data-contracts`** — the *consumption* half of "what the agent knows,"
+  for **structured** data (SQL / metrics), enforced at query time. kbforge is the
+  *production* half, for **unstructured** knowledge. The two converged
+  independently on **freshness legibility** (this note's Law 4 / `whats_stale` ↔
+  their `find_stale` / `last_reviewed` / `stale`) — evidence the primitive is real.
+
+**Scope decision (this note):** the connection is documented **inside kbforge
+only**; the sibling repos are not edited. The concrete "kbforge feeds
+`lookup_domain`" bridge is recorded as a *future* item (architecture.md §8), not
+built in v0.1.
+
+## 10. Open items (deferred, not blocking)
 
 - **Typed relations.** OKF keeps links untyped; we accept that for v0.1 (Law 2). If a
   real multi-hop agent use case demands typed edges, revisit adding a private

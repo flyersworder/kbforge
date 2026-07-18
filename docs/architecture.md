@@ -166,6 +166,11 @@ class ProposedChange(BaseModel):
     archaeology (main doc §6 / reviewer-fatigue point)."""
     branch_hint: str
     files: dict[str, str]          # bundle-relative path -> full new content
+    concepts: dict[str, "ConceptFrontmatter"]   # path -> validated frontmatter
+                                   # projection; what the §4.4 validators check,
+                                   # so the laws assert against structure, not
+                                   # re-parsed markdown. `files` stays the
+                                   # rendered content the publisher writes.
     summary: "ChangeSummary"
 
 
@@ -178,6 +183,20 @@ class ChangeSummary(BaseModel):
     conflicts_flagged: list[str]   # "CMDB says owner=A; Confluence says owner=B"
     gaps_flagged: list[str]        # "no DR runbook found for app X"
     grounding_notes: list[str]     # claims whose evidence weakened
+
+
+class ConceptFrontmatter(BaseModel):
+    """The checkable head of an emitted OKF concept. Serialized to YAML
+    frontmatter at write time; validated against the §4.4 laws before publish.
+    OKF requires only a non-empty `type` and permits arbitrary extra keys."""
+    type: str                      # OKF's one required field (non-empty)
+    facets: dict = Field(default_factory=dict)   # law 1: structured fields used
+                                   # in a claim, emitted as filterable keys
+                                   # (owner, env, tags...) — powers list_concepts
+    resources: list[ResourceAnchor]              # law 3: >=1, provenance to a SoR
+    links: list[str] = Field(default_factory=list)   # law 2: doc_ids / bundle
+                                   # paths that MUST resolve within the bundle
+    freshness: datetime            # law 4: source retrieved_at / last-verified
 ```
 
 ---
@@ -228,6 +247,56 @@ no-op detection fails and MR economics collapse").
 The core **enforces** law 1 mechanically: the test kit (§9) and an optional
 runtime check normalize twice and compare hashes; a connector that fails is
 rejected at registration in strict mode.
+
+### 4.4 Agent-facing artifact laws (the emit side)
+
+§4.3 governs **ingest** (raw → canonical). These govern **emit** (canonical →
+OKF concept), and carry the same status: load-bearing, mechanically checkable,
+enforced at a fixed stage. They exist because the README's "agent-first" claim is
+otherwise an *assumption about what happens after the MR merges* — kbforge is a
+producer; the agent connects downstream via MCP and never touches this
+architecture. These laws make the claim checkable. (Full rationale:
+[`superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md`](superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md).)
+
+**The serving contract we depend on (documented, not owned).** The companion doc
+§5.7 fixes the MCP read server's surface. Every affordance is powered by one of
+three things in the artifact — naming them turns "serving is out of scope" into a
+stated interface:
+
+| MCP affordance | Powered by |
+|---|---|
+| `search_knowledge`, `list_concepts` — faceted browse | **frontmatter** |
+| `related_concepts(id)` — graph neighbours | **resolvable links** + **anchors** |
+| `whats_stale(area?)` — freshness | **frontmatter timestamps** |
+
+kbforge guarantees the left column is satisfiable; it does **not** build the
+serving layer. The four laws are exactly "emit what those affordances read":
+
+1. **Facet survival.** Every `structured` field synthesis relied on to make a
+   claim appears as a **frontmatter key**, never only in prose. *Without it:*
+   `list_concepts` / `search_knowledge` filters go dark (an agent asking "who owns
+   app X" needs a structured answer, not prose to grep).
+2. **Link resolvability.** Every cross-link **resolves** to an existing concept
+   file (or is dropped, never dangling); meaning stays in the prose — OKF keeps
+   links untyped, and we do not invent an edge vocabulary. *Without it:*
+   `related_concepts` returns a broken graph, killing multi-hop reasoning.
+3. **Anchor presence.** Every concept carries ≥1 `resource` anchor in frontmatter,
+   tracing to a canonical doc → a SoR. *Without it:* provenance and anchor-based
+   `related_concepts`; the §4.3 grounding chain is only *useful* if it survives to
+   the emitted frontmatter.
+4. **Freshness legibility.** Every concept's frontmatter carries a machine-readable
+   freshness stamp (the anchor's `retrieved_at`). *Without it:* `whats_stale`, and
+   the agent's ability to caveat a stale answer.
+
+These four are the complete v0.1 set — exactly what the serving affordances read,
+no more (prose quality is synthesis's job, not mechanically checkable) and no fewer.
+
+**Law 4 also dissolves the freshness-vs-human-gate tension.** The never-auto-merge
+rule (a trust guarantee) seems to conflict with an agent's need for current data: a
+CMDB owner change waits for MR review. But if staleness is *legible in the
+artifact*, the agent (via `whats_stale`) caveats — "owner per CMDB as of 3 days
+ago; update may be pending." Slow propagation becomes visible metadata, not a
+silent correctness bug. Human gate intact, agent safe; no change to the rule.
 
 ---
 
@@ -424,8 +493,8 @@ def run(bundle: Path, mirror: Path, registry, publisher, synthesizer, cfg):
         budget=cfg.token_budget,                              # scoped to changed
     )                                                         # concepts only
 
-    failures = run_validators(bundle, proposal)               # strict OKF + extras
-    if failures: abort_with_report(failures)
+    failures = run_validators(bundle, proposal)               # strict OKF + §4.4
+    if failures: abort_with_report(failures)                  # laws (core) + extras
 
     url = publisher.publish(proposal, cfg.publisher)          # opens MR; never merges
     persist_cursors(changesets)                               # only on full success
@@ -438,18 +507,52 @@ Everything main-doc §5.3 requires falls out of the seams: change-scoped updates
 (`ChangeSummary` becomes the MR body), and the security split (fetch stage holds
 credentials but no external action; publish stage acts but holds no SoR access).
 
+The §4.4 artifact laws are checked inside `run_validators` as **core** validators —
+never the additive `kbforge_extra_validators` hook (§5.3). They are trust guarantees
+of the standard, so making them opt-in would make them optional — the same posture
+as the no-op and never-auto-merge rules. Synthesis is the LLM step; you *check* its
+output against the laws, you do not trust it to emit them (same posture as
+`assert_stability` for §4.3 law 1). A concept that violates any law fails the run;
+no MR opens for a non-conformant artifact. Law 2 is checkable purely within the
+proposed bundle plus `main` — no network, no running MCP server.
+
 ---
 
-## 8. Connection to the agent-contracts framework
+## 8. Connection to the agent-contracts family
 
-Each connector is a bounded execution unit and maps cleanly onto the seven-tuple:
-**I** = (config, cursor); **O** = (canonical docs, cursor′); **S** = the SoR named
-in `ConnectorInfo`; **R** = read-only, rate-limited; **T** = per-run invocation;
-**Φ** = the canonicalization laws (§4.3) as checkable postconditions;
-**Ψ** = the stability/tombstone invariants the test kit verifies. The pipeline is
-then a *composition* of contracted units with the trust properties (no-op, human
-gate) provable at the composition level — a small production instance of the
-Paper 2 conservation-under-composition argument, worth a footnote there.
+kbforge is one of three sibling projects, each a *contract for agents* at a
+different seam:
+
+| Project | Governs | Substrate | Seam |
+|---|---|---|---|
+| [`ai-agent-contracts`](https://pypi.org/project/ai-agent-contracts/) | resources, time, lifecycle — the formal spine | any agent | runtime budget |
+| [`agentic-data-contracts`](https://pypi.org/project/agentic-data-contracts/) | semantic consistency + rules, enforced at query time | **structured** data (SQL / metrics) | agent *consumes* structured data |
+| **kbforge** | grounding, freshness, provenance of produced knowledge | **unstructured** knowledge (OKF docs) | agent *consumes* knowledge |
+
+The two data-contract projects are the **consumption and production halves of
+"what the agent knows"** — one structured, one unstructured. They converged
+independently on the same primitive: **freshness must be legible to the agent.**
+kbforge law 4 + `whats_stale` mirror `agentic-data-contracts`' `find_stale()` /
+`last_reviewed` / `stale` — strong evidence the pattern is real, not retrofitted.
+
+**Formal mapping (the spine).** Each connector is a bounded execution unit that
+maps onto the seven-tuple: **I** = (config, cursor); **O** = (canonical docs,
+cursor′); **S** = the SoR named in `ConnectorInfo`; **R** = read-only,
+rate-limited; **T** = per-run invocation; **Φ** = the canonicalization laws (§4.3)
+as checkable postconditions; **Ψ** = the stability/tombstone invariants the test
+kit verifies. The §4.4 artifact laws extend this to the **emit** side: they are
+additional **Φ** postconditions on the `synthesize → validate` composition, and
+`run_validators` is their **Ψ** verifier. The pipeline is then a *composition* of
+contracted units with the trust properties (no-op, human gate) provable at the
+composition level — a small production instance of the Paper 2
+conservation-under-composition argument, worth a footnote there.
+
+**A future connection (not built).** `agentic-data-contracts`' `lookup_domain`
+returns hand-authored YAML business context ("revenue is recognized at
+fulfillment") that goes stale. kbforge produces exactly that kind of grounded,
+provenanced, fresh domain knowledge as OKF concepts — so a `type: domain` concept
+could one day *feed and refresh* what `lookup_domain` serves, replacing static YAML
+with a produced, anchored source. Flagged here; deliberately out of scope for v0.1.
 
 ---
 
@@ -466,6 +569,10 @@ Paper 2 conservation-under-composition argument, worth a footnote there.
   never produce `removed` entries.
 - **Purity test:** `normalize` runs with network access blocked and a frozen clock.
 - **Anchor test:** every doc carries a resolvable `ResourceAnchor`.
+- **Agent-facing artifact test (§4.4):** given fixture canonical docs, run (or
+  fixture) synthesis and assert all four emit-side laws hold — every claimed facet
+  is in frontmatter (1), every link resolves (2), every concept carries a
+  resolvable anchor (3), every concept carries a freshness stamp (4).
 
 A connector passing the kit may claim **"kbforge conformant"** — this badge,
 not the core code, is what makes the connector ecosystem trustworthy, and it is
