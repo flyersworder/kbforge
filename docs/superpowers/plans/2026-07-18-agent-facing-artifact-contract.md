@@ -671,12 +671,10 @@ def test_each_law_catches_its_own_violation():
     )
 ```
 
-- [ ] **Step 2: Run test to verify it fails then passes**
+- [ ] **Step 2: Run the capstone tests to verify they pass**
 
 Run: `uv run pytest tests/test_validate.py -k "conformance or each_law" -v`
-Expected: PASS immediately (the validators already satisfy these). If either fails, the failure names the law whose validator regressed — fix `validate.py`, do not weaken the test.
-
-Note: this task adds only tests over existing behavior, so there is no separate red→green implementation step; the capstone locks in the contract as a whole.
+Expected: PASS (the validators from Tasks 2–4 already satisfy these). This task adds tests over existing behavior — there is no red→green step; the capstone is an acceptance test that locks the integrated contract. If either test fails, the failure names the law whose validator regressed — fix `validate.py`, do not weaken the test.
 
 - [ ] **Step 3: Run the full suite with coverage**
 
