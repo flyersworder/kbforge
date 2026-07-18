@@ -111,7 +111,7 @@ class Cursor(BaseModel):
 
 class ResourceAnchor(BaseModel):
     """Provenance. Every document and every downstream concept claim carries one.
-    Maps 1:1 onto the OKF `resource` frontmatter field at emit time."""
+    Each anchor becomes one OKF `resource` frontmatter entry at emit time."""
     system: str                    # "servicenow"
     native_id: str                 # sys_id / page id / repo path
     url: str | None = None         # human-clickable deep link
@@ -188,7 +188,14 @@ class ChangeSummary(BaseModel):
 class ConceptFrontmatter(BaseModel):
     """The checkable head of an emitted OKF concept. Serialized to YAML
     frontmatter at write time; validated against the §4.4 laws before publish.
-    OKF requires only a non-empty `type` and permits arbitrary extra keys."""
+    OKF requires only a non-empty `type` and permits arbitrary extra keys.
+
+    This is the §4.4 *projection*, not the whole frontmatter: the remaining
+    strict-OKF fields (title, description, timestamp) live in the rendered
+    file, where the strict validator checks them. At write time `freshness`
+    serializes to the OKF `timestamp` key (main doc §6: "last synced from
+    source") and each anchor in `resources` to a `resource` entry — so
+    `whats_stale`, which reads `timestamp`, sees law 4's stamp."""
     type: str                      # OKF's one required field (non-empty)
     facets: dict = Field(default_factory=dict)   # law 1: structured fields used
                                    # in a claim, emitted as filterable keys
@@ -273,7 +280,7 @@ producer; the agent connects downstream via MCP and never touches this
 architecture. These laws make the claim checkable. (Full rationale:
 [`superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md`](superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md).)
 
-**The serving contract we depend on (documented, not owned).** The companion doc
+**The serving contract we depend on (documented, not owned).** The main doc
 §5.7 fixes the MCP read server's surface. Every affordance is powered by one of
 three things in the artifact — naming them turns "serving is out of scope" into a
 stated interface:
@@ -383,7 +390,9 @@ class PipelineHooks:
     @hookspec
     def kbforge_extra_validators(self) -> list["Validator"]:
         """Contribute bundle validators run in CI stage: secret scan (gitleaks),
-        PII scan (GDPR / contact-type concepts), link check, vocab conformance."""
+        PII scan (GDPR / contact-type concepts), external-URL link check, vocab
+        conformance. Bundle-internal link resolvability is NOT an extra — that
+        is §4.4 law 2, enforced core."""
 
     @hookspec
     def kbforge_run_observer(self, event: str, payload: dict) -> None:

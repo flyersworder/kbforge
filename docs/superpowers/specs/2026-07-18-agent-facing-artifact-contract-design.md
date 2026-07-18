@@ -27,7 +27,7 @@ Trace the path an agent actually takes to "connect to a knowledge base":
 [ SoR: Confluence, CMDB ]
         │
         ▼
-  kbforge   fetch → normalize → diff → synthesize → validate → publish (MR)
+  kbforge   fetch → normalize → mirror → diff → scope → synthesize → validate → publish (MR)
         │
         ▼   (human reviews, merges)
 [ OKF bundle on main: markdown + frontmatter ]
@@ -176,6 +176,13 @@ Notes:
   deployment's concern (companion §5.4), not the core's.
 - `resources` reuses the existing `ResourceAnchor` (architecture §3) unchanged — the
   same anchor produced at ingest flows through to emit; no parallel provenance type.
+- **Serialization onto OKF keys.** `ConceptFrontmatter` is the §4.4 *projection*, not
+  the whole frontmatter: the remaining strict-OKF fields (`title`, `description`,
+  `timestamp`) live in the rendered file, where the existing strict validator checks
+  them. At write time `freshness` serializes to the OKF `timestamp` key (companion
+  §6's "last synced from source") and each anchor in `resources` to a `resource`
+  entry — so `whats_stale`, which reads `timestamp`, sees Law 4's stamp under the
+  key the serving layer already expects.
 
 ## 5. Enforcement — core validators in the existing validate stage
 
