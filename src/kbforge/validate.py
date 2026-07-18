@@ -26,7 +26,7 @@ class Failure:
 
 
 def _check_type(path: str, concept: ConceptFrontmatter) -> list[Failure]:
-    if not concept.type or not concept.type.strip():
+    if not concept.type.strip():
         return [
             Failure(
                 path,
@@ -38,7 +38,7 @@ def _check_type(path: str, concept: ConceptFrontmatter) -> list[Failure]:
 
 
 def _check_anchor_presence(path: str, concept: ConceptFrontmatter) -> list[Failure]:
-    if len(concept.resources) < 1:
+    if not concept.resources:
         return [
             Failure(
                 path,

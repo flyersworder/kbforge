@@ -159,3 +159,7 @@ def test_each_law_catches_its_own_violation():
     dangling = base.model_copy(deep=True)
     dangling.concepts["apps/x/overview.md"].links = ["apps/ghost/overview.md"]
     assert any(f.law == "link-resolvability" for f in run_artifact_validators(dangling))
+
+
+def test_empty_proposal_has_no_failures():
+    assert run_artifact_validators(ProposedChange(branch_hint="b")) == []
