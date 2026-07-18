@@ -22,11 +22,14 @@ losing an afternoon to review.
 | Serving protocol | MCP |
 
 "Agent-first" is a *checkable* claim, not a downstream hope. kbforge stays a producer —
-the agent connects over MCP, which kbforge doesn't own — but the artifact it emits is held
-to four **agent-facing artifact laws** (facet survival, link resolvability, anchor
-presence, freshness legibility) enforced in the pipeline, so the frontmatter, links, and
-provenance an agent's serving layer needs are guaranteed to be there. See
-[architecture.md §4.4](docs/architecture.md#44-agent-facing-artifact-laws-the-emit-side).
+the agent connects over MCP, which kbforge doesn't own — but every publish is gated on
+four **agent-facing artifact laws** (facet well-formedness, link resolvability, anchor
+presence, freshness legibility), plus a projection↔files coherence check so nothing
+ships unvalidated. That gate is what puts the frontmatter, links, and provenance an
+agent's serving layer needs into the artifact. What each law enforces at full versus
+reduced strength (and the paths to full strength) is spelled out honestly in
+[architecture.md §4.4](docs/architecture.md#44-agent-facing-artifact-laws-the-emit-side)
+and the [artifact-contract spec](docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md) §5.1.
 
 ## Status
 

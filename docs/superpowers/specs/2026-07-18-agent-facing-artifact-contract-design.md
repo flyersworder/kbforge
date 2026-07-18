@@ -216,6 +216,42 @@ Placement in the fixed pipeline (§7), unchanged in order:
   link, the target concept file must exist in `files` or already in the bundle on
   `main`. No network, no serving layer needed — consistent with kbforge never
   depending on a running MCP server.
+- **Projection↔files coherence (the binding check).** The laws run over
+  `concepts`, but the publisher writes `files`. If they diverge, a rendered concept
+  file ships with no projection — silently unvalidated — and `run_validators == []`
+  no longer means "conformant." So a coherence check runs first: every non-reserved
+  file MUST have a projection and every projection MUST have a file (`index.md` /
+  `log.md` are exempt — they carry no frontmatter). Without this the gate is
+  defeated by *omission*, which is worse than a wrong emission because it is silent.
+  Implemented as `_check_projection_coherence` (`kbforge/validate.py`).
+
+### 5.1 What v0.1 actually enforces — and the honest gaps
+
+The runtime validators check the properties they *can* decide from a
+`ProposedChange` alone. Two of the four laws are enforced at full strength
+(link resolvability against the bundle; freshness legibility, now including a
+timezone-aware requirement so `whats_stale`'s aware-minus-naive subtraction cannot
+crash). The other two are enforced at reduced strength, and the reduction is
+deliberate and bounded:
+
+- **Law 1 is *well-formedness*, not *survival*.** The runtime check
+  (`facet-wellformedness`) verifies that facets present are filterable scalars/flat
+  lists. It cannot verify the *completeness* direction — "a field the claim relied
+  on must appear as a facet, not only in prose" — because that requires the source
+  `CanonicalDocument.structured` synthesis read, which is **not** in `ProposedChange`.
+  This is structurally impossible with the current inputs, not merely undecidable.
+  Full survival enforcement requires passing the source canonical docs into the
+  validator; that is a synthesis-plan item (§10).
+- **Law 3 checks anchor *presence*, not *validity*.** `≥1` anchor is required, but an
+  anchor with empty identity fields still counts. Anchor-field min-lengths belong on
+  the model; deferred (§10). The grounding chain is only as strong as synthesis
+  fills the anchor — which the presence check does not yet verify.
+- **Law 2's confidence is contingent on normalization that does not exist yet.**
+  Resolution is exact string membership; it assumes links are already
+  bundle-root-relative and normalized. A raw markdown cross-link (`../y/overview.md`,
+  a `#section` anchor, a self-link) is not what this check handles. The renderer that
+  normalizes emitted links into this form is a later plan; until then, law 2 protects
+  the *declared* `links` field under that precondition, not arbitrary body links.
 
 ## 6. §9 — conformance test kit addition
 
@@ -234,12 +270,16 @@ both the ingest laws (§4.3) and the emit laws (§4.4).
 ## 7. Positioning correction
 
 With the artifact contract in place, "agent-first" is honest and defensible:
-kbforge does not serve agents, but it **guarantees, and mechanically enforces, that
-the artifact it emits carries exactly what an agent's serving layer needs** —
-filterable facets, a traversable link graph, provenance anchors, and legible
-freshness. The agent-convenience claim follows from the *artifact contract*, not
-from a runtime kbforge owns. The README's "agent-first knowledge bases" line can
-stand, backed by §4.4 rather than by assumption.
+kbforge does not serve agents, but it **mechanically checks that the artifact
+projection it emits carries what an agent's serving layer needs** — filterable
+facets, a resolvable declared link graph, provenance anchors, and legible
+(timezone-aware) freshness — and, via the coherence check (§5), that the projection
+actually covers everything that ships. The claim is scoped honestly: what is
+enforced at full strength versus reduced strength is spelled out in §5.1, and the
+reduced parts (facet *survival*, anchor *validity*, link *normalization*) have named
+paths to full strength in §10. "Agent-first" is backed by a checked contract, not an
+assumption — provided the reader takes it to mean exactly what §5/§5.1 enforce, not
+more.
 
 ## 8. What this changes (concrete amendments to `architecture.md`)
 
@@ -291,7 +331,24 @@ built in v0.1.
   companion §5.4 type vocabulary. Deferred deliberately.
 - **Carrier for the validated frontmatter** — resolved to the parallel
   `dict[path, ConceptFrontmatter]` (`ProposedChange.concepts`, §4); the plan only
-  confirms wiring, not the choice.
+  confirms wiring, not the choice. The projection↔files coherence check (§5) is what
+  keeps the parallel carrier honest.
+- **Law 1 full survival enforcement.** Pass the source `CanonicalDocument.structured`
+  into the validator so it can check that fields the claim relied on became facets,
+  not just that present facets are well-formed. Needs the ingest-side model
+  (`CanonicalDocument`, a later plan) threaded through synthesis.
+- **Law 3 anchor validity.** Add min-length constraints on `ResourceAnchor.system` /
+  `native_id` / `content_hash` so an empty-identity anchor cannot satisfy law 3.
+  A model-level constraint here is acceptable (an anchor with no identity is
+  nonsensical to *represent*, unlike a law-violating-but-meaningful concept).
+- **Law 2 link normalization.** Build the renderer/normalizer that turns emitted
+  markdown cross-links into bundle-root-relative normalized paths, and extract the
+  links actually present in the rendered body (not just the declared `links` field),
+  before resolution. Until then law 2's guarantee is contingent (§5.1).
+- **Freshness sanity bound.** Law 4 rejects naive stamps but not future-dated ones;
+  a "not in the future" check needs a clock, which the pure validator deliberately
+  lacks. Decide where a bounded-freshness check lives (pipeline, not the pure
+  validator) if it is wanted.
 - **Facet ⇄ serving-filter alignment.** Law 1 says "structured fields used in a
   claim" become facets; the exact required facet keys (owner, env, ...) are a
   deployment/vocabulary concern, not core. The core checks *presence of the fields

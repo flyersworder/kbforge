@@ -313,6 +313,18 @@ serving layer. The four laws are exactly "emit what those affordances read":
 These four are the complete v0.1 set — exactly what the serving affordances read,
 no more (prose quality is synthesis's job, not mechanically checkable) and no fewer.
 
+**What the runtime enforces vs. what the laws name.** The validators check what a
+`ProposedChange` can decide alone, so two laws run at reduced strength (see the
+artifact-contract spec §5.1): law 1's runtime check is facet *well-formedness*
+(slug `facet-wellformedness`), not *survival* — completeness needs the source
+`CanonicalDocument` synthesis read, absent here; and law 3 checks anchor *presence*,
+not *validity*. Law 4 additionally requires a timezone-aware stamp (a naive one
+crashes `whats_stale`). Underneath the four laws, a **projection↔files coherence**
+check runs first: the laws inspect `concepts`, but the publisher writes `files`, so
+every non-reserved file must have a projection and vice versa — otherwise a file
+ships unvalidated and `run_validators == []` would be a false pass. The named paths
+from reduced to full strength are the spec's §10 open items.
+
 **Law 4 also dissolves the freshness-vs-human-gate tension.** The never-auto-merge
 rule (a trust guarantee) seems to conflict with an agent's need for current data: a
 CMDB owner change waits for MR review. But if staleness is *legible in the
@@ -541,7 +553,11 @@ no MR opens for a non-conformant artifact. Law 2 is checkable purely within the
 proposed bundle plus `main` — no network, no running MCP server. Fields are
 permissive by design — the validate stage is the single accountable gate for the
 laws, so a violating concept is constructed and reported, never rejected at
-construction.
+construction. `run_validators` therefore runs a **projection↔files coherence** check
+before the per-concept laws (`_check_projection_coherence`): because the gate is the
+single point of accountability, it must also catch the producer *omitting* a
+projection for a file it ships — otherwise the gate is bypassed by silence, not by a
+detectable bad emission.
 
 ---
 
