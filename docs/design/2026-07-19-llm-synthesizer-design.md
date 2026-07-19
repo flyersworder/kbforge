@@ -154,7 +154,7 @@ a key.
 Pydantic AI (with LiteLLM) is a heavy dependency and must not burden the core install
 or the stub path.
 
-- Add an **optional extra**: `kbforge[llm]` → `pydantic-ai-slim[litellm]`.
+- Add an **optional extra**: `kbforge[llm]` → `pydantic-ai-slim[openai]`.
 - `LLMSynthesizer` imports `pydantic_ai` **lazily** (inside `__init__`), raising a
   clear "install kbforge[llm]" error if absent. `kbforge` core, `StubSynthesizer`,
   and the whole existing test suite import nothing new.

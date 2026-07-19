@@ -61,6 +61,21 @@ Re-running with no source change is a no-op — no merge request is opened. Poin
 incrementally instead. Config values are YAML-typed, so `--set max_commits=50` is an
 integer and `--set 'ignore_globs=[drafts]'` is a list.
 
+To synthesize real prose instead of the deterministic stub, install the LLM extra
+and select the synthesizer (config values are YAML-typed; the API key comes from an
+env var, never the CLI):
+
+```bash
+pip install "kbforge[llm]"
+export OPENROUTER_API_KEY=...        # or point --llm-set api_base=... at a gateway
+kbforge run --connector local_files --set path=./docs \
+  --synthesizer llm --llm-set model=deepseek/deepseek-v4-flash \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```
+
+The synthesizer reaches models through a LiteLLM provider, so OpenRouter and a
+self-hosted LiteLLM gateway share one config path.
+
 ## Design stance
 
 The core ships **zero credentialed connectors and zero CI logic.** The two built-in

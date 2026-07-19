@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Grounded LLM synthesizer (`--synthesizer llm`, optional `kbforge[llm]` extra):
+  the model writes only concept prose inside a kbforge-owned structural frame,
+  reached through a LiteLLM provider (OpenRouter or a self-hosted gateway). The
+  deterministic stub remains the default.
+
 ## [0.1.0] - 2026-07-19
 
 First release: a deterministic, credential-free walking skeleton of the kbforge

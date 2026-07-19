@@ -564,10 +564,13 @@ credentials but no external action; publish stage acts but holds no SoR access).
 The §4.4 artifact laws are checked inside `run_validators` as **core** validators —
 never the additive `kbforge_extra_validators` hook (§5.3). They are trust guarantees
 of the standard, so making them opt-in would make them optional — the same posture
-as the no-op and never-auto-merge rules. Synthesis is the LLM step; you *check* its
-output against the laws, you do not trust it to emit them (same posture as
-`assert_stability` for §4.3 law 1). A concept that violates any law fails the run;
-no MR opens for a non-conformant artifact. Law 2 is checkable purely within the
+as the no-op and never-auto-merge rules. `synthesize` is a stage backed by a
+`Synthesizer` object injected into `run` — `StubSynthesizer` by default,
+`LLMSynthesizer` optionally; when the LLM is used, it writes prose inside a
+kbforge-owned frame, and you *check* its output against the laws, you do not trust
+it to emit them (same posture as `assert_stability` for §4.3 law 1). A concept
+that violates any law fails the run; no MR opens for a non-conformant artifact.
+Law 2 is checkable purely within the
 proposed bundle plus `main` — no network, no running MCP server. Fields are
 permissive by design — the validate stage is the single accountable gate for the
 laws, so a violating concept is constructed and reported, never rejected at
