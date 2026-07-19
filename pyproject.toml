@@ -51,6 +51,9 @@ dev = [
     "pytest-cov>=7.1.0",
     "ruff>=0.15.10",
 ]
+llm = [
+    "pydantic-ai-slim[openai]>=2.13.0",
+]
 
 [build-system]
 requires = ["hatchling"]
@@ -60,9 +63,10 @@ build-backend = "hatchling.build"
 packages = ["src/kbforge"]
 
 [tool.hatch.build.targets.sdist]
-# Agent/editor config is not part of the distributed library.
+# Agent/editor config and process plans are not part of the distributed library.
 exclude = [
     ".claude",
+    "docs/plans",
 ]
 
 [tool.pytest.ini_options]
