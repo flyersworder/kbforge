@@ -9,3 +9,8 @@ build/
 .pytest_cache/
 .ruff_cache/
 .coverage
+
+# Local environment / secrets — never commit real keys
+.env
+.env.*
+!.env.example
