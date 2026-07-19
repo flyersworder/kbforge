@@ -35,6 +35,9 @@ dependencies = [
     "pyyaml>=6",
 ]
 
+[project.scripts]
+kbforge = "kbforge.__main__:main"
+
 [project.urls]
 Homepage = "https://github.com/flyersworder/kbforge"
 Repository = "https://github.com/flyersworder/kbforge"

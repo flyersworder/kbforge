@@ -21,6 +21,11 @@ PROJECT = "kbforge"
 hookspec = pluggy.HookspecMarker(PROJECT)
 hookimpl = pluggy.HookimplMarker(PROJECT)
 
+# Entry-point groups a third-party distribution advertises to be discovered. Kept
+# separate so a package declares intent: a connector plugin vs a publisher plugin.
+CONNECTOR_ENTRYPOINTS = "kbforge.connectors"
+PUBLISHER_ENTRYPOINTS = "kbforge.publishers"
+
 
 class ConnectorSpec(ABC):
     """One plugin object per system of record. Connectors never see the bundle,

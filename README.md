@@ -33,15 +33,46 @@ and the [artifact-contract spec](docs/superpowers/specs/2026-07-18-agent-facing-
 
 ## Status
 
-**Pre-alpha.** The architecture is specified; the implementation is not written yet. This
-repository currently contains the design and the project scaffolding. Follow
-[`docs/architecture.md`](docs/architecture.md) for what is being built.
+**Alpha — a working walking skeleton.** The deterministic pipeline runs end to end with
+no credentials and no LLM: two built-in connectors (`local_files`, `git_commits`),
+canonicalization with a stability law, a replay-safe mirror and diff, a stub synthesizer,
+the §4.4 validator gate, and a dry-run publisher. Change detection, the no-op rule, and
+incremental sync via a real cursor are exercised by the test suite.
+
+Not built yet: a real LLM synthesizer (the current one copies source text verbatim), a
+credentialed system-of-record connector, and a GitHub-PR publisher. See
+[`docs/architecture.md`](docs/architecture.md) for the full map.
+
+## Quickstart
+
+```bash
+pip install kbforge
+kbforge list                       # show available connectors
+
+kbforge run \
+  --connector local_files \
+  --set path=./docs \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```
+
+Re-running with no source change is a no-op — no merge request is opened. Point
+`--connector git_commits --set repo=.` at a git repository to sync commit history
+incrementally instead. Config values are YAML-typed, so `--set max_commits=50` is an
+integer and `--set 'ignore_globs=[drafts]'` is a list.
 
 ## Design stance
 
-The core ships **zero connectors, zero credentials, zero CI logic.** Connectors are
-plugins, discovered through the `kbforge.connectors` entry-point group; deployments are
-separate, private repositories. The interface is the product.
+The core ships **zero credentialed connectors and zero CI logic.** The two built-in
+connectors need no credentials and serve as references; real systems of record are
+plugins, discovered through the `kbforge.connectors` (and `kbforge.publishers`)
+entry-point group without editing kbforge — deployments are separate, private
+repositories. The interface is the product.
+
+```toml
+# in a third-party package's pyproject.toml — discovered automatically once installed
+[project.entry-points."kbforge.connectors"]
+myservice = "my_package:connector"
+```
 
 The pipeline order — fetch → normalize → mirror → diff → scope → synthesize → validate →
 publish — is deliberately **not** pluggable, and neither are the no-op rule or the

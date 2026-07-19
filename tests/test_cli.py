@@ -6,7 +6,7 @@ import pluggy
 import pytest
 
 from kbforge.__main__ import _parse_settings, main
-from kbforge.hookspecs import PROJECT
+from kbforge.hookspecs import CONNECTOR_ENTRYPOINTS, PUBLISHER_ENTRYPOINTS
 from kbforge.registry import build_registry
 
 DOC = "---\ntype: application\ntitle: App X\n---\nApp X.\n"
@@ -53,7 +53,7 @@ def test_registry_exposes_connectors_and_publisher():
 
 def test_registry_loads_setuptools_entrypoints(monkeypatch):
     # The drop-in seam: build_registry must ask pluggy to discover third-party
-    # plugins advertised under the "kbforge" entry-point group.
+    # plugins advertised under the connector and publisher entry-point groups.
     seen: list[str] = []
 
     def spy(self, group, name=None):
@@ -62,7 +62,7 @@ def test_registry_loads_setuptools_entrypoints(monkeypatch):
 
     monkeypatch.setattr(pluggy.PluginManager, "load_setuptools_entrypoints", spy)
     build_registry()
-    assert seen == [PROJECT]
+    assert seen == [CONNECTOR_ENTRYPOINTS, PUBLISHER_ENTRYPOINTS]
 
 
 def test_parse_settings_yaml_types_values():
