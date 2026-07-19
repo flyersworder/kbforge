@@ -7,12 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-07-19
+
 ### Added
 
-- Grounded LLM synthesizer (`--synthesizer llm`, optional `kbforge[llm]` extra):
-  the model writes only concept prose inside a kbforge-owned structural frame,
-  reached through a LiteLLM provider (OpenRouter or a self-hosted gateway). The
-  deterministic stub remains the default.
+- Grounded **LLM synthesizer** — `--synthesizer llm`, behind the optional
+  `kbforge[llm]` extra. The model writes only concept prose (title, description,
+  body) inside a kbforge-owned structural frame: anchors, links, facets, type, and
+  timestamp are assembled deterministically, so the §4.4 validators gate structure
+  the model cannot influence. Reached through Pydantic AI's LiteLLM provider, so
+  OpenRouter and a self-hosted LiteLLM gateway share one config path, and the API
+  key comes only from an environment variable. The deterministic stub remains the
+  default; synthesizer selection is a generic `Synthesizer` seam injected into the
+  pipeline.
 
 ## [0.1.0] - 2026-07-19
 
@@ -53,5 +60,6 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/flyersworder/kbforge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/v0.1.0

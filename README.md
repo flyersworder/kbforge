@@ -109,6 +109,8 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
   — why the artifact contract exists and how the four emit-side laws are enforced.
 - [`docs/design/2026-07-19-agentic-ingest-design.md`](docs/design/2026-07-19-agentic-ingest-design.md)
   — the roadmap for agentic fetch, the refresh model, and KB bootstrap.
+- [`docs/design/2026-07-19-llm-synthesizer-design.md`](docs/design/2026-07-19-llm-synthesizer-design.md)
+  — the grounded LLM synthesizer: the model writes prose inside a kbforge-owned frame.
 - [`docs/design/2026-07-18-datacontract-bridge-design.md`](docs/design/2026-07-18-datacontract-bridge-design.md)
   — how kbforge bridges to `agentic-data-contracts` via the OKF bundle (future, cross-project).
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
