@@ -34,14 +34,13 @@ and the [artifact-contract spec](docs/design/2026-07-18-agent-facing-artifact-co
 
 ## Status
 
-**Alpha — a working walking skeleton.** The deterministic pipeline runs end to end with
-no credentials and no LLM: two built-in connectors (`local_files`, `git_commits`),
-canonicalization with a stability law, a replay-safe mirror and diff, a stub synthesizer,
-the §4.4 validator gate, and a dry-run publisher. Change detection, the no-op rule, and
-incremental sync via a real cursor are exercised by the test suite.
-
-An opt-in LLM synthesizer is available via the `kbforge[llm]` extra and selectable with
-`--synthesizer llm`.
+**Alpha — a working walking skeleton.** The deterministic core runs end to end with no
+credentials: two built-in connectors (`local_files`, `git_commits`), canonicalization
+with a stability law, a replay-safe mirror and diff, the §4.4 validator gate, and a
+dry-run publisher — change detection, the no-op rule, and incremental sync via a real
+cursor all exercised by the test suite. Synthesis ships in two forms: a deterministic
+stub (the default, no LLM) and an opt-in grounded LLM synthesizer (`--synthesizer llm`,
+via the `kbforge[llm]` extra).
 
 Not built yet: a credentialed system-of-record connector, and a GitHub-PR publisher. See
 [`docs/architecture.md`](docs/architecture.md) for the full map.
