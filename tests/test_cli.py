@@ -2,7 +2,11 @@ import os
 import subprocess
 from pathlib import Path
 
-from kbforge.__main__ import main
+import pluggy
+import pytest
+
+from kbforge.__main__ import _parse_settings, main
+from kbforge.hookspecs import PROJECT
 from kbforge.registry import build_registry
 
 DOC = "---\ntype: application\ntitle: App X\n---\nApp X.\n"
@@ -30,27 +34,68 @@ def _git(repo: Path, *args: str) -> None:
     )
 
 
+def _plumbing(tmp_path: Path) -> list[str]:
+    return [
+        "--mirror",
+        str(tmp_path / "mirror"),
+        "--out",
+        str(tmp_path / "out"),
+        "--state",
+        str(tmp_path / "state"),
+    ]
+
+
 def test_registry_exposes_connectors_and_publisher():
     pm = build_registry()
     names = {p.__class__.__name__ for p in pm.get_plugins()}
     assert {"LocalFilesConnector", "GitCommitsConnector", "DryRunPublisher"} <= names
 
 
-def test_cli_run_bootstrap(tmp_path: Path, capsys):
+def test_registry_loads_setuptools_entrypoints(monkeypatch):
+    # The drop-in seam: build_registry must ask pluggy to discover third-party
+    # plugins advertised under the "kbforge" entry-point group.
+    seen: list[str] = []
+
+    def spy(self, group, name=None):
+        seen.append(group)
+        return 0
+
+    monkeypatch.setattr(pluggy.PluginManager, "load_setuptools_entrypoints", spy)
+    build_registry()
+    assert seen == [PROJECT]
+
+
+def test_parse_settings_yaml_types_values():
+    cfg = _parse_settings(["path=/docs", "max_commits=5", "ignore_globs=[drafts, x]"])
+    assert cfg["path"] == "/docs"  # str
+    assert cfg["max_commits"] == 5  # int, not "5"
+    assert cfg["ignore_globs"] == ["drafts", "x"]  # list
+
+
+def test_parse_settings_rejects_missing_equals():
+    with pytest.raises(ValueError, match="KEY=VALUE"):
+        _parse_settings(["justakey"])
+
+
+def test_list_command_shows_connectors(capsys):
+    assert main(["list"]) == 0
+    out = capsys.readouterr().out
+    assert "local_files" in out
+    assert "git_commits" in out
+
+
+def test_cli_run_local_files_via_generic_config(tmp_path: Path, capsys):
     src = tmp_path / "src"
     src.mkdir()
     (src / "x.md").write_text(DOC, "utf-8")
     code = main(
         [
             "run",
-            "--source",
-            str(src),
-            "--mirror",
-            str(tmp_path / "mirror"),
-            "--out",
-            str(tmp_path / "out"),
-            "--state",
-            str(tmp_path / "state"),
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            *_plumbing(tmp_path),
         ]
     )
     assert code == 0
@@ -58,7 +103,7 @@ def test_cli_run_bootstrap(tmp_path: Path, capsys):
     assert (tmp_path / "out" / "sync-local_files" / "concepts/x/overview.md").exists()
 
 
-def test_cli_run_git_commits_connector(tmp_path: Path, capsys):
+def test_cli_run_git_commits_via_generic_config(tmp_path: Path, capsys):
     repo = tmp_path / "repo"
     repo.mkdir()
     _git(repo, "init", "-q")
@@ -70,17 +115,34 @@ def test_cli_run_git_commits_connector(tmp_path: Path, capsys):
             "run",
             "--connector",
             "git_commits",
-            "--source",
-            str(repo),
-            "--mirror",
-            str(tmp_path / "mirror"),
-            "--out",
-            str(tmp_path / "out"),
-            "--state",
-            str(tmp_path / "state"),
+            "--set",
+            f"repo={repo}",
+            *_plumbing(tmp_path),
         ]
     )
     assert code == 0
     assert "Published" in capsys.readouterr().out
-    concepts = list((tmp_path / "out" / "sync-git_commits").rglob("overview.md"))
-    assert len(concepts) == 1
+    assert len(list((tmp_path / "out" / "sync-git_commits").rglob("overview.md"))) == 1
+
+
+def test_cli_unknown_connector_lists_available(tmp_path: Path, capsys):
+    code = main(["run", "--connector", "jira", "--set", "x=1", *_plumbing(tmp_path)])
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "unknown connector" in out
+    assert "local_files" in out and "git_commits" in out  # available list shown
+
+
+def test_cli_config_error_surfaces_nonzero(tmp_path: Path, capsys):
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={tmp_path / 'nope'}",
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    assert "path" in capsys.readouterr().out  # the connector's config problem

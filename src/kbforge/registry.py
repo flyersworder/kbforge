@@ -16,7 +16,11 @@ def build_registry() -> pluggy.PluginManager:
     pm = pluggy.PluginManager(PROJECT)
     pm.add_hookspecs(ConnectorSpec)
     pm.add_hookspecs(PublisherSpec)
+    # In-tree built-ins are always available and registered explicitly.
     pm.register(LocalFilesConnector())
     pm.register(GitCommitsConnector())
     pm.register(DryRunPublisher())
+    # Third-party plugins: any installed package advertising a "kbforge"
+    # entry-point group is discovered without editing this file (§5.4).
+    pm.load_setuptools_entrypoints(PROJECT)
     return pm
