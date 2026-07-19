@@ -1,6 +1,6 @@
 # Example: a GitHub Issues connector
 
-A complete, credentialed kbforge connector in ~135 lines — the worked example for
+A complete, credentialed kbforge connector in ~160 lines — the worked example for
 writing your own. It syncs a repository's issues into OKF concepts, and it lives in
 its **own package**, discovered by kbforge purely through an entry point. Nothing in
 kbforge core changes.
@@ -38,7 +38,9 @@ source.
 ## What this connector shows
 
 **`fetch` — the real-world work.** It reads a token from the `GITHUB_TOKEN`
-environment variable (never from config), pages through the REST API, filters out
+environment variable (never from config; the variable name is overridable with
+`--set token_env=MY_TOKEN` — the value still comes only from the environment), pages
+through the REST API, filters out
 pull requests (GitHub's issues endpoint returns them too), and returns each issue as
 a `RawRecord` carrying the issue JSON plus an `anchor_hint` (stable id, URL,
 timestamp). The **cursor** is the maximum `updated_at` seen, so the next run passes
@@ -65,7 +67,7 @@ identical concept and stays a no-op, while a real body/label/state change is det
 ```bash
 # from this directory
 uv sync --extra dev
-uv run pytest                      # 6 offline tests (deterministic, no network)
+uv run pytest                      # 8 offline tests (deterministic, no network)
 
 export GITHUB_TOKEN=$(gh auth token)
 uv run kbforge run \
@@ -80,6 +82,13 @@ instead of the verbatim stub.
 
 ## Deliberately out of scope
 
-Issue **comments** are not folded into the concept body (one extra API call per
-issue). Deletions aren't derived from absence yet (a kbforge-wide gap — needs
-tombstones). Both are natural next enhancements if you extend this.
+Kept simple so the shape stays legible — each of these is a natural enhancement if
+you extend it:
+
+- **Comments** aren't folded into the concept body (one extra API call per issue).
+- **Deletions** aren't derived from absence (a kbforge-wide gap — needs tombstones).
+- **HTTP errors** surface as a raw `httpx.HTTPStatusError` — a production connector
+  would distinguish 401 (bad token), 404 (repo not found), and 403 rate-limits
+  (honoring `X-RateLimit-Reset`) with clearer messages.
+- **Page-number pagination** with `sort=updated` can, in theory, skip or duplicate an
+  issue updated by someone else mid-fetch; it self-heals on the next incremental sync.

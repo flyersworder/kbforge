@@ -91,7 +91,7 @@ repositories. The interface is the product.
 myservice = "my_package:connector"
 ```
 
-A complete worked example — a credentialed GitHub Issues connector (~135 lines) with
+A complete worked example — a credentialed GitHub Issues connector (~160 lines) with
 token auth, pagination, and a real incremental cursor — is in
 [`examples/github-issues-connector/`](examples/github-issues-connector/).
 
