@@ -73,6 +73,14 @@ The shared assembly helpers (`concept_path`, `_facets`, the frame-building porti
 `_render`) are extracted so both synthesizers build the kbforge-owned frame
 identically; only the prose source differs.
 
+**LLM non-determinism is safe by construction.** Change detection runs *upstream* of
+synthesis: `diff` compares against the mirror of *canonical* docs, and the mirror
+stores canonical docs — never synthesized prose. Unchanged input is a `NoOp` before
+the synthesizer is called, so a run only synthesizes docs that genuinely changed. A
+non-deterministic synthesizer therefore never manufactures a spurious diff, and
+`synthesize` carries no `assert_stability` obligation (that law binds the connector's
+`normalize`, not this stage).
+
 ## 4. `LLMSynthesizer`
 
 Built on **Pydantic AI**, which gives schema-validated output, automatic re-prompting
@@ -81,10 +89,14 @@ this Pydantic-v2 codebase.
 
 ```python
 class SynthesizedConcept(BaseModel):
-    title: str
-    description: str
-    body: str
+    title: str = Field(min_length=1)
+    description: str = Field(min_length=1)
+    body: str = Field(min_length=1)
 ```
+
+The `min_length` constraints turn empty prose into a Pydantic AI *validation* failure
+— which re-prompts the model — instead of a late §4.4 `Aborted` (the strict-OKF check
+already requires non-empty `title` and `description`). Catch it at the cheap layer.
 
 Per changed doc (1 canonical doc → 1 concept):
 
@@ -100,7 +112,8 @@ Per changed doc (1 canonical doc → 1 concept):
    `gaps_flagged` raised during the run (e.g. a truncated source).
 
 The `Agent` is constructed once per `LLMSynthesizer` with `output_type=
-SynthesizedConcept` and the grounding `instructions`.
+SynthesizedConcept` (wrapped per the configured `output_mode` — §5) and the grounding
+`instructions`.
 
 ## 5. Model & provider configuration
 
@@ -116,6 +129,7 @@ a key.
 | `max_tokens` | per-concept output cap | (a sane default, e.g. 1500) |
 | `temperature` | sampling temperature | `0` |
 | `max_source_chars` | truncate oversized canonical text | (e.g. 24000) |
+| `output_mode` | Pydantic AI structured-output strategy: `tool` / `native` / `prompted` | `tool` |
 
 - The key is **always** read from the named env var, never stored in config
   (architecture's `token_env_var` pattern). `.env` is gitignored; `.env.example`
@@ -123,8 +137,17 @@ a key.
 - A **self-hosted LiteLLM gateway** is configured by overriding `api_base` (to the
   gateway URL) and `api_key_env` (to the var holding the master key), and naming a
   `model` the gateway serves. No code difference from the OpenRouter default.
+- **Why `LiteLLMProvider`, not plain `OpenAIProvider`** (both speak OpenAI-compatible
+  endpoints): it honors the architecture's LiteLLM commitment, maps model-name
+  prefixes to per-provider profiles, and keeps a path open to non-OpenAI-compatible
+  providers later without reworking the seam.
+- **`output_mode` exists because tool-calling is uneven on cheap models.** Pydantic AI
+  defaults to tool-call structured output; a small model like `deepseek-v4-flash` may
+  do better with `native` (JSON-schema `response_format`) or `prompted` (schema in the
+  instructions). Making it config avoids hard-coding a strategy the default model
+  might handle poorly — to be pinned during the first live runs (§13).
 - `validate_config`-style checks: `model` non-empty; the env named by `api_key_env`
-  is set; `max_tokens`/`max_source_chars` positive ints.
+  is set; `max_tokens`/`max_source_chars` positive ints; `output_mode` one of the three.
 
 ## 6. Dependency hygiene
 
@@ -218,6 +241,8 @@ The suite must never hit a real model.
 
 - Exact `pydantic-ai-slim` version floor and the resulting `pydantic` floor bump.
 - Default `max_tokens` / `max_source_chars` values (tune against real docs).
+- Which `output_mode` `deepseek-v4-flash` actually handles best (`tool` vs `native` vs
+  `prompted`) — pin the default from the first live runs; keep it configurable.
 - Whether `SynthesizedConcept` should also carry an optional model-suggested
   `summary`/facets that kbforge *validates against* the source rather than trusts —
   a stepping stone toward the faithfulness judge, but not in v0.1.
