@@ -80,8 +80,12 @@ def synthesize(
     summary.claims_added = sorted(concept_path(x) for x in changeset.added)
     summary.claims_modified = sorted(concept_path(x) for x in changeset.modified)
     summary.claims_removed = sorted(changeset.removed)
+    # Name the branch after the source system so a git sync doesn't propose onto a
+    # branch labelled for files. One connector runs per sync, so all changed docs
+    # share a system.
+    system = changed_docs[0].anchor.system if changed_docs else "source"
     return ProposedChange(
-        branch_hint="sync/local-files",
+        branch_hint=f"sync/{system}",
         files=files,
         concepts=concepts,
         summary=summary,
