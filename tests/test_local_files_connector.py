@@ -114,3 +114,51 @@ def test_reserved_okf_keys_never_become_facets(tmp_path: Path):
     docs = conn.kbforge_normalize(result.records)
     assert "links" not in docs[0].structured
     assert "resource" not in docs[0].structured
+
+
+def _ids(records) -> set[str]:
+    return {r.anchor_hint["native_id"] for r in records}
+
+
+def test_default_ignores_exclude_vendored_and_cache_dirs(tmp_path: Path):
+    # Pointed at a repo root, rglob must not sweep dependency/cache dirs into the KB:
+    # .venv site-packages docs were 74% of a real live test. Defaults apply with no
+    # config at all.
+    _write(tmp_path, "docs/real.md", DOC)
+    _write(tmp_path, ".venv/lib/site-packages/pkg/README.md", DOC)
+    _write(tmp_path, "node_modules/dep/README.md", DOC)
+    _write(tmp_path, ".pytest_cache/README.md", DOC)
+    _write(tmp_path, "__pycache__/notes.md", DOC)
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    assert _ids(result.records) == {"docs/real.md"}  # only the real doc survives
+
+
+def test_ignore_globs_is_additive_to_defaults(tmp_path: Path):
+    # A user-supplied pattern ADDS to the defaults; it must not silently re-enable
+    # .venv by replacing the default set (the failure mode for a repo with both).
+    _write(tmp_path, "keep.md", DOC)
+    _write(tmp_path, "drafts/wip.md", DOC)
+    _write(tmp_path, ".venv/pkg/README.md", DOC)
+    conn = LocalFilesConnector()
+    cfg = {"path": str(tmp_path), "ignore_globs": ["drafts"]}
+    result = conn.kbforge_fetch(cfg, None)
+    assert _ids(result.records) == {"keep.md"}  # drafts AND default .venv both gone
+
+
+def test_ignore_glob_matches_filename_pattern(tmp_path: Path):
+    # A glob (not just a bare dir name) filters by filename too.
+    _write(tmp_path, "notes.md", DOC)
+    _write(tmp_path, "_draft-notes.md", DOC)
+    conn = LocalFilesConnector()
+    cfg = {"path": str(tmp_path), "ignore_globs": ["_draft*"]}
+    result = conn.kbforge_fetch(cfg, None)
+    assert _ids(result.records) == {"notes.md"}
+
+
+def test_validate_config_rejects_non_list_ignore_globs(tmp_path: Path):
+    conn = LocalFilesConnector()
+    problems = conn.kbforge_validate_config(
+        {"path": str(tmp_path), "ignore_globs": ".venv"}  # str, not list
+    )
+    assert problems and "ignore_globs" in problems[0]

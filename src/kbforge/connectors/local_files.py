@@ -5,6 +5,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from fnmatch import fnmatch
 from pathlib import Path
 
 import yaml
@@ -29,6 +30,34 @@ _SYSTEM = "local_files"
 _RESERVED_KEYS = frozenset(
     {"type", "title", "relations", "description", "timestamp", "resource", "links"}
 )
+# Dependency, VCS, and tool-cache directories that a blind rglob would sweep into
+# the KB (a real live test pulled 98 vendored `.venv` docs of 132 total). These
+# always apply; a source's `ignore_globs` config ADDS to them, never replaces them —
+# so adding one custom pattern can't silently re-enable `.venv`.
+_DEFAULT_IGNORES = frozenset(
+    {
+        ".git",
+        ".venv",
+        "venv",
+        "node_modules",
+        ".pytest_cache",
+        "__pycache__",
+        ".mypy_cache",
+        ".ruff_cache",
+        ".ipynb_checkpoints",
+    }
+)
+
+
+def _is_ignored(rel: str, patterns: frozenset[str]) -> bool:
+    """True if the posix-relative path is excluded. A pattern matches either any
+    single path segment (a bare dir name like `.venv` skips the whole subtree) or
+    the full relative path (a glob like `drafts/*` or `_draft*`)."""
+    segments = rel.split("/")
+    return any(
+        fnmatch(rel, pat) or any(fnmatch(seg, pat) for seg in segments)
+        for pat in patterns
+    )
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -60,10 +89,18 @@ class LocalFilesConnector:
 
     @hookimpl
     def kbforge_validate_config(self, config: dict) -> list[str]:
+        problems: list[str] = []
         path = config.get("path")
         if not path or not Path(path).is_dir():
-            return [f"config 'path' is not a readable directory: {path!r}"]
-        return []
+            problems.append(f"config 'path' is not a readable directory: {path!r}")
+        ignore = config.get("ignore_globs")
+        if ignore is not None and (
+            not isinstance(ignore, list) or not all(isinstance(g, str) for g in ignore)
+        ):
+            problems.append(
+                f"config 'ignore_globs' must be a list of strings: {ignore!r}"
+            )
+        return problems
 
     @hookimpl
     def kbforge_fetch(self, config: dict, cursor: Cursor | None) -> FetchResult:
@@ -75,9 +112,12 @@ class LocalFilesConnector:
         # retrieved_at is stamped here (fetch may use a clock; normalize may not)
         # from file mtime, keeping runs reproducible.
         root = Path(config["path"])
+        ignores = _DEFAULT_IGNORES | frozenset(config.get("ignore_globs") or [])
         records: list[RawRecord] = []
         for path in sorted(root.rglob("*.md")):
             rel = path.relative_to(root).as_posix()
+            if _is_ignored(rel, ignores):
+                continue
             mtime = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
             records.append(
                 RawRecord(
