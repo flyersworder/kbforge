@@ -40,8 +40,10 @@ canonicalization with a stability law, a replay-safe mirror and diff, a stub syn
 the §4.4 validator gate, and a dry-run publisher. Change detection, the no-op rule, and
 incremental sync via a real cursor are exercised by the test suite.
 
-Not built yet: a real LLM synthesizer (the current one copies source text verbatim), a
-credentialed system-of-record connector, and a GitHub-PR publisher. See
+An opt-in LLM synthesizer is available via the `kbforge[llm]` extra and selectable with
+`--synthesizer llm`.
+
+Not built yet: a credentialed system-of-record connector, and a GitHub-PR publisher. See
 [`docs/architecture.md`](docs/architecture.md) for the full map.
 
 ## Quickstart
