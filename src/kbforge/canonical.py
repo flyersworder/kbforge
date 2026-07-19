@@ -25,7 +25,15 @@ def content_hash(doc: CanonicalDocument) -> str:
         "relations": sorted(doc.relations),
         "deleted": doc.deleted,
     }
-    blob = json.dumps(payload, sort_keys=True, ensure_ascii=True, separators=(",", ":"))
+    # default=str keeps determinism while tolerating YAML-parsed date/datetime
+    # values (PyYAML turns bare `2024-05-01` into a date, which json can't dump).
+    blob = json.dumps(
+        payload,
+        sort_keys=True,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        default=str,
+    )
     return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
 

@@ -50,3 +50,24 @@ def test_validate_config_reports_missing_path(tmp_path: Path):
     conn = LocalFilesConnector()
     problems = conn.kbforge_validate_config({"path": str(tmp_path / "nope")})
     assert problems and "path" in problems[0]
+
+
+DATED = """---
+type: application
+title: X
+released: 2024-05-01
+---
+body
+"""
+
+
+def test_frontmatter_with_bare_date_does_not_crash(tmp_path: Path):
+    # PyYAML parses an unquoted ISO date into a Python date; content_hash must
+    # tolerate it (it would otherwise crash json.dumps in normalize).
+    _write(tmp_path, "apps/x.md", DATED)
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    docs = conn.kbforge_normalize(result.records)
+    assert docs[0].anchor.content_hash  # computed without crashing
+    assert "released" in docs[0].structured
+    assert_stability(conn.kbforge_normalize, result.records)  # date hashes stably
