@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `examples/github-issues-connector/` — a complete worked example of a credentialed
+  connector (GitHub issues → OKF concepts) with token auth, pagination, and a real
+  incremental cursor, plus a walkthrough README for writing your own connector.
+
 ## [0.2.0] - 2026-07-19
 
 ### Added

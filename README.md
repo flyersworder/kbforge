@@ -91,6 +91,10 @@ repositories. The interface is the product.
 myservice = "my_package:connector"
 ```
 
+A complete worked example — a credentialed GitHub Issues connector (~135 lines) with
+token auth, pagination, and a real incremental cursor — is in
+[`examples/github-issues-connector/`](examples/github-issues-connector/).
+
 The pipeline order — fetch → normalize → mirror → diff → scope → synthesize → validate →
 publish — is deliberately **not** pluggable, and neither are the no-op rule or the
 never-auto-merge rule. Those are the trust guarantees; making them pluggable would make

@@ -1,0 +1,19 @@
+[project]
+name = "kbforge-github-issues"
+version = "0.1.0"
+description = "A credentialed kbforge connector: GitHub issues -> OKF concepts."
+requires-python = ">=3.12"
+dependencies = ["kbforge>=0.2.0", "httpx>=0.27"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[project.entry-points."kbforge.connectors"]
+github_issues = "kbforge_github_issues:connector"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["kbforge_github_issues"]
