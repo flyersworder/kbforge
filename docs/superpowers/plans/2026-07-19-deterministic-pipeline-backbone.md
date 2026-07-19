@@ -215,7 +215,7 @@ def test_assert_stability_passes_for_pure_normalize():
     def normalize(records):
         return [_doc()]
 
-    assert_stability(normalize, [RawRecord(media_type="x", payload=b"")]) is None
+    assert assert_stability(normalize, [RawRecord(media_type="x", payload=b"")]) is None
 
 
 def test_assert_stability_raises_for_unstable_normalize():
