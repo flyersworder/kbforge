@@ -1,8 +1,10 @@
 from pathlib import Path
 
 from kbforge.connectors.local_files import LocalFilesConnector
+from kbforge.models import ConceptFrontmatter, ProposedChange
 from kbforge.pipeline import NoOp, Published, run
 from kbforge.publishers.dry_run import DryRunPublisher
+from kbforge.synthesize import concept_path
 
 DOC = """---
 type: application
@@ -124,3 +126,43 @@ def test_crlf_reencoding_is_a_noop(tmp_path: Path):
         publish_config=pub,
     )
     assert isinstance(second, NoOp)  # CRLF flip = same content = no change
+
+
+class _FixedSynth:
+    """A Synthesizer that ignores the LLM and returns a fixed conformant bundle."""
+
+    def synthesize(self, changed_docs, changeset, existing_paths=frozenset()):
+        doc = changed_docs[0]
+        path = concept_path(doc.doc_id)
+        fm_file = (
+            "---\ntype: concept\ntitle: Injected\ndescription: Injected\n"
+            "timestamp: '2026-01-01T00:00:00+00:00'\nresource:\n"
+            f"- system: {doc.anchor.system}\n  native_id: {doc.anchor.native_id}\n"
+            "  url: null\n---\n\n# Injected\n\nInjected body.\n"
+        )
+        return ProposedChange(
+            branch_hint="sync/injected",
+            files={path: fm_file},
+            concepts={
+                path: ConceptFrontmatter(
+                    type="concept",
+                    freshness=doc.anchor.retrieved_at,
+                    resources=[doc.anchor],
+                )
+            },
+        )
+
+
+def test_run_uses_injected_synthesizer(tmp_path: Path):
+    config, mirror, state, pub = _dirs(tmp_path)
+    result = run(
+        LocalFilesConnector(),
+        DryRunPublisher(),
+        config=config,
+        mirror=mirror,
+        state_dir=state,
+        publish_config=pub,
+        synthesizer=_FixedSynth(),
+    )
+    assert isinstance(result, Published)
+    assert "Injected body." in (Path(result.url) / "concepts/x/overview.md").read_text()

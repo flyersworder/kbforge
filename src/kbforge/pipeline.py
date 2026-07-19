@@ -18,7 +18,7 @@ from kbforge.models import (
     ProposedChange,
     RawRecord,
 )
-from kbforge.synthesize import concept_path, synthesize
+from kbforge.synthesize import StubSynthesizer, Synthesizer, concept_path
 from kbforge.validate import Failure, run_validators
 
 
@@ -88,11 +88,14 @@ def run(
     mirror: str,
     state_dir: str,
     publish_config: dict,
+    synthesizer: Synthesizer | None = None,
 ) -> NoOp | Aborted | Published:
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
     if problems:
         raise ConfigError(f"{info.name}: {'; '.join(problems)}")
+
+    synthesizer = synthesizer or StubSynthesizer()
 
     mirror_path = Path(mirror)
     state_path = Path(state_dir)
@@ -111,7 +114,7 @@ def run(
     # changed concept to an unchanged-but-present sibling still resolves (§4.4 law 2)
     # instead of being dropped. (Feed-less full-fetch connector: `docs` is complete.)
     existing = frozenset(concept_path(d.doc_id) for d in docs)
-    proposal = synthesize(changed_docs, changeset, existing)
+    proposal = synthesizer.synthesize(changed_docs, changeset, existing)
 
     failures = run_validators(proposal, existing)
     if failures:
