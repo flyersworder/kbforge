@@ -61,3 +61,61 @@ class ProposedChange(BaseModel):
     files: dict[str, str] = Field(default_factory=dict)
     concepts: dict[str, ConceptFrontmatter] = Field(default_factory=dict)
     summary: ChangeSummary = Field(default_factory=ChangeSummary)
+
+
+class Cursor(BaseModel):
+    """Opaque incremental-sync watermark. Core persists it; only the owning
+    connector interprets its payload (§4.2)."""
+
+    connector: str
+    payload: dict = Field(default_factory=dict)
+
+
+class ConnectorInfo(BaseModel):
+    """Static self-description; used for registry listing (§3)."""
+
+    name: str
+    version: str
+    source_system: str
+    info_types: list[str] = Field(default_factory=list)
+
+
+class RawRecord(BaseModel):
+    """One record as fetched. `anchor_hint` carries what normalize needs to build
+    a ResourceAnchor (native_id, url, retrieved_at) — set in fetch, so normalize
+    stays clock-free (§4.3)."""
+
+    anchor_hint: dict = Field(default_factory=dict)
+    media_type: str
+    payload: bytes
+
+
+class FetchResult(BaseModel):
+    records: list[RawRecord] = Field(default_factory=list)
+    cursor: Cursor
+    complete: bool = True
+
+
+class CanonicalDocument(BaseModel):
+    """The diff-stable unit the mirror stores (§3, §4.3)."""
+
+    anchor: ResourceAnchor
+    doc_id: str
+    title: str
+    text: str
+    structured: dict = Field(default_factory=dict)
+    relations: list[str] = Field(default_factory=list)
+    deleted: bool = False
+
+
+class ChangeSet(BaseModel):
+    """Output of the diff stage; input to synthesis scoping (§3)."""
+
+    added: list[str] = Field(default_factory=list)
+    modified: list[str] = Field(default_factory=list)
+    removed: list[str] = Field(default_factory=list)
+    unchanged_count: int = 0
+
+    @property
+    def is_noop(self) -> bool:
+        return not (self.added or self.modified or self.removed)

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import yaml
+
 from kbforge.models import ConceptFrontmatter, ProposedChange
 
 _SCALAR = (str, int, float, bool)
@@ -178,3 +180,50 @@ def run_artifact_validators(
         failures += _check_freshness_legible(path, concept)
     failures += _check_links_resolve(proposal, existing_paths)
     return failures
+
+
+_STRICT_REQUIRED = ("type", "title", "description", "timestamp")
+
+
+def _parse_frontmatter(content: str) -> dict:
+    if not content.startswith("---"):
+        return {}
+    _, _, rest = content.partition("---")
+    front_raw, sep, _ = rest.partition("\n---")
+    if not sep:
+        return {}
+    try:
+        data = yaml.safe_load(front_raw)
+    except yaml.YAMLError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
+    failures: list[Failure] = []
+    for path, content in proposal.files.items():
+        if _basename(path) in _RESERVED:
+            continue
+        front = _parse_frontmatter(content)
+        for key in _STRICT_REQUIRED:
+            value = front.get(key)
+            if value is None or (isinstance(value, str) and not value.strip()):
+                failures.append(
+                    Failure(
+                        path,
+                        "okf-strict",
+                        f"rendered concept is missing required OKF field {key!r}",
+                    )
+                )
+    return failures
+
+
+def run_validators(
+    proposal: ProposedChange,
+    existing_paths: frozenset[str] = frozenset(),
+) -> list[Failure]:
+    """The full validate stage (§7): strict-OKF checks over the rendered `files`
+    plus the four §4.4 agent-facing laws over the `concepts` projection."""
+    return _check_strict_okf(proposal) + run_artifact_validators(
+        proposal, existing_paths
+    )
