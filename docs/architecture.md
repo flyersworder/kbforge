@@ -570,6 +570,12 @@ as the no-op and never-auto-merge rules. `synthesize` is a stage backed by a
 kbforge-owned frame, and you *check* its output against the laws, you do not trust
 it to emit them (same posture as `assert_stability` for §4.3 law 1). A concept
 that violates any law fails the run; no MR opens for a non-conformant artifact.
+The LLM synthesizer is deliberately minimal — one canonical doc → one concept, a
+per-concept token budget, oversized sources truncated with a `grounding_notes` flag,
+and the model reached through Pydantic AI's LiteLLM provider (so OpenRouter and a
+self-hosted gateway share one config path). Deferred to later increments: a
+faithfulness judge (a second pass verifying each prose claim traces to the source),
+multi-doc merge/split, and recursive chunking for sources beyond the context window.
 Law 2 is checkable purely within the
 proposed bundle plus `main` — no network, no running MCP server. Fields are
 permissive by design — the validate stage is the single accountable gate for the
