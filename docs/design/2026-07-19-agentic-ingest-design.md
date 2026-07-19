@@ -10,7 +10,7 @@ okf_version: "0.1"
 
 # kbforge — Agentic Ingest, Refresh & KB Initialization
 
-**Status:** Draft v0.1 · **Amends:** [`../../architecture.md`](../../architecture.md)
+**Status:** Draft v0.1 · **Amends:** [`../architecture.md`](../architecture.md)
 (sharpens §4.1 transport / MCP-source note and §4.2 incremental contract; builds on
 §4.4 and §7)
 **Related:** [`2026-07-18-agent-facing-artifact-contract-design.md`](2026-07-18-agent-facing-artifact-contract-design.md)

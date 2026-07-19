@@ -249,7 +249,7 @@ docs), and letting agent prose enter the canonical form breaks both provenance (
 law 3) and no-op detection (unbounded volatility no `normalize` can strip). And the
 **read-only** rule above is absolute no matter how capable the server is. Full
 design (agentic retriever, refresh vs. discover, bootstrap):
-[`superpowers/specs/2026-07-19-agentic-ingest-design.md`](superpowers/specs/2026-07-19-agentic-ingest-design.md).
+[`design/2026-07-19-agentic-ingest-design.md`](design/2026-07-19-agentic-ingest-design.md).
 
 ### 4.2 Incremental contract
 
@@ -259,7 +259,7 @@ design (agentic retriever, refresh vs. discover, bootstrap):
   so it **cannot** bootstrap — over an empty mirror there is nothing to diff. Connectors
   stay bundle-blind either way; a feed-less refresh connector expresses its cursor as a
   `(doc_id, content_hash)` manifest so re-polls still reduce to only real change. See
-  [`superpowers/specs/2026-07-19-agentic-ingest-design.md`](superpowers/specs/2026-07-19-agentic-ingest-design.md).
+  [`design/2026-07-19-agentic-ingest-design.md`](design/2026-07-19-agentic-ingest-design.md).
 - The connector returns a new `Cursor`; the core persists it **only after** the
   whole pipeline run succeeds (so failed runs re-fetch — at-least-once semantics;
   normalize determinism makes replays harmless).
@@ -296,7 +296,7 @@ enforced at a fixed stage. They exist because the README's "agent-first" claim i
 otherwise an *assumption about what happens after the MR merges* — kbforge is a
 producer; the agent connects downstream via MCP and never touches this
 architecture. These laws make the claim checkable. (Full rationale:
-[`superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md`](superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md).)
+[`design/2026-07-18-agent-facing-artifact-contract-design.md`](design/2026-07-18-agent-facing-artifact-contract-design.md).)
 
 **The serving contract we depend on (documented, not owned).** The main doc
 §5.7 fixes the MCP read server's surface. Every affordance is powered by one of
@@ -618,7 +618,7 @@ provenance and freshness across the boundary. The §4.4 laws are exactly what ma
 that adapter mechanizable. kbforge grounds *what a metric means and where it came
 from*; ADC keeps owning the executable SQL. Full design (boundary artifact, the
 three capabilities — grounded definitions, shared freshness, drift detection):
-[`superpowers/specs/2026-07-18-datacontract-bridge-design.md`](superpowers/specs/2026-07-18-datacontract-bridge-design.md).
+[`design/2026-07-18-datacontract-bridge-design.md`](design/2026-07-18-datacontract-bridge-design.md).
 Cross-project, out of scope for v0.1; kbforge core needs no change for it.
 
 ---

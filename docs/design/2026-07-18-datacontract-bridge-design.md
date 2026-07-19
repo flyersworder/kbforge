@@ -13,7 +13,7 @@ okf_version: "0.1"
 **Status:** Draft v0.1 · **cross-project, future** (kbforge core unchanged;
 `agentic-data-contracts` repo untouched by this note)
 **Companions:** [`2026-07-18-agent-facing-artifact-contract-design.md`](2026-07-18-agent-facing-artifact-contract-design.md)
-· [`../../architecture.md`](../../architecture.md) §8
+· [`../architecture.md`](../architecture.md) §8
 
 ## 1. Why bridge, not fold
 
@@ -106,7 +106,7 @@ anchor + freshness to that identity. Clean seam, no overlap of authority.
 - **A concept-type convention** for bridgeable concepts (e.g. `type: domain`,
   `type: metric-definition`) so `OkfSource` knows which concepts to map. This is a
   *vocabulary* concern (deployment-owned; see the design doc
-  [`context/knowledge-base-design.md`](../../context/knowledge-base-design.md) §5.4,
+  [`context/knowledge-base-design.md`](../context/knowledge-base-design.md) §5.4,
   "OKF format & proposed type vocabulary"), not a core change — the bridge just
   needs a documented convention both sides honor.
 - **A frontmatter key mapping** (OKF facet → ADC field): `owner`→`business_owner`,

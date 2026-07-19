@@ -43,6 +43,7 @@ Homepage = "https://github.com/flyersworder/kbforge"
 Repository = "https://github.com/flyersworder/kbforge"
 Issues = "https://github.com/flyersworder/kbforge/issues"
 Documentation = "https://github.com/flyersworder/kbforge/blob/main/docs/architecture.md"
+Changelog = "https://github.com/flyersworder/kbforge/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
@@ -59,10 +60,9 @@ build-backend = "hatchling.build"
 packages = ["src/kbforge"]
 
 [tool.hatch.build.targets.sdist]
-# Agent/editor config and process docs are not part of the distributed library.
+# Agent/editor config is not part of the distributed library.
 exclude = [
     ".claude",
-    "docs/superpowers",
 ]
 
 [tool.pytest.ini_options]

@@ -29,7 +29,7 @@ ships unvalidated. That gate is what puts the frontmatter, links, and provenance
 agent's serving layer needs into the artifact. What each law enforces at full versus
 reduced strength (and the paths to full strength) is spelled out honestly in
 [architecture.md §4.4](docs/architecture.md#44-agent-facing-artifact-laws-the-emit-side)
-and the [artifact-contract spec](docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md) §5.1.
+and the [artifact-contract spec](docs/design/2026-07-18-agent-facing-artifact-contract-design.md) §5.1.
 
 ## Status
 
@@ -87,10 +87,13 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
 - [`docs/context/knowledge-base-design.md`](docs/context/knowledge-base-design.md) — the
   system kbforge was extracted from: an OKF knowledge base for application managers served
   over MCP, including the security model and a literature review.
-- [`docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md`](docs/superpowers/specs/2026-07-18-agent-facing-artifact-contract-design.md)
+- [`docs/design/2026-07-18-agent-facing-artifact-contract-design.md`](docs/design/2026-07-18-agent-facing-artifact-contract-design.md)
   — why the artifact contract exists and how the four emit-side laws are enforced.
-- [`docs/superpowers/specs/2026-07-18-datacontract-bridge-design.md`](docs/superpowers/specs/2026-07-18-datacontract-bridge-design.md)
+- [`docs/design/2026-07-19-agentic-ingest-design.md`](docs/design/2026-07-19-agentic-ingest-design.md)
+  — the roadmap for agentic fetch, the refresh model, and KB bootstrap.
+- [`docs/design/2026-07-18-datacontract-bridge-design.md`](docs/design/2026-07-18-datacontract-bridge-design.md)
   — how kbforge bridges to `agentic-data-contracts` via the OKF bundle (future, cross-project).
+- [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Related projects
 
