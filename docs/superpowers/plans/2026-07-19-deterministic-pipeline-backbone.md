@@ -505,6 +505,8 @@ def test_validate_config_reports_missing_path(tmp_path: Path):
 """Pluggy hookspecs. The connector and publisher interfaces ARE the product (§5).
 Kept minimal for the walking skeleton: one connector family, one publisher family."""
 
+from __future__ import annotations
+
 import pluggy
 
 from kbforge.models import (
@@ -579,7 +581,13 @@ from kbforge.models import (
 )
 
 _SYSTEM = "local_files"
-_RESERVED_KEYS = frozenset({"type", "title", "relations"})
+# Keys handled structurally, so they never leak into `structured` (hence facets):
+# title → the concept title; relations → cross-links; type is dropped here because
+# the OKF type comes from synthesis taxonomy (the stub emits "concept"); description
+# and timestamp are emit-side OKF fields the synthesizer generates, not source data.
+_RESERVED_KEYS = frozenset(
+    {"type", "title", "relations", "description", "timestamp"}
+)
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -1076,7 +1084,7 @@ class DryRunPublisher:
 - Test: `tests/test_pipeline.py`
 
 **Interfaces:**
-- Consumes: `assert_stability` (canonical); `diff`, `commit` (mirror); `synthesize` (synthesize); `run_validators` (validate); a bound connector and publisher (duck-typed via the hookimpl method names). `state_dir` holds `cursor-<connector>.json`.
+- Consumes: `assert_stability` (canonical); `diff`, `commit` (mirror); `synthesize` and `concept_path` (synthesize); `run_validators` (validate); a bound connector and publisher (duck-typed via the hookimpl method names). `state_dir` holds `cursor-<connector>.json`.
 - Produces: `run(connector, publisher, *, config, mirror, state_dir, publish_config) -> NoOp | Aborted | Published`. Result dataclasses `NoOp`, `Aborted(failures)`, `Published(url)`.
 
 - [ ] **Step 1: Write the failing test** — `tests/test_pipeline.py`
@@ -1132,6 +1140,28 @@ def test_second_identical_run_is_noop(tmp_path: Path):
     assert isinstance(first, Published)
     second = run(LocalFilesConnector(), DryRunPublisher(), **kwargs)
     assert isinstance(second, NoOp)  # mirror committed → no change → no MR
+
+
+def test_link_to_unchanged_sibling_survives(tmp_path: Path):
+    # A links to B; both bootstrapped. Then only A changes. The A→B link must
+    # still resolve — B is unchanged-but-present — not be dropped (§4.4 law 2).
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "b.md").write_text("---\ntype: application\ntitle: B\n---\nB.\n", "utf-8")
+    a_body = "---\ntype: application\ntitle: {t}\nrelations:\n  - b.md\n---\n{x}\n"
+    (src / "a.md").write_text(a_body.format(t="A", x="A one"), "utf-8")
+    kwargs = dict(
+        config={"path": str(src)},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={"out_dir": str(tmp_path / "out")},
+    )
+    run(LocalFilesConnector(), DryRunPublisher(), **kwargs)  # bootstrap A and B
+    (src / "a.md").write_text(a_body.format(t="A2", x="A two"), "utf-8")
+    result = run(LocalFilesConnector(), DryRunPublisher(), **kwargs)  # only A changed
+    assert isinstance(result, Published)
+    published_a = Path(result.url) / "concepts/a/overview.md"
+    assert "concepts/b/overview.md" in published_a.read_text("utf-8")
 ```
 
 - [ ] **Step 2: Run it, verify it fails.**
@@ -1151,7 +1181,7 @@ from pathlib import Path
 from kbforge.canonical import assert_stability
 from kbforge.mirror import commit, diff
 from kbforge.models import Cursor
-from kbforge.synthesize import synthesize
+from kbforge.synthesize import concept_path, synthesize
 from kbforge.validate import Failure, run_validators
 
 
@@ -1220,9 +1250,13 @@ def run(
 
     changed = set(changeset.added) | set(changeset.modified)
     changed_docs = [d for d in docs if d.doc_id in changed]  # "scope"
-    proposal = synthesize(changed_docs, changeset)
+    # Existing bundle paths = every fetched doc's concept path, so a link from a
+    # changed concept to an unchanged-but-present sibling still resolves (§4.4 law 2)
+    # instead of being dropped. (Feed-less full-fetch connector: `docs` is complete.)
+    existing = frozenset(concept_path(d.doc_id) for d in docs)
+    proposal = synthesize(changed_docs, changeset, existing)
 
-    failures = run_validators(proposal)
+    failures = run_validators(proposal, existing)
     if failures:
         return Aborted(failures=failures)
 
