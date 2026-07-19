@@ -23,7 +23,11 @@ _INSTRUCTIONS = (
     "the provided text; add no outside knowledge and invent no facts. Produce a "
     "concise title, a one-paragraph description, and a clear markdown body that "
     "faithfully summarizes the source. Do not fabricate links, owners, dates, or "
-    "identifiers that are not in the text."
+    "identifiers that are not in the text. The body must NOT restate the title as "
+    "a heading — kbforge renders the title separately as the document's top-level "
+    "heading. The body should begin with the content itself, or with a "
+    "section heading (e.g. '## Overview'), but never repeat the document title as "
+    "a heading."
 )
 
 
@@ -63,6 +67,20 @@ class LLMConfig:
         if self.output_mode not in ("tool", "native", "prompted"):
             problems.append("output_mode must be tool, native, or prompted")
         return problems
+
+
+def _strip_title_heading(body: str, title: str) -> str:
+    """Drop a leading markdown heading line whose text equals the concept title —
+    kbforge renders the title as the body's H1, so the model echoing it would
+    double the heading. Only strips an exact (case-insensitive) title match."""
+    stripped = body.lstrip()
+    lines = stripped.split("\n", 1)
+    first = lines[0].strip()
+    if first.startswith("#"):
+        heading_text = first.lstrip("#").strip()
+        if heading_text.casefold() == title.strip().casefold():
+            return lines[1].lstrip() if len(lines) > 1 else ""
+    return body
 
 
 def _wrap_output(mode: str):
@@ -138,7 +156,8 @@ class LLMSynthesizer:
                 )
             result = self.agent.run_sync(self._prompt(doc, text))
             c = result.output
-            items.append((doc, c.title, c.description, c.body))
+            body = _strip_title_heading(c.body, c.title)
+            items.append((doc, c.title, c.description, body))
         proposal = assemble(items, changeset, existing_paths)
         proposal.summary.grounding_notes.extend(notes)
         return proposal

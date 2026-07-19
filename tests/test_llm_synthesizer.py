@@ -13,6 +13,7 @@ from kbforge.llm_synthesizer import (  # noqa: E402
     LLMConfig,
     LLMSynthesizer,
     SynthesizedConcept,
+    _strip_title_heading,
 )
 from kbforge.models import CanonicalDocument, ChangeSet, ResourceAnchor  # noqa: E402
 from kbforge.synthesize import concept_path  # noqa: E402
@@ -103,3 +104,57 @@ def test_validate_config_reports_missing_key(monkeypatch):
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
     problems = LLMConfig().validate_env()
     assert problems and "OPENROUTER_API_KEY" in problems[0]
+
+
+def test_h2_echoed_title_is_stripped_from_rendered_body():
+    doc = _doc()
+    title = "Payments API On-Call Runbook"
+    concept = SynthesizedConcept(
+        title=title,
+        description="d",
+        body=f"## {title}\n\nReal content about paging the on-call engineer.",
+    )
+    proposal = _synth(concept).synthesize([doc], ChangeSet(added=[doc.doc_id]))
+    rendered = proposal.files[concept_path(doc.doc_id)]
+    assert rendered.count(f"# {title}") == 1  # only kbforge's H1 remains
+    assert f"## {title}" not in rendered
+    assert "Real content about paging the on-call engineer." in rendered
+
+
+def test_h1_echoed_title_is_stripped_from_rendered_body():
+    doc = _doc()
+    title = "Payments API On-Call Runbook"
+    concept = SynthesizedConcept(
+        title=title,
+        description="d",
+        body=f"# {title}\n\nReal content about paging the on-call engineer.",
+    )
+    proposal = _synth(concept).synthesize([doc], ChangeSet(added=[doc.doc_id]))
+    rendered = proposal.files[concept_path(doc.doc_id)]
+    assert rendered.count(f"# {title}") == 1  # only kbforge's H1 remains
+    assert "Real content about paging the on-call engineer." in rendered
+
+
+def test_non_matching_leading_heading_is_preserved():
+    doc = _doc()
+    title = "Payments API On-Call Runbook"
+    concept = SynthesizedConcept(
+        title=title,
+        description="d",
+        body="## Overview\n\nReal content about paging the on-call engineer.",
+    )
+    proposal = _synth(concept).synthesize([doc], ChangeSet(added=[doc.doc_id]))
+    rendered = proposal.files[concept_path(doc.doc_id)]
+    assert rendered.count(f"# {title}") == 1
+    assert "## Overview" in rendered  # not a title match, so it survives
+    assert "Real content about paging the on-call engineer." in rendered
+
+
+def test_strip_title_heading_unit():
+    title = "Payments API On-Call Runbook"
+    assert _strip_title_heading(f"## {title}\n\nbody text", title) == "body text"
+    assert _strip_title_heading(f"# {title}\n\nbody text", title) == "body text"
+    assert (
+        _strip_title_heading("## Overview\n\nbody text", title)
+        == "## Overview\n\nbody text"
+    )
