@@ -23,9 +23,12 @@ from kbforge.models import (
 _SYSTEM = "local_files"
 # Keys handled structurally, so they never leak into `structured` (hence facets):
 # title → the concept title; relations → cross-links; type is dropped here because
-# the OKF type comes from synthesis taxonomy (the stub emits "concept"); description
-# and timestamp are emit-side OKF fields the synthesizer generates, not source data.
-_RESERVED_KEYS = frozenset({"type", "title", "relations", "description", "timestamp"})
+# the OKF type comes from synthesis taxonomy (the stub emits "concept"); description,
+# timestamp, resource, and links are emit-side OKF fields the synthesizer owns — a
+# source key of the same name must not collide with them in the rendered frontmatter.
+_RESERVED_KEYS = frozenset(
+    {"type", "title", "relations", "description", "timestamp", "resource", "links"}
+)
 
 
 def _split_frontmatter(text: str) -> tuple[dict, str]:
@@ -35,7 +38,12 @@ def _split_frontmatter(text: str) -> tuple[dict, str]:
     front_raw, sep, body = rest.partition("\n---")
     if not sep:
         return {}, text
-    data = yaml.safe_load(front_raw) or {}
+    try:
+        data = yaml.safe_load(front_raw) or {}
+    except yaml.YAMLError:
+        # Malformed frontmatter (e.g. an unquoted colon) must not crash the whole
+        # sync: drop the unparseable frontmatter, keep the clean body.
+        data = {}
     front = data if isinstance(data, dict) else {}
     return front, body.lstrip("\n")
 
@@ -59,9 +67,13 @@ class LocalFilesConnector:
 
     @hookimpl
     def kbforge_fetch(self, config: dict, cursor: Cursor | None) -> FetchResult:
-        # cursor is unused: this feed-less source always re-scans; the mirror diff
-        # provides incrementality. retrieved_at is stamped here (fetch may use a
-        # clock; normalize may not) from file mtime, keeping runs reproducible.
+        # cursor is unused: this feed-less source always re-scans. The mirror diff
+        # detects adds and modifies; it does NOT derive deletions — a full-scan
+        # source can't tell a deleted file from an absent one, so a removed file
+        # leaves a stale concept until a tombstone / `complete`-aware diff lands (a
+        # later increment; `FetchResult.complete` is defined but not yet consumed).
+        # retrieved_at is stamped here (fetch may use a clock; normalize may not)
+        # from file mtime, keeping runs reproducible.
         root = Path(config["path"])
         records: list[RawRecord] = []
         for path in sorted(root.rglob("*.md")):
@@ -86,7 +98,15 @@ class LocalFilesConnector:
     ) -> list[CanonicalDocument]:
         docs: list[CanonicalDocument] = []
         for rec in records:
-            front, body = _split_frontmatter(rec.payload.decode("utf-8"))
+            # utf-8-sig strips a BOM (Windows editors) that would otherwise defeat
+            # the `startswith("---")` check; line-ending normalization keeps CRLF
+            # and LF copies of the same content hashing identically (§4.3 law 1).
+            text = (
+                rec.payload.decode("utf-8-sig")
+                .replace("\r\n", "\n")
+                .replace("\r", "\n")
+            )
+            front, body = _split_frontmatter(text)
             native_id = rec.anchor_hint["native_id"]
             doc_id = f"{_SYSTEM}:{native_id}"
             relations = sorted(

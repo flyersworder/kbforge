@@ -93,3 +93,34 @@ def test_link_to_unchanged_sibling_survives(tmp_path: Path):
     assert isinstance(result, Published)
     published_a = Path(result.url) / "concepts/a/overview.md"
     assert "concepts/b/overview.md" in published_a.read_text("utf-8")
+
+
+def test_crlf_reencoding_is_a_noop(tmp_path: Path):
+    # Re-saving a file with CRLF endings (mixed OS / git autocrlf) is byte-different
+    # but content-identical — it must not register as a change (§4.3 law 1).
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_bytes(b"---\ntitle: X\n---\nLine one.\nLine two.\n")
+    config = {"path": str(src)}
+    mirror = str(tmp_path / "mirror")
+    state = str(tmp_path / "state")
+    pub = {"out_dir": str(tmp_path / "out")}
+    first = run(
+        LocalFilesConnector(),
+        DryRunPublisher(),
+        config=config,
+        mirror=mirror,
+        state_dir=state,
+        publish_config=pub,
+    )
+    assert isinstance(first, Published)
+    (src / "x.md").write_bytes(b"---\r\ntitle: X\r\n---\r\nLine one.\r\nLine two.\r\n")
+    second = run(
+        LocalFilesConnector(),
+        DryRunPublisher(),
+        config=config,
+        mirror=mirror,
+        state_dir=state,
+        publish_config=pub,
+    )
+    assert isinstance(second, NoOp)  # CRLF flip = same content = no change

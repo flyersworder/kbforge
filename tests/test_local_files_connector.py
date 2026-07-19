@@ -71,3 +71,46 @@ def test_frontmatter_with_bare_date_does_not_crash(tmp_path: Path):
     assert docs[0].anchor.content_hash  # computed without crashing
     assert "released" in docs[0].structured
     assert_stability(conn.kbforge_normalize, result.records)  # date hashes stably
+
+
+MALFORMED = """---
+title: Notes: Q3 Planning
+---
+Body text.
+"""
+
+
+def test_malformed_frontmatter_does_not_crash(tmp_path: Path):
+    # An unquoted colon is the most common YAML mistake; one bad file must not
+    # crash the whole folder's sync, and its raw YAML must not leak into the body.
+    _write(tmp_path, "bad.md", MALFORMED)
+    _write(tmp_path, "good.md", DOC)
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    docs = conn.kbforge_normalize(result.records)  # must not raise
+    assert len(docs) == 2
+    bad = next(d for d in docs if d.doc_id == "local_files:bad.md")
+    assert "Body text." in bad.text
+    assert "Q3 Planning" not in bad.text  # unparsed frontmatter not leaked into body
+
+
+def test_bom_prefixed_frontmatter_is_parsed(tmp_path: Path):
+    # A UTF-8 BOM (Windows editors) must not defeat frontmatter parsing.
+    raw = b"\xef\xbb\xbf---\ntitle: BOMTitle\n---\n\nBody.\n"
+    (tmp_path / "b.md").write_bytes(raw)
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    docs = conn.kbforge_normalize(result.records)
+    assert docs[0].title == "BOMTitle"  # parsed, not filename fallback
+    assert "---" not in docs[0].text  # raw frontmatter not leaked into body
+
+
+def test_reserved_okf_keys_never_become_facets(tmp_path: Path):
+    # Source frontmatter named like emit-side OKF fields must not leak into facets
+    # and corrupt the rendered frontmatter (projection↔files divergence).
+    _write(tmp_path, "a.md", "---\ntitle: A\nlinks: nope\nresource: nope\n---\nbody\n")
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    docs = conn.kbforge_normalize(result.records)
+    assert "links" not in docs[0].structured
+    assert "resource" not in docs[0].structured
