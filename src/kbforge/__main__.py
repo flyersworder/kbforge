@@ -69,6 +69,15 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEY=VALUE",
         help="connector config (repeatable); values are YAML-typed",
     )
+    r.add_argument("--synthesizer", choices=["stub", "llm"], default="stub")
+    r.add_argument(
+        "--llm-set",
+        action="append",
+        default=[],
+        dest="llm_settings",
+        metavar="KEY=VALUE",
+        help="LLM synthesizer config (repeatable); YAML-typed values",
+    )
     r.add_argument("--mirror", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--state", required=True)
@@ -81,6 +90,9 @@ def main(argv: list[str] | None = None) -> int:
         for name in sorted(connectors):
             info = connectors[name].kbforge_connector_info()
             print(f"{name}\t{info.source_system}")
+        print("synthesizers:")
+        print("  stub\tdeterministic, no LLM")
+        print("  llm\tPydantic AI (needs kbforge[llm])")
         return 0
 
     if args.connector not in connectors:
@@ -94,6 +106,22 @@ def main(argv: list[str] | None = None) -> int:
         print(str(exc))
         return 2
 
+    if args.synthesizer == "llm":
+        from kbforge.llm_synthesizer import LLMConfig, LLMSynthesizer
+
+        try:
+            llm_cfg = LLMConfig(**_parse_settings(args.llm_settings))
+        except (ValueError, TypeError) as exc:
+            print(str(exc))
+            return 2
+        problems = llm_cfg.validate_env()
+        if problems:
+            print("; ".join(problems))
+            return 2
+        synthesizer = LLMSynthesizer(llm_cfg)
+    else:
+        synthesizer = None  # run() defaults to StubSynthesizer
+
     try:
         result = run(
             connectors[args.connector],
@@ -102,6 +130,7 @@ def main(argv: list[str] | None = None) -> int:
             mirror=args.mirror,
             state_dir=args.state,
             publish_config={"out_dir": args.out},
+            synthesizer=synthesizer,
         )
     except ConfigError as exc:
         print(str(exc))

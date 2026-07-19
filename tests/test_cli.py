@@ -146,3 +146,75 @@ def test_cli_config_error_surfaces_nonzero(tmp_path: Path, capsys):
     )
     assert code == 2
     assert "path" in capsys.readouterr().out  # the connector's config problem
+
+
+def test_list_shows_synthesizers(capsys):
+    assert main(["list"]) == 0
+    out = capsys.readouterr().out
+    assert "stub" in out and "llm" in out
+
+
+def test_run_stub_synthesizer_default(tmp_path: Path, capsys):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 0 and "Published" in capsys.readouterr().out
+
+
+def test_run_llm_synthesizer_offline(tmp_path: Path, capsys, monkeypatch):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai import Agent
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from kbforge import llm_synthesizer
+    from kbforge.llm_synthesizer import SynthesizedConcept
+
+    def fake_agent(config):
+        def fn(messages, info: AgentInfo):
+            c = SynthesizedConcept(title="T", description="D", body="Body from LLM.")
+            return ModelResponse(
+                parts=[ToolCallPart(info.output_tools[0].name, c.model_dump())]
+            )
+
+        return Agent(FunctionModel(fn), output_type=SynthesizedConcept)
+
+    monkeypatch.setattr(
+        llm_synthesizer.LLMSynthesizer, "_build_agent", staticmethod(fake_agent)
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--synthesizer",
+            "llm",
+            "--llm-set",
+            "model=deepseek/deepseek-v4-flash",
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 0 and "Published" in capsys.readouterr().out
+    assert (
+        "Body from LLM."
+        in (
+            tmp_path / "out" / "sync-local_files" / "concepts/x/overview.md"
+        ).read_text()
+    )
