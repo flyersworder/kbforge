@@ -239,9 +239,27 @@ resources / read-tools become `RawRecord`s, then `normalize`. One hard constrain
 such a connector may call only **read/resource** operations — MCP tools can have
 side effects, and the seven-tuple's **R = read-only** (§8) must hold.
 
+*Agentic fetch is a transport, not a stage.* An agentic `fetch` — one that *decides
+which* sources are worth reading and may follow leads, including via an agentic MCP
+server behind the interface — is a permitted transport; kbforge cannot tell and must
+not care. Two constraints bound it. It must be a **retriever, not an extractor**: it
+returns source documents *verbatim*, each with a `ResourceAnchor`, and never its own
+prose summary — interpretation is `synthesize`'s job (which reads only canonical
+docs), and letting agent prose enter the canonical form breaks both provenance (§4.4
+law 3) and no-op detection (unbounded volatility no `normalize` can strip). And the
+**read-only** rule above is absolute no matter how capable the server is. Full
+design (agentic retriever, refresh vs. discover, bootstrap):
+[`superpowers/specs/2026-07-19-agentic-ingest-design.md`](superpowers/specs/2026-07-19-agentic-ingest-design.md).
+
 ### 4.2 Incremental contract
 
-- `fetch(config, cursor)` where `cursor=None` means full backfill.
+- `fetch(config, cursor)` where `cursor=None` means full backfill — this is the
+  **bootstrap** path that first creates the KB. Refresh is the opposite: it re-runs the
+  scheduled pipeline and lets core's `mirror_and_diff` detect change against the mirror,
+  so it **cannot** bootstrap — over an empty mirror there is nothing to diff. Connectors
+  stay bundle-blind either way; a feed-less refresh connector expresses its cursor as a
+  `(doc_id, content_hash)` manifest so re-polls still reduce to only real change. See
+  [`superpowers/specs/2026-07-19-agentic-ingest-design.md`](superpowers/specs/2026-07-19-agentic-ingest-design.md).
 - The connector returns a new `Cursor`; the core persists it **only after** the
   whole pipeline run succeeds (so failed runs re-fetch — at-least-once semantics;
   normalize determinism makes replays harmless).

@@ -13,6 +13,10 @@ okf_version: "0.1"
 **Status:** Draft v0.1 · **Amends:** [`../../architecture.md`](../../architecture.md)
 (adds §4.4, a serving-contract statement, and extends §7 and §9)
 **Companion:** [`../../context/knowledge-base-design.md`](../../context/knowledge-base-design.md)
+**Related:** [`2026-07-19-agentic-ingest-design.md`](2026-07-19-agentic-ingest-design.md)
+— the `resource` anchors these laws guarantee are the provenance each refreshed concept
+carries; that note's Refresh model detects change against the core-owned mirror, not
+these anchors.
 
 ## 1. Problem
 
