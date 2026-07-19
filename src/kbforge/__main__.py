@@ -118,7 +118,11 @@ def main(argv: list[str] | None = None) -> int:
         if problems:
             print("; ".join(problems))
             return 2
-        synthesizer = LLMSynthesizer(llm_cfg)
+        try:
+            synthesizer = LLMSynthesizer(llm_cfg)
+        except ImportError as exc:
+            print(str(exc))
+            return 2
     else:
         synthesizer = None  # run() defaults to StubSynthesizer
 

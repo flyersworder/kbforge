@@ -1,6 +1,7 @@
 from datetime import UTC, datetime
 
 import pytest
+from pydantic import ValidationError
 
 pytest.importorskip("pydantic_ai")
 
@@ -88,6 +89,14 @@ def test_oversized_source_is_truncated_and_flagged():
 def test_empty_prose_is_rejected_by_schema():
     with pytest.raises(Exception):
         SynthesizedConcept(title="", description="d", body="b")
+
+
+def test_whitespace_only_body_is_rejected_by_schema():
+    # "   " passes min_length=1 but must still fail: title/description are
+    # backstopped by strict-OKF downstream, but body is not in the frontmatter, so
+    # a whitespace-only body would otherwise publish a near-empty concept.
+    with pytest.raises(ValidationError):
+        SynthesizedConcept(title="T", description="D", body="   ")
 
 
 def test_validate_config_reports_missing_key(monkeypatch):

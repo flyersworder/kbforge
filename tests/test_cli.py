@@ -218,3 +218,39 @@ def test_run_llm_synthesizer_offline(tmp_path: Path, capsys, monkeypatch):
             tmp_path / "out" / "sync-local_files" / "concepts/x/overview.md"
         ).read_text()
     )
+
+
+def test_run_llm_synthesizer_missing_extra_is_clean_cli_error(
+    tmp_path: Path, capsys, monkeypatch
+):
+    pytest.importorskip("pydantic_ai")
+
+    from kbforge import llm_synthesizer
+
+    def raise_missing_extra(config):
+        raise ImportError("install kbforge[llm]")
+
+    monkeypatch.setattr(
+        llm_synthesizer.LLMSynthesizer,
+        "_build_agent",
+        staticmethod(raise_missing_extra),
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--synthesizer",
+            "llm",
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    assert "install kbforge[llm]" in capsys.readouterr().out

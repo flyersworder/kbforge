@@ -7,7 +7,7 @@ import os
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from kbforge.models import CanonicalDocument, ChangeSet, ProposedChange
 from kbforge.synthesize import assemble
@@ -33,6 +33,13 @@ class SynthesizedConcept(BaseModel):
     title: str = Field(min_length=1)
     description: str = Field(min_length=1)
     body: str = Field(min_length=1)
+
+    @field_validator("title", "description", "body")
+    @classmethod
+    def _non_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("must be non-empty after stripping")
+        return v
 
 
 @dataclass
