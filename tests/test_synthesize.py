@@ -1,5 +1,7 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from kbforge.models import CanonicalDocument, ChangeSet, ResourceAnchor
 from kbforge.synthesize import concept_path, synthesize
 
@@ -19,6 +21,14 @@ def _doc(doc_id, structured=None, relations=None):
         structured=structured or {},
         relations=relations or [],
     )
+
+
+@pytest.fixture
+def _one_changed():
+    doc = _doc("local_files:apps/x.md", structured={"owner": "team-a"})
+    changeset = ChangeSet(added=["local_files:apps/x.md"])
+    existing = frozenset()
+    return [doc], changeset, existing
 
 
 def test_synthesizes_a_conformant_concept():
@@ -61,3 +71,12 @@ def test_nested_structured_value_is_not_a_facet():
     change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
     fm = change.concepts[concept_path("local_files:apps/x.md")]
     assert fm.facets == {"env": "prod"}  # nested dropped → law 1 stays well-formed
+
+
+def test_stub_synthesizer_matches_module_function(_one_changed):
+    from kbforge.synthesize import StubSynthesizer
+
+    docs, changeset, existing = _one_changed
+    a = synthesize(docs, changeset, existing)
+    b = StubSynthesizer().synthesize(docs, changeset, existing)
+    assert a.model_dump() == b.model_dump()  # identical behavior

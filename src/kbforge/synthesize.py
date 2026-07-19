@@ -6,6 +6,8 @@ check. kbforge checks synthesis output either way (spec §5)."""
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import yaml
 
 from kbforge.models import (
@@ -37,11 +39,18 @@ def _facets(structured: dict) -> dict:
     }
 
 
-def _render(doc: CanonicalDocument, fm: ConceptFrontmatter) -> str:
+def _render(
+    doc: CanonicalDocument,
+    fm: ConceptFrontmatter,
+    *,
+    title: str,
+    description: str,
+    body: str,
+) -> str:
     front: dict = {
         "type": fm.type,
-        "title": doc.title,
-        "description": doc.title,  # skeleton: description mirrors title
+        "title": title,
+        "description": description,
         "timestamp": fm.freshness.isoformat() if fm.freshness else None,
     }
     front.update(fm.facets)
@@ -52,19 +61,22 @@ def _render(doc: CanonicalDocument, fm: ConceptFrontmatter) -> str:
     if fm.links:
         front["links"] = fm.links
     head = yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
-    return f"---\n{head}\n---\n\n# {doc.title}\n\n{doc.text}\n"
+    return f"---\n{head}\n---\n\n# {title}\n\n{body}\n"
 
 
-def synthesize(
-    changed_docs: list[CanonicalDocument],
+def assemble(
+    items: list[tuple[CanonicalDocument, str, str, str]],
     changeset: ChangeSet,
     existing_paths: frozenset[str] = frozenset(),
 ) -> ProposedChange:
-    known = {concept_path(d.doc_id) for d in changed_docs} | set(existing_paths)
+    """Build the ProposedChange frame from per-doc prose (doc, title, description,
+    body). Both synthesizers produce `items` differently and share this assembly, so
+    the kbforge-owned structural frame is identical regardless of prose source."""
+    known = {concept_path(doc.doc_id) for doc, *_ in items} | set(existing_paths)
     files: dict[str, str] = {}
     concepts: dict[str, ConceptFrontmatter] = {}
     summary = ChangeSummary()
-    for doc in changed_docs:
+    for doc, title, description, body in items:
         path = concept_path(doc.doc_id)
         links = [concept_path(r) for r in doc.relations]
         fm = ConceptFrontmatter(
@@ -75,18 +87,47 @@ def synthesize(
             freshness=doc.anchor.retrieved_at,
         )
         concepts[path] = fm
-        files[path] = _render(doc, fm)
+        files[path] = _render(doc, fm, title=title, description=description, body=body)
         summary.sources_changed.append(doc.anchor)
     summary.claims_added = sorted(concept_path(x) for x in changeset.added)
     summary.claims_modified = sorted(concept_path(x) for x in changeset.modified)
     summary.claims_removed = sorted(changeset.removed)
-    # Name the branch after the source system so a git sync doesn't propose onto a
-    # branch labelled for files. One connector runs per sync, so all changed docs
-    # share a system.
-    system = changed_docs[0].anchor.system if changed_docs else "source"
+    system = items[0][0].anchor.system if items else "source"
     return ProposedChange(
         branch_hint=f"sync/{system}",
         files=files,
         concepts=concepts,
         summary=summary,
     )
+
+
+class Synthesizer(Protocol):
+    def synthesize(
+        self,
+        changed_docs: list[CanonicalDocument],
+        changeset: ChangeSet,
+        existing_paths: frozenset[str] = frozenset(),
+    ) -> ProposedChange: ...
+
+
+class StubSynthesizer:
+    """Deterministic, no LLM: title and description mirror the source; body is the
+    canonical text verbatim. The default synthesizer and the test baseline."""
+
+    def synthesize(
+        self,
+        changed_docs: list[CanonicalDocument],
+        changeset: ChangeSet,
+        existing_paths: frozenset[str] = frozenset(),
+    ) -> ProposedChange:
+        items = [(doc, doc.title, doc.title, doc.text) for doc in changed_docs]
+        return assemble(items, changeset, existing_paths)
+
+
+def synthesize(
+    changed_docs: list[CanonicalDocument],
+    changeset: ChangeSet,
+    existing_paths: frozenset[str] = frozenset(),
+) -> ProposedChange:
+    """Backwards-compatible module entry point; delegates to StubSynthesizer."""
+    return StubSynthesizer().synthesize(changed_docs, changeset, existing_paths)
