@@ -30,3 +30,13 @@ def pytest_collection_modifyitems(config, items):
 
 def pytest_configure(config):
     config.addinivalue_line("markers", "live: test that calls a real LLM provider")
+    # The module-level guard above disables ALL real model requests. When the user
+    # explicitly opts in with --run-live, re-enable them so the live test can call a
+    # real provider; offline tests use TestModel/FunctionModel and never make one.
+    if config.getoption("--run-live"):
+        try:
+            import pydantic_ai.models
+
+            pydantic_ai.models.ALLOW_MODEL_REQUESTS = True
+        except ImportError:  # pragma: no cover - the [llm] extra is not installed
+            pass
