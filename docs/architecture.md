@@ -402,7 +402,7 @@ class ConnectorSpec:
 
 ```python
 class PublisherSpec:
-    """Where proposals go. Pilot ships gitlab-mr; dry-run ships in core."""
+    """Where proposals go. MUST NOT merge (§5.2)."""
 
     @hookspec
     def kbforge_publisher_info(self) -> ConnectorInfo: ...
