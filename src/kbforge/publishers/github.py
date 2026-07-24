@@ -30,6 +30,11 @@ def _ref_path(ref: str) -> str:
     This matters because `branch` defaults to change.branch_hint, which is
     connector-supplied and therefore untrusted, exactly like the file keys
     safe_join() guards.
+
+    Note this is weaker than a full guarantee: an empty segment (from a
+    leading/trailing/doubled slash, e.g. "/foo" or "a//b") passes through
+    unchanged rather than being rejected. That is fine here — the result is
+    simply not a syntactically valid ref, which the forge itself rejects.
     """
     return "/".join(
         seg.replace(".", "%2E") if seg in {".", ".."} else quote(seg, safe="")
@@ -82,13 +87,14 @@ class GitHubClient:
             f"/repos/{self._repo}/git/commits",
             {"message": message, "tree": tree["sha"], "parents": [head["sha"]]},
         )
-        # Same encoding on both, so the ref the POST creates is the ref the
-        # PATCH targeted.
-        ref = _ref_path(branch)
+        # The PATCH target is a URL *path*, so it is percent-encoded via
+        # _ref_path(). The POST body below is JSON, not a path — "ref" there
+        # must be the literal, fully-qualified ref name, unencoded. A URL path
+        # and a JSON field are different things; only the former needs escaping.
         try:
             self._call(
                 "PATCH",
-                f"/repos/{self._repo}/git/refs/heads/{ref}",
+                f"/repos/{self._repo}/git/refs/heads/{_ref_path(branch)}",
                 {"sha": commit["sha"], "force": True},
             )
         except ForgeError as exc:
@@ -97,7 +103,7 @@ class GitHubClient:
             self._call(
                 "POST",
                 f"/repos/{self._repo}/git/refs",
-                {"ref": f"refs/heads/{ref}", "sha": commit["sha"]},
+                {"ref": f"refs/heads/{branch}", "sha": commit["sha"]},
             )
 
     def find_open_pr(self, branch: str) -> str | None:

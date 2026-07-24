@@ -209,7 +209,14 @@ def test_put_files_encodes_a_traversing_branch_in_the_ref_path(monkeypatch):
     assert "/.." not in url
 
 
-def test_created_ref_payload_matches_the_patched_ref_path(monkeypatch):
+def test_created_ref_payload_carries_the_raw_branch_not_the_encoded_path(
+    monkeypatch,
+):
+    """sync/local-files cannot discriminate here — its _ref_path()-encoded and
+    raw forms are byte-identical, so it passes whether the POST body uses the
+    encoded or the raw value. A branch with a character quote(safe="") escapes
+    (here '+') is required: the PATCH URL must carry the encoded segment while
+    the POST body carries the literal, unencoded ref name."""
     monkeypatch.setenv("GITHUB_TOKEN", "t")
     routes = {
         ("GET", "/repos/acme/kb/commits/main"): {
@@ -221,15 +228,19 @@ def test_created_ref_payload_matches_the_patched_ref_path(monkeypatch):
         ("POST", "/repos/acme/kb/git/refs"): {"ref": "created"},
     }
     errors = {
-        ("PATCH", f"{API}/repos/acme/kb/git/refs/heads/sync/local-files"): ForgeError(
+        ("PATCH", f"{API}/repos/acme/kb/git/refs/heads/sync/kb%2Bdocs"): ForgeError(
             422, "u", "Reference does not exist"
         )
     }
     client, transport = _client(routes, errors)
 
-    client.put_files("sync/local-files", "main", {"a.md": "A"}, "msg")
+    client.put_files("sync/kb+docs", "main", {"a.md": "A"}, "msg")
 
-    assert transport.calls[-1]["payload"]["ref"] == "refs/heads/sync/local-files"
+    patch_call, post_call = transport.calls[-2], transport.calls[-1]
+    assert patch_call["method"] == "PATCH"
+    assert patch_call["url"] == f"{API}/repos/acme/kb/git/refs/heads/sync/kb%2Bdocs"
+    assert post_call["method"] == "POST"
+    assert post_call["payload"] == {"ref": "refs/heads/sync/kb+docs", "sha": "nc"}
 
 
 def test_base_ref_is_encoded_without_breaking_slashes(monkeypatch):
