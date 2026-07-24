@@ -121,6 +121,16 @@ def test_validate_config_rejects_a_traversing_repo(monkeypatch):
     assert any(".." in p for p in problems)
 
 
+def test_validate_config_rejects_a_bare_dot_segment(monkeypatch):
+    """'acme/./kb' normalizes to the same repo as 'acme/kb' — nothing escapes —
+    but '..' is already rejected by segment, and a bare '.' segment is never a
+    meaningful repo path either, so it should be rejected the same way rather
+    than quietly accepted."""
+    monkeypatch.setenv("EXAMPLE_TOKEN", "t")
+    problems = ForgeConfig(repo="acme/./kb", **DEFAULTS).validate_config()
+    assert problems != []
+
+
 @pytest.mark.parametrize(
     "repo",
     ["acme/kb?x=1", "acme/kb#frag", "acme/../x", "acme/k b", "acme/kb%2F"],
