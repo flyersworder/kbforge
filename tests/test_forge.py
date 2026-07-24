@@ -226,6 +226,20 @@ def test_publish_rejects_a_traversing_file_key():
     assert client.calls == []  # nothing reached the forge
 
 
+def test_publish_rejects_a_traversing_file_key_before_resolving_default_branch():
+    """cfg.base unset means "resolve the default branch", which is a live
+    forge API call. File-path validation must happen before that call, not
+    after, or a traversing key reaches the network before being rejected."""
+    client = FakeForgeClient()
+    change = ProposedChange(
+        branch_hint="sync/x",
+        files={"../../.github/workflows/deploy.yml": "evil"},
+    )
+    with pytest.raises(PathError):
+        publish_to_forge(client, change, _cfg())
+    assert client.calls == []  # not even default_branch() was called
+
+
 def test_forge_client_protocol_has_no_merge_method():
     from kbforge.publishers import forge
 
