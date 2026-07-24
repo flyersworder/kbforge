@@ -98,6 +98,8 @@ class GitLabClient:
         )
 
     def find_open_pr(self, branch: str) -> str | None:
+        # A branch never reaches a URL *path* here — it is a query value (so
+        # safe="" is right, slashes included) or a JSON payload field.
         source = quote(branch, safe="")
         mrs = self._call(
             "GET",

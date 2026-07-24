@@ -23,6 +23,7 @@ from kbforge.pipeline import (
     run,
 )
 from kbforge.publishers._http import ForgeError
+from kbforge.publishers.forge import PathError
 from kbforge.registry import build_registry
 
 
@@ -190,8 +191,11 @@ def main(argv: list[str] | None = None) -> int:
     except ConfigError as exc:
         print(str(exc))
         return 2
-    except ForgeError as exc:
+    except (ForgeError, PathError) as exc:
         # The mirror never advanced, so the next run retries this same change.
+        # PathError lands here too: a connector emitting a traversing file key
+        # is the case safe_join() exists for, and it deserves a message rather
+        # than a traceback.
         print(f"Publish failed: {exc}")
         return 1
 
