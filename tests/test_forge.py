@@ -113,6 +113,31 @@ def test_validate_config_reports_malformed_repo(monkeypatch):
     assert any("owner/name" in p for p in problems)
 
 
+def test_validate_config_rejects_a_traversing_repo(monkeypatch):
+    """Every segment of 'acme/../../x' is non-empty, so the owner/name shape
+    check alone accepts it."""
+    monkeypatch.setenv("EXAMPLE_TOKEN", "t")
+    problems = ForgeConfig(repo="acme/../../x", **DEFAULTS).validate_config()
+    assert any(".." in p for p in problems)
+
+
+@pytest.mark.parametrize(
+    "repo",
+    ["acme/kb?x=1", "acme/kb#frag", "acme/../x", "acme/k b", "acme/kb%2F"],
+)
+def test_validate_config_rejects_repos_with_illegal_characters(monkeypatch, repo):
+    monkeypatch.setenv("EXAMPLE_TOKEN", "t")
+    assert ForgeConfig(repo=repo, **DEFAULTS).validate_config() != []
+
+
+@pytest.mark.parametrize(
+    "repo", ["acme/kb", "group/subgroup/project", "acme-co/kb.docs_v2"]
+)
+def test_validate_config_still_accepts_ordinary_repos(monkeypatch, repo):
+    monkeypatch.setenv("EXAMPLE_TOKEN", "t")
+    assert ForgeConfig(repo=repo, **DEFAULTS).validate_config() == []
+
+
 def test_validate_config_reports_unset_token_env(monkeypatch):
     monkeypatch.delenv("EXAMPLE_TOKEN", raising=False)
     problems = _cfg().validate_config()

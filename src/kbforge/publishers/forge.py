@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import os
 import posixpath
+import re
 from dataclasses import dataclass, fields
 from typing import Protocol
 
@@ -23,6 +24,14 @@ from kbforge.publishers.summary import summary_md
 
 class PathError(ValueError):
     """A configured or generated path escapes the target repository."""
+
+
+# `repo` is interpolated into API URL paths (GitHub) and URL-encoded into one
+# (GitLab), so it is held to the characters a forge namespace can actually
+# contain. Slash is allowed because it separates owner/name and GitLab
+# subgroups; `..` is rejected separately, since it is made of allowed
+# characters.
+_REPO_CHARS = re.compile(r"^[A-Za-z0-9._/-]+$")
 
 
 def safe_join(base_path: str, rel: str) -> str:
@@ -69,6 +78,15 @@ class ForgeConfig:
             # (group/subgroup/project); GitHub is always owner/name.
             if len(segments) < 2 or not all(segments):
                 problems.append(f"'repo' must be owner/name, got {self.repo!r}")
+            elif ".." in segments:
+                # Every segment is non-empty in 'acme/../../x', so the shape
+                # check above accepts it; it still climbs out of the namespace.
+                problems.append(f"'repo' must not contain '..', got {self.repo!r}")
+            elif not _REPO_CHARS.fullmatch(self.repo):
+                problems.append(
+                    "'repo' may only contain letters, digits, '.', '_', '-' and "
+                    f"'/', got {self.repo!r}"
+                )
         if self.base_path:
             try:
                 safe_join(self.base_path, "probe.md")

@@ -3,6 +3,8 @@ from pathlib import Path
 import pytest
 
 from kbforge.__main__ import _publishers, main
+from kbforge.publishers._http import ForgeError
+from kbforge.publishers.forge import PathError
 from kbforge.registry import build_registry
 
 DOC = "---\ntype: application\ntitle: App X\n---\nApp X.\n"
@@ -128,6 +130,49 @@ def test_malformed_publish_set_exits_2(tmp_path: Path, capsys):
     )
     assert code == 2
     assert "KEY=VALUE" in capsys.readouterr().out
+
+
+def _run_with_publish_error(tmp_path, monkeypatch, exc):
+    """Drive the CLI to the publish step, which then raises `exc`."""
+
+    def boom(*args, **kwargs):
+        raise exc
+
+    monkeypatch.setattr("kbforge.__main__.run", boom)
+    return main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={_source(tmp_path)}",
+            *_plumbing(tmp_path),
+        ]
+    )
+
+
+def test_forge_error_from_the_publish_step_exits_1(tmp_path: Path, capsys, monkeypatch):
+    code = _run_with_publish_error(
+        tmp_path, monkeypatch, ForgeError(500, "https://api.example/x", "boom")
+    )
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "Publish failed" in out
+    assert "500" in out
+
+
+def test_path_error_from_the_publish_step_exits_1(tmp_path: Path, capsys, monkeypatch):
+    """A connector emitting a traversing file key is the case safe_join()
+    exists for; it must not surface as a traceback."""
+    code = _run_with_publish_error(
+        tmp_path, monkeypatch, PathError("'..' not allowed in path: '../../x.yml'")
+    )
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "Publish failed" in out
+    assert "not allowed in path" in out
 
 
 @pytest.mark.parametrize("publisher", ["github", "gitlab"])

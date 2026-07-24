@@ -17,6 +17,26 @@ DEFAULTS = {"api_base": "https://api.github.com", "token_env": "GITHUB_TOKEN"}
 _REF_MISSING = (404, 422)
 
 
+def _ref_path(ref: str) -> str:
+    """Encode a branch/ref for use inside a URL *path*.
+
+    A slash is structural in a ref name — `sync/local-files` is one branch, not
+    two path segments — so quoting the whole string with safe="" would break it.
+    Each segment is encoded on its own instead. `.` and `..` need explicit
+    handling: urllib treats `.` as unreserved and never escapes it, so
+    quote("..", safe="") is still "..", which a proxy or the server may collapse
+    into a traversal. They are escaped by hand.
+
+    This matters because `branch` defaults to change.branch_hint, which is
+    connector-supplied and therefore untrusted, exactly like the file keys
+    safe_join() guards.
+    """
+    return "/".join(
+        seg.replace(".", "%2E") if seg in {".", ".."} else quote(seg, safe="")
+        for seg in ref.split("/")
+    )
+
+
 class GitHubClient:
     def __init__(self, cfg: ForgeConfig, transport: Transport = request) -> None:
         self._cfg = cfg
@@ -45,7 +65,7 @@ class GitHubClient:
         # One call yields both the base commit SHA and its tree SHA, so no
         # separate ref lookup is needed. Contents go inline in the tree entries,
         # so no blob calls are needed either.
-        head = self._call("GET", f"/repos/{self._repo}/commits/{quote(base)}")
+        head = self._call("GET", f"/repos/{self._repo}/commits/{_ref_path(base)}")
         tree = self._call(
             "POST",
             f"/repos/{self._repo}/git/trees",
@@ -62,10 +82,13 @@ class GitHubClient:
             f"/repos/{self._repo}/git/commits",
             {"message": message, "tree": tree["sha"], "parents": [head["sha"]]},
         )
+        # Same encoding on both, so the ref the POST creates is the ref the
+        # PATCH targeted.
+        ref = _ref_path(branch)
         try:
             self._call(
                 "PATCH",
-                f"/repos/{self._repo}/git/refs/heads/{branch}",
+                f"/repos/{self._repo}/git/refs/heads/{ref}",
                 {"sha": commit["sha"], "force": True},
             )
         except ForgeError as exc:
@@ -74,7 +97,7 @@ class GitHubClient:
             self._call(
                 "POST",
                 f"/repos/{self._repo}/git/refs",
-                {"ref": f"refs/heads/{branch}", "sha": commit["sha"]},
+                {"ref": f"refs/heads/{ref}", "sha": commit["sha"]},
             )
 
     def find_open_pr(self, branch: str) -> str | None:

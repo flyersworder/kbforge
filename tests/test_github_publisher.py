@@ -164,6 +164,110 @@ def test_put_files_reraises_unexpected_ref_errors(monkeypatch):
     assert exc.value.status == 403
 
 
+def test_put_files_keeps_a_slashed_branch_intact_in_the_ref_path(monkeypatch):
+    """A slash is structural in a ref name, so sync/local-files must reach the
+    ref path unchanged."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    routes = {
+        ("GET", "/repos/acme/kb/commits/main"): {
+            "sha": "s",
+            "commit": {"tree": {"sha": "t"}},
+        },
+        ("POST", "/repos/acme/kb/git/trees"): {"sha": "nt"},
+        ("POST", "/repos/acme/kb/git/commits"): {"sha": "nc"},
+        ("PATCH", "/repos/acme/kb/git/refs/heads/sync/local-files"): {},
+    }
+    client, transport = _client(routes)
+
+    client.put_files("sync/local-files", "main", {"a.md": "A"}, "msg")
+
+    assert transport.calls[-1]["url"] == (
+        f"{API}/repos/acme/kb/git/refs/heads/sync/local-files"
+    )
+
+
+def test_put_files_encodes_a_traversing_branch_in_the_ref_path(monkeypatch):
+    """branch defaults to the connector-supplied branch_hint, so a '..' segment
+    must not reach the URL path as '..'. Note quote('..', safe='') is still
+    '..' — urllib never escapes a dot — so the segment is escaped by hand."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    routes = {
+        ("GET", "/repos/acme/kb/commits/main"): {
+            "sha": "s",
+            "commit": {"tree": {"sha": "t"}},
+        },
+        ("POST", "/repos/acme/kb/git/trees"): {"sha": "nt"},
+        ("POST", "/repos/acme/kb/git/commits"): {"sha": "nc"},
+        ("PATCH", "%2E%2E/%2E%2E/evil"): {},
+    }
+    client, transport = _client(routes)
+
+    client.put_files("../../evil", "main", {"a.md": "A"}, "msg")
+
+    url = transport.calls[-1]["url"]
+    assert url == f"{API}/repos/acme/kb/git/refs/heads/%2E%2E/%2E%2E/evil"
+    assert "/.." not in url
+
+
+def test_created_ref_payload_matches_the_patched_ref_path(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    routes = {
+        ("GET", "/repos/acme/kb/commits/main"): {
+            "sha": "s",
+            "commit": {"tree": {"sha": "t"}},
+        },
+        ("POST", "/repos/acme/kb/git/trees"): {"sha": "nt"},
+        ("POST", "/repos/acme/kb/git/commits"): {"sha": "nc"},
+        ("POST", "/repos/acme/kb/git/refs"): {"ref": "created"},
+    }
+    errors = {
+        ("PATCH", f"{API}/repos/acme/kb/git/refs/heads/sync/local-files"): ForgeError(
+            422, "u", "Reference does not exist"
+        )
+    }
+    client, transport = _client(routes, errors)
+
+    client.put_files("sync/local-files", "main", {"a.md": "A"}, "msg")
+
+    assert transport.calls[-1]["payload"]["ref"] == "refs/heads/sync/local-files"
+
+
+def test_base_ref_is_encoded_without_breaking_slashes(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    routes = {
+        ("GET", "/repos/acme/kb/commits/release/1.0"): {
+            "sha": "s",
+            "commit": {"tree": {"sha": "t"}},
+        },
+        ("POST", "/repos/acme/kb/git/trees"): {"sha": "nt"},
+        ("POST", "/repos/acme/kb/git/commits"): {"sha": "nc"},
+        ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+    }
+    client, transport = _client(routes)
+
+    client.put_files("b", "release/1.0", {"a.md": "A"}, "msg")
+
+    assert transport.calls[0]["url"] == f"{API}/repos/acme/kb/commits/release/1.0"
+
+
+def test_traversing_base_ref_is_encoded(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    routes = {
+        ("GET", "/commits/%2E%2E/%2E%2E/etc"): {
+            "sha": "s",
+            "commit": {"tree": {"sha": "t"}},
+        },
+        ("POST", "/repos/acme/kb/git/trees"): {"sha": "nt"},
+        ("POST", "/repos/acme/kb/git/commits"): {"sha": "nc"},
+        ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+    }
+    client, transport = _client(routes)
+
+    client.put_files("b", "../../etc", {"a.md": "A"}, "msg")
+
+    assert "/.." not in transport.calls[0]["url"]
+
+
 def test_find_open_pr_returns_stringified_number(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "t")
     client, transport = _client({("GET", "&state=open"): [{"number": 42}]})
