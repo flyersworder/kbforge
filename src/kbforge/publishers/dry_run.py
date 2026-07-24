@@ -19,6 +19,10 @@ class DryRunPublisher:
         )
 
     @hookimpl
+    def kbforge_validate_publish_config(self, config: dict) -> list[str]:
+        return [] if config.get("out_dir") else ["'out_dir' is required"]
+
+    @hookimpl
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         branch = change.branch_hint.replace("/", "-")
         out_dir = Path(config["out_dir"]) / branch

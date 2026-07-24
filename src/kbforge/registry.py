@@ -16,6 +16,8 @@ from kbforge.hookspecs import (
     PublisherSpec,
 )
 from kbforge.publishers.dry_run import DryRunPublisher
+from kbforge.publishers.github import GitHubPublisher
+from kbforge.publishers.gitlab import GitLabPublisher
 
 
 def build_registry() -> pluggy.PluginManager:
@@ -26,6 +28,8 @@ def build_registry() -> pluggy.PluginManager:
     pm.register(LocalFilesConnector())
     pm.register(GitCommitsConnector())
     pm.register(DryRunPublisher())
+    pm.register(GitHubPublisher())
+    pm.register(GitLabPublisher())
     # Third-party plugins: any installed package advertising the kbforge.connectors
     # or kbforge.publishers entry-point group is discovered without editing this
     # file (§5.4).
