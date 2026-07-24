@@ -27,9 +27,13 @@ This library is the reference implementation of that missing half:
 | **Production protocol** (connectors, canonicalization, diff, provenance, publish) | **this library** | this spec |
 | Serving protocol | MCP | exists |
 
-Design stance carried over from the main doc: **the core ships zero connectors,
-zero credentials, zero CI logic.** Connectors are plugins; deployments are separate
-repos. The interface is the product.
+Design stance carried over from the main doc: **the core ships zero credentialed
+connectors, zero CI logic.** Connectors are plugins; deployments are separate
+repos. The interface is the product. Publishers are the exception that proves
+it: publishing is the producer's own delivery mechanism, not an integration with
+someone's system of record, so `github` and `gitlab` ship in core — reading their
+credentials from the environment, never from config. See
+[`design/2026-07-24-forge-publisher-design.md`](design/2026-07-24-forge-publisher-design.md).
 
 ---
 
@@ -75,8 +79,8 @@ remove them. (This is the same posture as ADR-2 in the main doc.)
 
 1. **Connectors** (`ConnectorSpec`, §5.1) — bring data *in* from a system of record.
    Fully specified in this sketch; this is what we build first.
-2. **Publishers** (`PublisherSpec`, §5.2) — push proposals *out* (GitLab MR, GitHub PR,
-   local dry-run). Thin; sketched here because the pilot needs exactly one (GitLab).
+2. **Publishers** (`PublisherSpec`, §5.2) — push proposals *out*. Three ship in core:
+   `dry-run` (local), `github` (PR), `gitlab` (MR).
 
 Synthesis (the LLM step) and validation are **core stages with narrow extension
 hooks** (§5.3), not open plugin families — they carry the grounding contract and the
@@ -409,6 +413,12 @@ class PublisherSpec:
         MUST NOT merge. Must be idempotent per (branch_hint, content-hash):
         re-running a failed pipeline updates the same MR, never opens twins."""
 ```
+
+Three publishers ship in core: `dry-run` (default; writes to a directory),
+`github` (pull requests) and `gitlab` (merge requests). All three implement
+`kbforge_publish` and `kbforge_validate_publish_config`; none implements a merge
+method, which is how §5.2's never-merge rule is enforced structurally rather
+than by convention.
 
 ### 5.3 Core-stage extension hooks (narrow, additive-only)
 
