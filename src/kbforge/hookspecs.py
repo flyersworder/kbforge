@@ -64,5 +64,14 @@ class PublisherSpec(ABC):
 
     @hookspec
     @abstractmethod
+    def kbforge_validate_publish_config(self, config: dict) -> list[str]:
+        """Return human-readable problems ([] = ok). No network I/O.
+
+        Mirrors the connector family's kbforge_validate_config so the CLI can
+        fail on a bad publisher config in under a second, rather than after a
+        full fetch and synthesize."""
+
+    @hookspec
+    @abstractmethod
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         """Open a review request; return its URL/path. Never merges."""
