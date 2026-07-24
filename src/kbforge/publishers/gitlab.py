@@ -1,5 +1,14 @@
 """GitLab merge-request publisher. Ships in core, credential from the
-environment only. Never merges (§5.2)."""
+environment only. Never merges (§5.2).
+
+Listing cost is asymmetric between the two forges: GitHub's put_files gets
+base's tree in a single GET (commits/{ref} returns the tree SHA directly).
+GitLab has no equivalent one-shot lookup, so _existing_paths() walks the
+project's tree page by page — one GET per _TREE_PAGE_SIZE (100) blobs, on
+every publish. On a large repository, an unscoped base_path="" makes that walk
+expensive; scoping base_path to the subtree kbforge actually writes to is the
+mitigation.
+"""
 
 from __future__ import annotations
 
@@ -15,9 +24,22 @@ DEFAULTS = {"api_base": "https://gitlab.com/api/v4", "token_env": "GITLAB_TOKEN"
 # Tree listing is paginated by hand: _http.request returns only the parsed body,
 # never the response headers, so x-next-page is not available to us. A page
 # shorter than _TREE_PAGE_SIZE is the last one; _TREE_MAX_PAGES caps the loop so
-# a misbehaving server cannot spin it forever.
+# a misbehaving server cannot spin it forever. Exhausting the cap without ever
+# seeing a short page means the listing is incomplete — _existing_paths() raises
+# rather than silently returning a partial set (see its docstring).
 _TREE_PAGE_SIZE = 100
 _TREE_MAX_PAGES = 1000
+
+
+class TreeListingTruncatedError(RuntimeError):
+    """The base tree has more pages than _TREE_MAX_PAGES covers.
+
+    Returning the partial set gathered so far would be worse than raising: a
+    path that exists on base but fell past the cap would be missing from
+    `existing`, so put_files() would send action="create" for it and GitLab
+    would answer 400 "A file with this name already exists" — the exact bug
+    the base/create-vs-update fix addressed, resurfacing silently.
+    """
 
 
 class GitLabClient:
@@ -45,6 +67,10 @@ class GitLabClient:
 
         force=true overwrites the target *ref*, not the tree: the commit is
         built from start_branch, so everything on base is still there.
+
+        Raises TreeListingTruncatedError instead of returning a partial set if
+        the tree has more than _TREE_MAX_PAGES pages — see that class's
+        docstring for why a partial set is unsafe to hand back silently.
         """
         ref = quote(base, safe="")
         base_path = self._cfg.base_path
@@ -68,6 +94,18 @@ class GitLabClient:
             found.update(e["path"] for e in entries if e.get("type") == "blob")
             if len(entries) < _TREE_PAGE_SIZE:
                 break
+        else:
+            # The loop ran to completion without a short page or a 404: base's
+            # tree has at least _TREE_MAX_PAGES * _TREE_PAGE_SIZE blobs (in
+            # scope) and there may be more beyond the cap.
+            raise TreeListingTruncatedError(
+                f"listing {base!r}"
+                + (f" scoped to base_path={base_path!r}" if base_path else "")
+                + f" did not finish within _TREE_MAX_PAGES ({_TREE_MAX_PAGES}) "
+                "pages; refusing to return a partial listing. Scope the "
+                "publish config's 'base_path' to a narrower subtree to keep "
+                "the listing within the cap."
+            )
         return found
 
     def put_files(

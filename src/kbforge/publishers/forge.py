@@ -81,10 +81,15 @@ class ForgeConfig:
             # (group/subgroup/project); GitHub is always owner/name.
             if len(segments) < 2 or not all(segments):
                 problems.append(f"'repo' must be owner/name, got {self.repo!r}")
-            elif ".." in segments:
-                # Every segment is non-empty in 'acme/../../x', so the shape
-                # check above accepts it; it still climbs out of the namespace.
-                problems.append(f"'repo' must not contain '..', got {self.repo!r}")
+            elif ".." in segments or "." in segments:
+                # Every segment is non-empty in 'acme/../../x' or 'acme/./kb',
+                # so the shape check above accepts both; '..' climbs out of the
+                # namespace, and '.' is rejected alongside it for the same
+                # reason (a bare '.' segment is never a meaningful repo path,
+                # even though it normalizes to the same repo here).
+                problems.append(
+                    f"'repo' must not contain '.' or '..' segments, got {self.repo!r}"
+                )
             elif not _REPO_CHARS.fullmatch(self.repo):
                 problems.append(
                     "'repo' may only contain letters, digits, '.', '_', '-' and "

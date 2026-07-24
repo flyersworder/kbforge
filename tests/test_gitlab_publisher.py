@@ -1,5 +1,6 @@
 import pytest
 
+from kbforge.publishers import gitlab as gitlab_module
 from kbforge.publishers._http import ForgeError
 from kbforge.publishers.forge import ForgeConfig
 from kbforge.publishers.gitlab import (
@@ -7,6 +8,7 @@ from kbforge.publishers.gitlab import (
     DEFAULTS,
     GitLabClient,
     GitLabPublisher,
+    TreeListingTruncatedError,
 )
 
 
@@ -246,6 +248,28 @@ def test_tree_listing_is_scoped_by_base_path(monkeypatch):
 
     assert "path=knowledge" in transport.calls[0]["url"]
     assert "ref=main" in transport.calls[0]["url"]
+
+
+def test_tree_listing_raises_instead_of_returning_a_partial_set(monkeypatch):
+    """If the loop exhausts _TREE_MAX_PAGES without ever seeing a short page,
+    the tree has more entries than the cap covers. Returning the partial set
+    gathered so far would make put_files() send action="create" for a path
+    that in fact already exists past the cap, and GitLab would answer 400 "A
+    file with this name already exists" — silently reintroducing the bug the
+    create-vs-update fix addressed."""
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    monkeypatch.setattr(gitlab_module, "_TREE_PAGE_SIZE", 1)
+    monkeypatch.setattr(gitlab_module, "_TREE_MAX_PAGES", 2)
+    client, transport = _client(
+        {TREE_PAGE_1: _blobs("a.md"), TREE_PAGE_2: _blobs("b.md")},
+    )
+
+    with pytest.raises(TreeListingTruncatedError, match="_TREE_MAX_PAGES"):
+        client.put_files("b", "main", {"a.md": "A"}, "msg")
+
+    # Never reached the commit call: the error is raised before put_files()
+    # commits anything.
+    assert not any(c["method"] == "POST" for c in transport.calls)
 
 
 def test_find_open_pr_returns_stringified_iid(monkeypatch):
