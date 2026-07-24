@@ -124,10 +124,15 @@ class ForgeClient(Protocol):
 def publish_to_forge(
     client: ForgeClient, change: ProposedChange, cfg: ForgeConfig
 ) -> str:
-    """Open or update one review request; return its URL. Never merges."""
+    """Open or update one review request; return its URL. Never merges.
+
+    Validates every file path with safe_join() before making any client call
+    (including client.default_branch(), used when cfg.base is unset) so a
+    traversing file key is rejected before it can reach the network.
+    """
+    files = {safe_join(cfg.base_path, rel): body for rel, body in change.files.items()}
     base = cfg.base or client.default_branch()
     branch = cfg.branch or change.branch_hint
-    files = {safe_join(cfg.base_path, rel): body for rel, body in change.files.items()}
     body = summary_md(change.summary)
 
     client.put_files(branch, base, files, cfg.title)
