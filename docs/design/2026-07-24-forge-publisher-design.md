@@ -130,7 +130,7 @@ interpolates it back into a URL in `update_pr`. The orchestration never parses o
 
 ## 4. Configuration
 
-`ForgeConfig` is a frozen dataclass, following the `LLMConfig` shape
+`ForgeConfig` is a plain dataclass, following the `LLMConfig` shape
 (`llm_synthesizer.py:50-64`) that already governs credentialed config in this codebase.
 
 | Field | Default | Meaning |

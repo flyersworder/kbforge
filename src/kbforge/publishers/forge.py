@@ -49,6 +49,9 @@ def safe_join(base_path: str, rel: str) -> str:
             raise PathError(f"'..' not allowed in path: {part!r}")
     joined = posixpath.join(base_path, rel) if base_path else rel
     normalized = posixpath.normpath(joined)
+    # backstop: unreachable given the per-segment rejection above, and kept
+    # deliberately so that relaxing that loop cannot silently drop the
+    # "never escapes the repo" guarantee.
     if normalized.startswith("/") or normalized == ".." or normalized.startswith("../"):
         raise PathError(f"path escapes the repository: {joined!r}")
     return normalized
