@@ -4,7 +4,7 @@ import pytest
 
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.models import ConnectorInfo
-from kbforge.pipeline import run
+from kbforge.pipeline import NoOp, Published, run
 from kbforge.publishers._http import ForgeError
 
 DOC = "---\ntype: application\ntitle: App X\n---\nApp X.\n"
@@ -53,8 +53,6 @@ def test_failed_publish_does_not_advance_the_mirror(tmp_path: Path):
         )
 
     # Nothing was committed, so a retry still sees the change.
-    from kbforge.pipeline import Published
-
     recorder = RecordingPublisher()
     result = run(
         LocalFilesConnector(),
@@ -72,8 +70,6 @@ def test_failed_publish_does_not_advance_the_mirror(tmp_path: Path):
 
 
 def test_successful_publish_advances_the_mirror_so_a_rerun_is_a_noop(tmp_path: Path):
-    from kbforge.pipeline import NoOp
-
     src = _source(tmp_path)
     mirror = tmp_path / "mirror"
     state = tmp_path / "state"
