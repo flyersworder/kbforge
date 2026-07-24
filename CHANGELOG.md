@@ -12,6 +12,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `examples/github-issues-connector/` — a complete worked example of a credentialed
   connector (GitHub issues → OKF concepts) with token auth, pagination, and a real
   incremental cursor, plus a walkthrough README for writing your own connector.
+- GitHub (`--publisher github`) and GitLab (`--publisher gitlab`) publishers that
+  open or update a real pull/merge request from a `ProposedChange`. No new
+  runtime dependencies — both run on stdlib `urllib`. Tokens are read from
+  `GITHUB_TOKEN` / `GITLAB_TOKEN` (configurable via `token_env`), never the CLI.
+- `--publisher NAME` and `--publish-set KEY=VALUE` CLI flags; `kbforge list` now
+  lists publishers.
+- `kbforge_validate_publish_config` hookspec so publisher config is checked
+  before the pipeline runs.
+
+### Changed
+
+- Publishers are now resolved by name. Previously the first registered plugin
+  implementing `kbforge_publish` won, which became order-dependent with more
+  than one publisher installed.
+- The core design stance is now "zero credentialed *connectors*" — publishing is
+  delivery, not a system-of-record integration.
 
 ## [0.2.0] - 2026-07-19
 

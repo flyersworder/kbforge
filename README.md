@@ -36,13 +36,13 @@ and the [artifact-contract spec](docs/design/2026-07-18-agent-facing-artifact-co
 
 **Alpha — a working walking skeleton.** The deterministic core runs end to end with no
 credentials: two built-in connectors (`local_files`, `git_commits`), canonicalization
-with a stability law, a replay-safe mirror and diff, the §4.4 validator gate, and a
-dry-run publisher — change detection, the no-op rule, and incremental sync via a real
-cursor all exercised by the test suite. Synthesis ships in two forms: a deterministic
-stub (the default, no LLM) and an opt-in grounded LLM synthesizer (`--synthesizer llm`,
-via the `kbforge[llm]` extra).
+with a stability law, a replay-safe mirror and diff, the §4.4 validator gate, and three
+publishers — dry-run, GitHub, and GitLab — change detection, the no-op rule, and
+incremental sync via a real cursor all exercised by the test suite. Synthesis ships in
+two forms: a deterministic stub (the default, no LLM) and an opt-in grounded LLM
+synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra).
 
-Not built yet: a credentialed system-of-record connector, and a GitHub-PR publisher. See
+Not built yet: a credentialed system-of-record connector. See
 [`docs/architecture.md`](docs/architecture.md) for the full map.
 
 ## Quickstart
@@ -76,6 +76,34 @@ kbforge run --connector local_files --set path=./docs \
 
 The synthesizer reaches models through a LiteLLM provider, so OpenRouter and a
 self-hosted LiteLLM gateway share one config path.
+
+## Publishing to GitHub or GitLab
+
+The default publisher writes the proposal to a local directory. To open a real
+pull request or merge request instead, select a forge publisher and give it a
+repo. The token comes from an env var, never the CLI:
+
+```bash
+export GITHUB_TOKEN=...            # or GITLAB_TOKEN
+kbforge run --connector local_files --set path=./docs \
+  --publisher github --publish-set repo=acme/knowledge-base \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```
+
+Both publishers accept the same config: `repo` (required), `base` (default: the
+repo's default branch), `base_path` (a subdirectory, default: repo root),
+`branch` (default: `sync/<system>`), `title`, `api_base` (point it at GitHub
+Enterprise or a self-managed GitLab), and `token_env`.
+
+kbforge maintains **one long-lived sync branch and one open review request** per
+source system: a later run force-updates that branch and edits the existing
+PR/MR rather than opening a second one. Two consequences worth knowing:
+
+- Manual commits pushed onto the sync branch are discarded by the next run.
+- Concepts deleted from the source are not deleted from the target repo; files
+  absent from a run are inherited from the base branch.
+
+kbforge never merges. No publisher has a merge method.
 
 ## Design stance
 
