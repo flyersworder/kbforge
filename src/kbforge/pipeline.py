@@ -39,6 +39,8 @@ class ConnectorProtocol(Protocol):
 class PublisherProtocol(Protocol):
     """Duck-typed publisher interface (hookspec-based)."""
 
+    def kbforge_publisher_info(self) -> ConnectorInfo: ...
+
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str: ...
 
 

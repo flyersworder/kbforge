@@ -22,6 +22,7 @@ from kbforge.pipeline import (
     PublisherProtocol,
     run,
 )
+from kbforge.publishers._http import ForgeError
 from kbforge.registry import build_registry
 
 
@@ -34,11 +35,18 @@ def _connectors(pm: pluggy.PluginManager) -> dict[str, ConnectorProtocol]:
     }
 
 
-def _publisher(pm: pluggy.PluginManager) -> PublisherProtocol:
-    for p in pm.get_plugins():
-        if hasattr(p, "kbforge_publish"):
-            return cast(PublisherProtocol, p)
-    raise SystemExit("no publisher registered")
+def _publishers(pm: pluggy.PluginManager) -> dict[str, PublisherProtocol]:
+    """name -> publisher instance (a publisher implements kbforge_publish).
+
+    Keyed by name rather than "first plugin found": with three publishers
+    registered, positional lookup would make the destination depend on plugin
+    registration order.
+    """
+    return {
+        p.kbforge_publisher_info().name: cast(PublisherProtocol, p)
+        for p in pm.get_plugins()
+        if hasattr(p, "kbforge_publish")
+    }
 
 
 def _parse_settings(pairs: list[str]) -> dict:
@@ -78,6 +86,19 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEY=VALUE",
         help="LLM synthesizer config (repeatable); YAML-typed values",
     )
+    r.add_argument(
+        "--publisher",
+        default="dry-run",
+        help="publisher name (default: dry-run); see `kbforge list`",
+    )
+    r.add_argument(
+        "--publish-set",
+        action="append",
+        default=[],
+        dest="publish_settings",
+        metavar="KEY=VALUE",
+        help="publisher config (repeatable); values are YAML-typed",
+    )
     r.add_argument("--mirror", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--state", required=True)
@@ -85,6 +106,7 @@ def main(argv: list[str] | None = None) -> int:
 
     pm = build_registry()
     connectors = _connectors(pm)
+    publishers = _publishers(pm)
 
     if args.cmd == "list":
         for name in sorted(connectors):
@@ -93,6 +115,10 @@ def main(argv: list[str] | None = None) -> int:
         print("synthesizers:")
         print("  stub\tdeterministic, no LLM")
         print("  llm\tPydantic AI (needs kbforge[llm])")
+        print("publishers:")
+        for name in sorted(publishers):
+            info = publishers[name].kbforge_publisher_info()
+            print(f"  {name}\t{info.source_system}")
         return 0
 
     if args.connector not in connectors:
@@ -100,10 +126,35 @@ def main(argv: list[str] | None = None) -> int:
         print(f"unknown connector {args.connector!r}; available: {available}")
         return 2
 
+    if args.publisher not in publishers:
+        available = ", ".join(sorted(publishers)) or "(none)"
+        print(f"unknown publisher {args.publisher!r}; available: {available}")
+        return 2
+
     try:
         config = _parse_settings(args.settings)
     except ValueError as exc:
         print(str(exc))
+        return 2
+
+    try:
+        publish_config = _parse_settings(args.publish_settings)
+    except ValueError as exc:
+        print(str(exc))
+        return 2
+    # The built-in dry-run publisher is wired to --out; forge publishers take
+    # their whole config from --publish-set.
+    if args.publisher == "dry-run":
+        publish_config.setdefault("out_dir", args.out)
+
+    # Fail fast: a bad publisher config should cost a second, not a full
+    # fetch+synthesize. Third-party publishers predating the hook skip this.
+    validate = getattr(
+        publishers[args.publisher], "kbforge_validate_publish_config", None
+    )
+    publish_problems = validate(publish_config) if validate else []
+    if publish_problems:
+        print("; ".join(publish_problems))
         return 2
 
     if args.synthesizer == "llm":
@@ -129,16 +180,20 @@ def main(argv: list[str] | None = None) -> int:
     try:
         result = run(
             connectors[args.connector],
-            _publisher(pm),
+            publishers[args.publisher],
             config=config,
             mirror=args.mirror,
             state_dir=args.state,
-            publish_config={"out_dir": args.out},
+            publish_config=publish_config,
             synthesizer=synthesizer,
         )
     except ConfigError as exc:
         print(str(exc))
         return 2
+    except ForgeError as exc:
+        # The mirror never advanced, so the next run retries this same change.
+        print(f"Publish failed: {exc}")
+        return 1
 
     if isinstance(result, Published):
         print(f"Published: {result.url}")
