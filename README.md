@@ -36,9 +36,10 @@ and the [artifact-contract spec](docs/design/2026-07-18-agent-facing-artifact-co
 
 **Alpha — a working walking skeleton.** The deterministic core runs end to end with no
 credentials: two built-in connectors (`local_files`, `git_commits`), canonicalization
-with a stability law, a replay-safe mirror and diff, the §4.4 validator gate, and three
-publishers — dry-run, GitHub, and GitLab — change detection, the no-op rule, and
-incremental sync via a real cursor all exercised by the test suite. Synthesis ships in
+with a stability law, a replay-safe mirror and diff, the §4.4 validator gate, and a
+dry-run publisher, plus change detection, the no-op rule, and incremental sync via a
+real cursor, all exercised by the test suite. Two credentialed publishers, GitHub and
+GitLab, are also available (opt-in via `--publisher`, token from an env var). Synthesis ships in
 two forms: a deterministic stub (the default, no LLM) and an opt-in grounded LLM
 synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra).
 
