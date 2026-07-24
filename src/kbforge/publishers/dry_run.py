@@ -1,29 +1,14 @@
 """Dry-run publisher: writes the proposal to a local directory instead of opening
-an MR. Ships in core (§5.2). Never merges — a real GitHub/GitLab publisher is a
-separate plugin."""
+an MR. Ships in core (§5.2). Never merges — see the github/gitlab publishers for
+the real thing."""
 
 from __future__ import annotations
 
 from pathlib import Path
 
 from kbforge.hookspecs import hookimpl
-from kbforge.models import ChangeSummary, ConnectorInfo, ProposedChange
-
-
-def _summary_md(summary: ChangeSummary) -> str:
-    lines = ["# Proposed change", ""]
-    for label, items in (
-        ("Added", summary.claims_added),
-        ("Modified", summary.claims_modified),
-        ("Removed", summary.claims_removed),
-        ("Conflicts", summary.conflicts_flagged),
-        ("Gaps", summary.gaps_flagged),
-    ):
-        if items:
-            lines.append(f"## {label}")
-            lines += [f"- {i}" for i in items]
-            lines.append("")
-    return "\n".join(lines).rstrip() + "\n"
+from kbforge.models import ConnectorInfo, ProposedChange
+from kbforge.publishers.summary import summary_md
 
 
 class DryRunPublisher:
@@ -42,5 +27,5 @@ class DryRunPublisher:
             dest = out_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, "utf-8")
-        (out_dir / "MR_BODY.md").write_text(_summary_md(change.summary), "utf-8")
+        (out_dir / "MR_BODY.md").write_text(summary_md(change.summary), "utf-8")
         return str(out_dir)  # a path, not a merge — never merges
