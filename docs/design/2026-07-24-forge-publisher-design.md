@@ -151,7 +151,15 @@ needs. `branch` exists to override it when two kbforge deployments target one re
 and the CLI checks it *before* the pipeline starts, so a bad config fails in under a second
 rather than after a full fetch and synthesize. It rejects:
 
-- `repo` empty, or not exactly two non-empty `/`-separated segments
+Reaching it from the CLI requires one addition to `PublisherSpec`:
+`kbforge_validate_publish_config(config) -> list[str]`, mirroring the connector family's
+existing `kbforge_validate_config`. The CLI calls it through `getattr` with a `[]` fallback,
+so third-party publishers that predate the hook keep working and simply skip
+pre-validation.
+
+- `repo` empty, or fewer than two non-empty `/`-separated segments. *At least* two, not
+  exactly two: GitLab projects nest inside subgroups (`group/subgroup/project`), while
+  GitHub is always `owner/name`. GitHub's `{owner}` is the first segment either way.
 - `base_path` absolute, or containing a `..` component
 - the env var named by `token_env` unset or empty
 
