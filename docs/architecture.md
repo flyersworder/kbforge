@@ -32,8 +32,7 @@ connectors, zero CI logic.** Connectors are plugins; deployments are separate
 repos. The interface is the product. Publishers are the exception that proves
 it: publishing is the producer's own delivery mechanism, not an integration with
 someone's system of record, so `github` and `gitlab` ship in core — reading their
-credentials from the environment, never from config. See
-[`design/2026-07-24-forge-publisher-design.md`](design/2026-07-24-forge-publisher-design.md).
+credentials from the environment, never from config.
 
 ---
 
@@ -419,6 +418,22 @@ Three publishers ship in core: `dry-run` (default; writes to a directory),
 `kbforge_publish` and `kbforge_validate_publish_config`; none implements a merge
 method, which is how §5.2's never-merge rule is enforced structurally rather
 than by convention.
+
+The two forge publishers sit behind a `ForgeClient` protocol whose methods name
+intentions (`put_files`, `find_open_pr`) rather than REST endpoints, because the
+forges decompose "commit these files" incompatibly — GitLab in one call, GitHub
+in four. They are unconditional rather than gated behind an extra: both run on
+stdlib `urllib`, so there is no dependency for an extra to install. Deliberately
+absent, so their absence reads as a decision rather than an omission: labels,
+reviewers and draft PRs; pagination in `find_open_pr` (a branch has at most one
+open PR); rate-limit backoff (a run makes fewer than ten calls); and auto-merge,
+which is excluded permanently rather than deferred.
+
+Their offline tests inject a fake transport, which pins the request we intended
+to make but cannot judge whether the intent was right — a real forge caught two
+defects the offline suite structurally could not see. Hence `tests/test_forge_live.py`
+(`--run-live`), which asserts through `gh`/`glab` rather than through kbforge's
+own readers.
 
 ### 5.3 Core-stage extension hooks (narrow, additive-only)
 
