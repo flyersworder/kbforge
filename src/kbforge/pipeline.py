@@ -116,6 +116,13 @@ def run(
     # Read once per run, and only past the no-op gate. The mirror is still the
     # pre-run published state here: commit() below is the only thing that
     # mutates it, and it runs only after a successful publish.
+    #
+    # This parses every JSON slot in the mirror, not just the ones this run
+    # touches, so a run that used to cost O(changed) now costs O(mirror size)
+    # whenever anything changed at all. Accepted: the defect this closes
+    # (dangling links after a deletion) is not tombstone-specific — any
+    # removal can leave an unchanged referrer with a stale link — so there is
+    # no cheaper subset of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
 
     # A concept linking to a deleted one must be re-synthesized, or its link
@@ -160,10 +167,17 @@ def run(
 
     # A referrer is in change.files but in none of claims_added/modified/removed,
     # so without this the reviewer sees a file in the diff that the body never
-    # accounts for.
+    # accounts for. Guarded by membership in proposal.files: the stub always
+    # renders every referrer it is handed, so this can't diverge today, but an
+    # LLM synthesizer that drops or fails a doc must not leave a note
+    # describing a file that never made it into the diff — the inverse of the
+    # stale-link defect this run is closing.
     for doc in referrers:
+        path = concept_path(doc.doc_id)
+        if path not in proposal.files:
+            continue
         proposal.summary.grounding_notes.append(
-            f"{concept_path(doc.doc_id)}: re-synthesized to drop links to "
+            f"{path}: re-synthesized to drop links to "
             "concepts removed in this run; its own source is unchanged"
         )
 

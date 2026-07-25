@@ -293,6 +293,10 @@ def test_an_open_review_request_makes_the_branch_build_on_itself():
     put = next(c for c in client.calls if c[0] == "put_files")
     assert put[2] == "sync/x", "base must be the branch when a review request is open"
     assert client.calls[0][0] == "find_open_pr", "must be asked before put_files"
+    assert ("default_branch",) not in client.calls, (
+        "an open review request resolves base from the branch itself; "
+        "default_branch() must never be reached on this path"
+    )
 
 
 def test_no_open_review_request_rebuilds_from_the_default_branch():

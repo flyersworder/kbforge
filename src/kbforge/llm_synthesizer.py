@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field, field_validator
 
 from kbforge.models import CanonicalDocument, ChangeSet, ProposedChange
-from kbforge.synthesize import assemble
+from kbforge.synthesize import assemble, concept_path
 
 if TYPE_CHECKING:
     # Only for static type-checking (ty/pyright); never imported at runtime, so
@@ -151,7 +151,7 @@ class LLMSynthesizer:
             if len(text) > self.config.max_source_chars:
                 text = text[: self.config.max_source_chars]
                 notes.append(
-                    f"{doc.doc_id}: source truncated to "
+                    f"{concept_path(doc.doc_id)}: source truncated to "
                     f"{self.config.max_source_chars} chars before synthesis"
                 )
             result = self.agent.run_sync(self._prompt(doc, text))

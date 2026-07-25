@@ -83,12 +83,11 @@ class GitHubClient:
         if tree.get("truncated"):
             raise TreeListingTruncatedError(
                 f"base tree {tree_sha} exceeds GitHub's recursive listing limit; "
-                "refusing to return a partial listing. Note this listing is of "
-                "the repository root and is NOT narrowed by the publish "
-                "config's 'base_path' — GitHub's tree endpoint takes a tree SHA "
-                "and offers no path filter, so scoping 'base_path' does not "
-                "shrink it. Publish to a repository small enough to list, such "
-                "as a dedicated knowledge repository."
+                "refusing to return a partial listing. Note this implementation "
+                "lists the repository root and is NOT narrowed by the publish "
+                "config's 'base_path' — scoping 'base_path' does not shrink the "
+                "listing this code requests. Publish to a repository small "
+                "enough to list, such as a dedicated knowledge repository."
             )
         return {e["path"] for e in tree.get("tree", []) if e.get("type") == "blob"}
 

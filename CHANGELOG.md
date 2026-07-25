@@ -36,8 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mirror advances on every successful publish, so a request closed without
   merging discards its contents permanently — those concepts are never
   re-proposed, and a published-then-abandoned deletion is not even seen as a
-  removal by a later run. Abandon a review request by merging it, or reset the
-  mirror.
+  removal by a later run. Abandon a review request by merging it, or by
+  resetting **both** the mirror and the connector's cursor
+  (`<state-dir>/cursor-<connector-name>.json`) — deleting the mirror alone
+  does nothing for an incremental connector, whose surviving cursor still
+  bounds the next fetch to records past it, so few or none come back and
+  nothing is re-proposed.
 
 - **Links to still-published concepts were stripped on an incremental fetch.**
   The set of resolvable link targets handed to synthesis was built from the
@@ -57,6 +61,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changed. Nothing is now committed when the branch already is base; when the
   commit is also what creates the branch, GitLab sends `allow_empty` and GitHub
   commits base's own tree.
+
+  On that create-branch path, the empty commit still opens (or updates) a
+  review request, so the rare case where every removal is already gone from
+  base is now visible rather than a hard failure: expect a request whose diff
+  is empty, whose body can still describe a removal that was, in fact, already
+  applied to the target (typically because an earlier run committed it but
+  died before the mirror advanced). That is strictly better than the prior
+  400/422 — closing or merging it is a no-op — but it is surprising enough to
+  flag if you see it.
 
 - The dry-run publisher applies `safe_join` to the paths it writes *and* the
   paths it deletes, so a connector-supplied `native_id` of `../../../etc/foo`
