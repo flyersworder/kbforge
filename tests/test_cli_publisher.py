@@ -3,9 +3,8 @@ from pathlib import Path
 import pytest
 
 from kbforge.__main__ import _publishers, main
-from kbforge.publishers._http import ForgeError
+from kbforge.publishers._http import ForgeError, TreeListingTruncatedError
 from kbforge.publishers.forge import PathError
-from kbforge.publishers.gitlab import TreeListingTruncatedError
 from kbforge.registry import build_registry
 
 DOC = "---\ntype: application\ntitle: App X\n---\nApp X.\n"

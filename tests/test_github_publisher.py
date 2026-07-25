@@ -1,6 +1,6 @@
 import pytest
 
-from kbforge.publishers._http import ForgeError
+from kbforge.publishers._http import ForgeError, TreeListingTruncatedError
 from kbforge.publishers.forge import ForgeConfig
 from kbforge.publishers.github import DEFAULTS, GitHubClient, GitHubPublisher
 
@@ -359,3 +359,97 @@ def test_publisher_validate_reports_unknown_keys(monkeypatch):
 def test_publisher_has_no_merge_method():
     assert not hasattr(GitHubPublisher(), "merge")
     assert not hasattr(GitHubClient, "merge")
+
+
+def test_removed_paths_become_null_sha_tree_entries(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, transport = _client(
+        {
+            ("GET", "/repos/acme/kb/commits/main"): {
+                "sha": "c1",
+                "commit": {"tree": {"sha": "t1"}},
+            },
+            ("GET", "/repos/acme/kb/git/trees/t1?recursive=1"): {
+                "tree": [{"type": "blob", "path": "old.md"}],
+                "truncated": False,
+            },
+            ("POST", "/repos/acme/kb/git/trees"): {"sha": "t2"},
+            ("POST", "/repos/acme/kb/git/commits"): {"sha": "c2"},
+            ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+        }
+    )
+    client.put_files("b", "main", {}, ["old.md"], "msg")
+
+    tree = next(
+        c["payload"]["tree"]
+        for c in transport.calls
+        if c["method"] == "POST" and c["url"].endswith("/git/trees")
+    )
+    assert {"path": "old.md", "mode": "100644", "type": "blob", "sha": None} in tree
+
+
+def test_a_removal_absent_from_base_is_not_sent(monkeypatch):
+    """GitHub answers 422 for a path absent from base_tree."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, transport = _client(
+        {
+            ("GET", "/repos/acme/kb/commits/main"): {
+                "sha": "c1",
+                "commit": {"tree": {"sha": "t1"}},
+            },
+            ("GET", "/repos/acme/kb/git/trees/t1?recursive=1"): {
+                "tree": [],
+                "truncated": False,
+            },
+            ("POST", "/repos/acme/kb/git/trees"): {"sha": "t2"},
+            ("POST", "/repos/acme/kb/git/commits"): {"sha": "c2"},
+            ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+        }
+    )
+    client.put_files("b", "main", {"a.md": "A"}, ["never-there.md"], "msg")
+
+    tree = next(
+        c["payload"]["tree"]
+        for c in transport.calls
+        if c["method"] == "POST" and c["url"].endswith("/git/trees")
+    )
+    assert all(e["path"] != "never-there.md" for e in tree)
+
+
+def test_a_truncated_base_tree_listing_raises(monkeypatch):
+    """Mirrors gitlab's TreeListingTruncatedError: a partial listing would make
+    a real deletion look absent from base and be silently skipped."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, _ = _client(
+        {
+            ("GET", "/repos/acme/kb/commits/main"): {
+                "sha": "c1",
+                "commit": {"tree": {"sha": "t1"}},
+            },
+            ("GET", "/repos/acme/kb/git/trees/t1?recursive=1"): {
+                "tree": [],
+                "truncated": True,
+            },
+        }
+    )
+    with pytest.raises(TreeListingTruncatedError):
+        client.put_files("b", "main", {}, ["old.md"], "msg")
+
+
+def test_ordinary_publish_makes_no_tree_listing_call(monkeypatch):
+    """No removals means no reason to pay for the extra listing GET."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, transport = _client(
+        {
+            ("GET", "/repos/acme/kb/commits/main"): {
+                "sha": "c1",
+                "commit": {"tree": {"sha": "t1"}},
+            },
+            ("POST", "/repos/acme/kb/git/trees"): {"sha": "t2"},
+            ("POST", "/repos/acme/kb/git/commits"): {"sha": "c2"},
+            ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+        }
+    )
+    client.put_files("b", "main", {"a.md": "A"}, [], "msg")
+
+    assert not any(c["url"].endswith("recursive=1") for c in transport.calls)
