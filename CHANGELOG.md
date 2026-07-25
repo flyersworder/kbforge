@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-07-25
+
+### Added
+
+- **Deletion propagation.** A concept removed at the source — via an explicit
+  tombstone (`CanonicalDocument.deleted=True`); absence is never inferred as
+  deletion — is now actually deleted from the target repo, not just described.
+  `ProposedChange.files_removed` carries the removal list, assigned by the
+  pipeline after synthesis so an LLM synthesizer cannot delete a file it
+  dislikes. Concepts still linking to a deleted one are pulled into scope and
+  re-synthesized so their now-dangling links are dropped. Both forge adapters
+  intersect removals with what is actually on the base tree first, since
+  GitLab (400) and GitHub (422) both reject deleting an absent path.
+
+### Fixed
+
+- **Data loss when a review request was left open across runs.** `publish_to_forge`
+  reset the sync branch to the default branch on every run; since the mirror
+  advances after each successful publish, a run publishing while a previous
+  review request was still open silently rebuilt the branch and lost everything
+  the earlier run had put there. The base now resolves to the sync branch
+  itself when a request is open, so runs accumulate into one review request;
+  when none is open the branch still rebuilds from the default branch, which is
+  how a merged or abandoned request self-heals.
+
 ## [0.3.0] - 2026-07-25
 
 ### Added
@@ -97,7 +122,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/flyersworder/kbforge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/flyersworder/kbforge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/flyersworder/kbforge/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/v0.1.0
