@@ -328,6 +328,36 @@ def test_update_pr_puts_by_iid(monkeypatch):
     assert transport.calls[0]["payload"] == {"title": "T", "description": "B"}
 
 
+def test_removed_paths_become_delete_actions(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, transport = _client(
+        {
+            TREE_PAGE_1: [{"type": "blob", "path": "old.md"}],
+            COMMITS: {"id": "abc"},
+        }
+    )
+    client.put_files("b", "main", {}, ["old.md"], "msg")
+
+    actions = transport.calls[-1]["payload"]["actions"]
+    assert actions == [{"action": "delete", "file_path": "old.md"}]
+
+
+def test_a_removal_absent_from_base_is_not_sent(monkeypatch):
+    """GitLab answers 400 'A file with this name doesn't exist'. Filtering also
+    makes a retry after a partial failure idempotent."""
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, transport = _client(
+        {
+            TREE_PAGE_1: [],
+            COMMITS: {"id": "abc"},
+        }
+    )
+    client.put_files("b", "main", {"a.md": "A"}, ["never-there.md"], "msg")
+
+    actions = transport.calls[-1]["payload"]["actions"]
+    assert all(a["action"] != "delete" for a in actions)
+
+
 def test_publisher_info_names_it_gitlab():
     info = GitLabPublisher().kbforge_publisher_info()
     assert info.name == "gitlab"
