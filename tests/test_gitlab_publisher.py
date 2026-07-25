@@ -66,14 +66,18 @@ def test_default_branch_reads_the_project(monkeypatch):
     assert transport.calls[0]["url"] == f"{API}/projects/{PROJECT}"
 
 
-def test_requests_carry_private_token_header(monkeypatch):
+def test_requests_carry_bearer_auth_header(monkeypatch):
+    # Bearer, not PRIVATE-TOKEN: the latter 401s on OAuth tokens, which is what
+    # `glab auth login` stores.
     monkeypatch.setenv("GITLAB_TOKEN", "s3cret")
     client, transport = _client(
         {("GET", f"/projects/{PROJECT}"): {"default_branch": "main"}}
     )
     client.default_branch()
 
-    assert transport.calls[0]["headers"]["PRIVATE-TOKEN"] == "s3cret"
+    headers = transport.calls[0]["headers"]
+    assert headers["Authorization"] == "Bearer s3cret"
+    assert "PRIVATE-TOKEN" not in headers
 
 
 def test_nested_subgroup_path_is_url_encoded(monkeypatch):
