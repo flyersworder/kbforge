@@ -31,5 +31,9 @@ class DryRunPublisher:
             dest = out_dir / rel
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, "utf-8")
+        for rel in change.files_removed:
+            # missing_ok: the dry-run directory may be fresh, and deletion must
+            # be idempotent across re-runs exactly as it is on a forge.
+            (out_dir / rel).unlink(missing_ok=True)
         (out_dir / "MR_BODY.md").write_text(summary_md(change.summary), "utf-8")
         return str(out_dir)  # a path, not a merge — never merges
