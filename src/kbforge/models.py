@@ -59,6 +59,9 @@ class ProposedChange(BaseModel):
 
     branch_hint: str
     files: dict[str, str] = Field(default_factory=dict)
+    files_removed: list[str] = Field(default_factory=list)
+    """Bundle-relative paths to delete. Assigned by the pipeline, never by a
+    synthesizer — deletion is structure, not prose (§4.4 posture)."""
     concepts: dict[str, ConceptFrontmatter] = Field(default_factory=dict)
     summary: ChangeSummary = Field(default_factory=ChangeSummary)
 

@@ -91,8 +91,17 @@ def assemble(
         summary.sources_changed.append(doc.anchor)
     summary.claims_added = sorted(concept_path(x) for x in changeset.added)
     summary.claims_modified = sorted(concept_path(x) for x in changeset.modified)
-    summary.claims_removed = sorted(changeset.removed)
-    system = items[0][0].anchor.system if items else "source"
+    # Paths, not doc_ids: the review body must speak one identifier format.
+    summary.claims_removed = sorted(concept_path(x) for x in changeset.removed)
+    # A deletion-only run has no items, so the system has to come from the
+    # removed doc_ids ("system:native_id"). Falling back to a literal would
+    # publish to a different branch and open a second review request.
+    if items:
+        system = items[0][0].anchor.system
+    elif changeset.removed:
+        system = changeset.removed[0].partition(":")[0]
+    else:
+        system = "source"
     return ProposedChange(
         branch_hint=f"sync/{system}",
         files=files,

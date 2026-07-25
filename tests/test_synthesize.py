@@ -3,7 +3,7 @@ from datetime import UTC, datetime
 import pytest
 
 from kbforge.models import CanonicalDocument, ChangeSet, ResourceAnchor
-from kbforge.synthesize import concept_path, synthesize
+from kbforge.synthesize import assemble, concept_path, synthesize
 
 NOW = datetime(2026, 7, 19, tzinfo=UTC)
 
@@ -80,3 +80,35 @@ def test_stub_synthesizer_matches_module_function(_one_changed):
     a = synthesize(docs, changeset, existing)
     b = StubSynthesizer().synthesize(docs, changeset, existing)
     assert a.model_dump() == b.model_dump()  # identical behavior
+
+
+def test_proposed_change_defaults_to_no_removals():
+    change = assemble(
+        [], ChangeSet(added=[], modified=[], removed=[], unchanged_count=0)
+    )
+
+    assert change.files_removed == []
+
+
+def test_claims_removed_are_bundle_paths_like_added_and_modified():
+    """The review body must not mix doc_ids with paths."""
+    changeset = ChangeSet(
+        added=[], modified=[], removed=["sys:gone"], unchanged_count=0
+    )
+
+    change = assemble([], changeset)
+
+    assert change.summary.claims_removed == ["concepts/gone/overview.md"]
+
+
+def test_branch_hint_survives_a_deletion_only_run():
+    """No items means no doc to read the system from; the removed doc_ids carry
+    it. Falling back to 'source' would publish to a different branch and open a
+    second review request."""
+    changeset = ChangeSet(
+        added=[], modified=[], removed=["local_files:gone.md"], unchanged_count=0
+    )
+
+    change = assemble([], changeset)
+
+    assert change.branch_hint == "sync/local_files"
