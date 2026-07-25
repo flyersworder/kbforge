@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from kbforge.mirror import commit, diff
+from kbforge.mirror import commit, diff, load_all
 from kbforge.models import CanonicalDocument, ResourceAnchor
 
 NOW = datetime(2026, 7, 19, tzinfo=UTC)
@@ -54,3 +54,24 @@ def test_commit_deletes_tombstoned(tmp_path: Path):
     commit(tmp_path, [_doc("s:a", "h1")])
     commit(tmp_path, [_doc("s:a", deleted=True)])
     assert diff(tmp_path, [_doc("s:a", "h1")]).added == ["s:a"]  # gone from mirror
+
+
+def test_load_all_returns_every_stored_document(tmp_path):
+    mirror = tmp_path / "mirror"
+    commit(mirror, [_doc("sys:a", "A"), _doc("sys:b", "B")])
+
+    docs = load_all(mirror)
+
+    assert [d.doc_id for d in docs] == ["sys:a", "sys:b"]
+
+
+def test_load_all_is_empty_for_a_missing_mirror(tmp_path):
+    assert load_all(tmp_path / "does-not-exist") == []
+
+
+def test_load_all_omits_documents_retired_by_a_tombstone(tmp_path):
+    mirror = tmp_path / "mirror"
+    commit(mirror, [_doc("sys:a", "A"), _doc("sys:b", "B")])
+    commit(mirror, [_doc("sys:a", "A", deleted=True)])
+
+    assert [d.doc_id for d in load_all(mirror)] == ["sys:b"]
