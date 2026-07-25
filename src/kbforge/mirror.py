@@ -21,6 +21,21 @@ def _load(mirror: Path, doc_id: str) -> CanonicalDocument | None:
     return CanonicalDocument.model_validate_json(slot.read_text("utf-8"))
 
 
+def load_all(mirror: Path) -> list[CanonicalDocument]:
+    """Every document the mirror currently holds, sorted by doc_id.
+
+    Tombstoned documents are absent by construction: commit() unlinks their
+    slot, so the mirror only ever stores live documents.
+    """
+    if not mirror.is_dir():
+        return []
+    docs = [
+        CanonicalDocument.model_validate_json(slot.read_text("utf-8"))
+        for slot in sorted(mirror.glob("*.json"))
+    ]
+    return sorted(docs, key=lambda d: d.doc_id)
+
+
 def diff(mirror: Path, docs: list[CanonicalDocument]) -> ChangeSet:
     """Read-only comparison against the mirror. Deletions are explicit tombstones
     (`deleted=True`); absence never implies one (§4.2). Never mutates the mirror."""
