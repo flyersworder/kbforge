@@ -7,7 +7,12 @@ from urllib.parse import quote
 
 from kbforge.hookspecs import hookimpl
 from kbforge.models import ConnectorInfo, ProposedChange
-from kbforge.publishers._http import ForgeError, Transport, request
+from kbforge.publishers._http import (
+    ForgeError,
+    Transport,
+    TreeListingTruncatedError,
+    request,
+)
 from kbforge.publishers.forge import ForgeConfig, build_config, publish_to_forge
 
 DEFAULTS = {"api_base": "https://api.github.com", "token_env": "GITHUB_TOKEN"}
@@ -64,6 +69,25 @@ class GitHubClient:
     def default_branch(self) -> str:
         return self._call("GET", f"/repos/{self._repo}")["default_branch"]
 
+    def _existing_paths(self, tree_sha: str) -> set[str]:
+        """Blob paths in `tree_sha`, recursively.
+
+        GitHub answers 422 when a tree entry deletes a path absent from
+        base_tree, so removals must be filtered. A truncated listing would make
+        a present path look absent and silently skip a real deletion, so it
+        raises rather than returning a partial set.
+        """
+        tree = self._call(
+            "GET", f"/repos/{self._repo}/git/trees/{tree_sha}?recursive=1"
+        )
+        if tree.get("truncated"):
+            raise TreeListingTruncatedError(
+                f"base tree {tree_sha} exceeds GitHub's recursive listing limit; "
+                "refusing to return a partial listing. Scope the publish "
+                "config's 'base_path' to a narrower subtree."
+            )
+        return {e["path"] for e in tree.get("tree", []) if e.get("type") == "blob"}
+
     def put_files(
         self,
         branch: str,
@@ -72,22 +96,28 @@ class GitHubClient:
         removed: list[str],
         message: str,
     ) -> None:
-        # `removed` is honoured in the adapter-specific delete task; accepting it
-        # here keeps the protocol change and the delete mechanics reviewable apart.
         # One call yields both the base commit SHA and its tree SHA, so no
         # separate ref lookup is needed. Contents go inline in the tree entries,
-        # so no blob calls are needed either.
+        # so no blob calls are needed either. A removal becomes a tree entry
+        # with sha=None (see _existing_paths for why it's filtered first).
         head = self._call("GET", f"/repos/{self._repo}/commits/{_ref_path(base)}")
+        entries: list[dict] = [
+            {"path": path, "mode": "100644", "type": "blob", "content": body}
+            for path, body in sorted(files.items())  # deterministic
+        ]
+        if removed:
+            # Only the listing call is conditional on there being something to
+            # remove, so an ordinary publish costs no extra request.
+            existing = self._existing_paths(head["commit"]["tree"]["sha"])
+            entries += [
+                {"path": path, "mode": "100644", "type": "blob", "sha": None}
+                for path in sorted(removed)  # deterministic
+                if path in existing
+            ]
         tree = self._call(
             "POST",
             f"/repos/{self._repo}/git/trees",
-            {
-                "base_tree": head["commit"]["tree"]["sha"],
-                "tree": [
-                    {"path": path, "mode": "100644", "type": "blob", "content": body}
-                    for path, body in sorted(files.items())  # deterministic
-                ],
-            },
+            {"base_tree": head["commit"]["tree"]["sha"], "tree": entries},
         )
         commit = self._call(
             "POST",

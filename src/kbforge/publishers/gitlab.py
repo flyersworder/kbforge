@@ -16,7 +16,12 @@ from urllib.parse import quote
 
 from kbforge.hookspecs import hookimpl
 from kbforge.models import ConnectorInfo, ProposedChange
-from kbforge.publishers._http import ForgeError, PublishError, Transport, request
+from kbforge.publishers._http import (
+    ForgeError,
+    Transport,
+    TreeListingTruncatedError,
+    request,
+)
 from kbforge.publishers.forge import ForgeConfig, build_config, publish_to_forge
 
 DEFAULTS = {"api_base": "https://gitlab.com/api/v4", "token_env": "GITLAB_TOKEN"}
@@ -29,17 +34,6 @@ DEFAULTS = {"api_base": "https://gitlab.com/api/v4", "token_env": "GITLAB_TOKEN"
 # rather than silently returning a partial set (see its docstring).
 _TREE_PAGE_SIZE = 100
 _TREE_MAX_PAGES = 1000
-
-
-class TreeListingTruncatedError(PublishError):
-    """The base tree has more pages than _TREE_MAX_PAGES covers.
-
-    Returning the partial set gathered so far would be worse than raising: a
-    path that exists on base but fell past the cap would be missing from
-    `existing`, so put_files() would send action="create" for it and GitLab
-    would answer 400 "A file with this name already exists" — the exact bug
-    the base/create-vs-update fix addressed, resurfacing silently.
-    """
 
 
 class GitLabClient:

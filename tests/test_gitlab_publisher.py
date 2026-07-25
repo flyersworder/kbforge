@@ -1,14 +1,13 @@
 import pytest
 
 from kbforge.publishers import gitlab as gitlab_module
-from kbforge.publishers._http import ForgeError
+from kbforge.publishers._http import ForgeError, TreeListingTruncatedError
 from kbforge.publishers.forge import ForgeConfig
 from kbforge.publishers.gitlab import (
     _TREE_PAGE_SIZE,
     DEFAULTS,
     GitLabClient,
     GitLabPublisher,
-    TreeListingTruncatedError,
 )
 
 

@@ -26,7 +26,26 @@ class PublishError(RuntimeError):
 
     Subclassed rather than caught by type in the CLI so a new failure mode
     cannot be added without inheriting the user-facing treatment — the way
-    TreeListingTruncatedError originally was.
+    TreeListingTruncatedError, defined below, does.
+    """
+
+
+class TreeListingTruncatedError(PublishError):
+    """A base/target tree listing came back partial instead of complete.
+
+    Both GitHub and GitLab need to know which paths already exist on the base
+    tree before sending removals or upserts: GitHub answers 422 for a delete
+    entry whose path is absent from base_tree, and GitLab answers 400 "A file
+    with this name already exists" if a path present on base is sent with
+    action="create" instead of "update". Either adapter's listing call can
+    come back truncated (GitHub's recursive tree read is capped by the API
+    itself; GitLab's hand-rolled pagination is capped by _TREE_MAX_PAGES).
+
+    Returning the partial set gathered so far would be worse than raising: a
+    path that exists on base but fell past the cap would be missing from the
+    listing, so a real removal would be silently skipped, or a real update
+    would be silently sent as a create and rejected. Both adapters raise
+    rather than return a partial set.
     """
 
 
