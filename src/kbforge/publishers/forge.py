@@ -129,12 +129,18 @@ class ForgeClient(Protocol):
     def default_branch(self) -> str: ...
 
     def put_files(
-        self, branch: str, base: str, files: dict[str, str], message: str
+        self,
+        branch: str,
+        base: str,
+        files: dict[str, str],
+        removed: list[str],
+        message: str,
     ) -> None:
-        """Reset `branch` to `base`, then apply exactly `files` as one commit.
+        """Set `branch` to `base`, apply `files`, delete `removed`, as one commit.
 
-        Files present in `base` but absent from `files` are inherited, not
-        deleted — concept deletions do not propagate (spec §8).
+        Paths on `base` in neither list are inherited. `base` is the sync branch
+        itself when a review request is open, so successive runs accumulate onto
+        one branch instead of rebuilding it from the default branch each time.
         """
         ...
 
@@ -157,12 +163,17 @@ def publish_to_forge(
     traversing file key is rejected before it can reach the network.
     """
     files = {safe_join(cfg.base_path, rel): body for rel, body in change.files.items()}
-    base = cfg.base or client.default_branch()
+    removed = sorted(safe_join(cfg.base_path, rel) for rel in change.files_removed)
     branch = cfg.branch or change.branch_hint
     body = summary_md(change.summary)
 
-    client.put_files(branch, base, files, cfg.title)
+    # Asked before put_files, not after: an open review request means the branch
+    # must build on itself, or work from earlier runs is rebuilt away.
     pr_id = client.find_open_pr(branch)
+    target = cfg.base or client.default_branch()
+    base = branch if pr_id is not None else target
+
+    client.put_files(branch, base, files, removed, cfg.title)
     if pr_id is not None:
         return client.update_pr(pr_id, cfg.title, body)
-    return client.create_pr(branch, base, cfg.title, body)
+    return client.create_pr(branch, target, cfg.title, body)

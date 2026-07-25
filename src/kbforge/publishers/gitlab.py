@@ -113,8 +113,15 @@ class GitLabClient:
         return found
 
     def put_files(
-        self, branch: str, base: str, files: dict[str, str], message: str
+        self,
+        branch: str,
+        base: str,
+        files: dict[str, str],
+        removed: list[str],
+        message: str,
     ) -> None:
+        # `removed` is honoured in the adapter-specific delete task; accepting it
+        # here keeps the protocol change and the delete mechanics reviewable apart.
         # The commit's tree comes from start_branch, so a path already on base
         # must use action="update" — "create" collides with it ("A file with
         # this name already exists"). GitLab's commits API has no upsert action,

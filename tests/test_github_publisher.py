@@ -81,7 +81,7 @@ def test_put_files_walks_tree_commit_ref(monkeypatch):
     }
     client, transport = _client(routes)
 
-    client.put_files("sync/local-files", "main", {"a.md": "A\n"}, "msg")
+    client.put_files("sync/local-files", "main", {"a.md": "A\n"}, [], "msg")
 
     assert [c["method"] for c in transport.calls] == ["GET", "POST", "POST", "PATCH"]
 
@@ -111,7 +111,7 @@ def test_put_files_sorts_entries_for_determinism(monkeypatch):
     }
     client, transport = _client(routes)
 
-    client.put_files("b", "main", {"z.md": "Z", "a.md": "A"}, "msg")
+    client.put_files("b", "main", {"z.md": "Z", "a.md": "A"}, [], "msg")
 
     paths = [e["path"] for e in transport.calls[1]["payload"]["tree"]]
     assert paths == ["a.md", "z.md"]
@@ -135,7 +135,7 @@ def test_put_files_creates_the_ref_when_patch_reports_it_missing(monkeypatch):
     }
     client, transport = _client(routes, errors)
 
-    client.put_files("b", "main", {"a.md": "A"}, "msg")
+    client.put_files("b", "main", {"a.md": "A"}, [], "msg")
 
     assert transport.calls[-1]["method"] == "POST"
     assert transport.calls[-1]["url"].endswith("/git/refs")
@@ -160,7 +160,7 @@ def test_put_files_reraises_unexpected_ref_errors(monkeypatch):
     client, _ = _client(routes, errors)
 
     with pytest.raises(ForgeError) as exc:
-        client.put_files("b", "main", {"a.md": "A"}, "msg")
+        client.put_files("b", "main", {"a.md": "A"}, [], "msg")
     assert exc.value.status == 403
 
 
@@ -179,7 +179,7 @@ def test_put_files_keeps_a_slashed_branch_intact_in_the_ref_path(monkeypatch):
     }
     client, transport = _client(routes)
 
-    client.put_files("sync/local-files", "main", {"a.md": "A"}, "msg")
+    client.put_files("sync/local-files", "main", {"a.md": "A"}, [], "msg")
 
     assert transport.calls[-1]["url"] == (
         f"{API}/repos/acme/kb/git/refs/heads/sync/local-files"
@@ -202,7 +202,7 @@ def test_put_files_encodes_a_traversing_branch_in_the_ref_path(monkeypatch):
     }
     client, transport = _client(routes)
 
-    client.put_files("../../evil", "main", {"a.md": "A"}, "msg")
+    client.put_files("../../evil", "main", {"a.md": "A"}, [], "msg")
 
     url = transport.calls[-1]["url"]
     assert url == f"{API}/repos/acme/kb/git/refs/heads/%2E%2E/%2E%2E/evil"
@@ -234,7 +234,7 @@ def test_created_ref_payload_carries_the_raw_branch_not_the_encoded_path(
     }
     client, transport = _client(routes, errors)
 
-    client.put_files("sync/kb+docs", "main", {"a.md": "A"}, "msg")
+    client.put_files("sync/kb+docs", "main", {"a.md": "A"}, [], "msg")
 
     patch_call, post_call = transport.calls[-2], transport.calls[-1]
     assert patch_call["method"] == "PATCH"
@@ -256,7 +256,7 @@ def test_base_ref_is_encoded_without_breaking_slashes(monkeypatch):
     }
     client, transport = _client(routes)
 
-    client.put_files("b", "release/1.0", {"a.md": "A"}, "msg")
+    client.put_files("b", "release/1.0", {"a.md": "A"}, [], "msg")
 
     assert transport.calls[0]["url"] == f"{API}/repos/acme/kb/commits/release/1.0"
 
@@ -274,7 +274,7 @@ def test_traversing_base_ref_is_encoded(monkeypatch):
     }
     client, transport = _client(routes)
 
-    client.put_files("b", "../../etc", {"a.md": "A"}, "msg")
+    client.put_files("b", "../../etc", {"a.md": "A"}, [], "msg")
 
     assert "/.." not in transport.calls[0]["url"]
 
