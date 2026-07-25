@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Protocol
 
 from kbforge.canonical import assert_stability
-from kbforge.mirror import commit, diff
+from kbforge.mirror import commit, diff, load_all
 from kbforge.models import (
     CanonicalDocument,
     ConnectorInfo,
@@ -112,11 +112,32 @@ def run(
 
     changed = set(changeset.added) | set(changeset.modified)
     changed_docs = [d for d in docs if d.doc_id in changed]  # "scope"
-    # Existing bundle paths = every fetched doc's concept path, so a link from a
-    # changed concept to an unchanged-but-present sibling still resolves (§4.4 law 2)
-    # instead of being dropped. (Feed-less full-fetch connector: `docs` is complete.)
-    existing = frozenset(concept_path(d.doc_id) for d in docs)
+
+    # A concept linking to a deleted one must be re-synthesized, or its link
+    # survives as a dangling reference (§4.4 law 2) that nothing checks: the
+    # validators only inspect concepts carried by this proposal. The mirror, not
+    # `docs`, is the source — an incremental connector's fetch need not contain
+    # the referrer.
+    removed_ids = set(changeset.removed)
+    if removed_ids:
+        referrers = [
+            d
+            for d in load_all(mirror_path)
+            if d.doc_id not in changed
+            and d.doc_id not in removed_ids
+            and removed_ids.intersection(d.relations)
+        ]
+        changed_docs += referrers
+        changed |= {d.doc_id for d in referrers}
+
+    # Tombstoned docs are excluded: existing feeds law 2, and a concept this run
+    # deletes must not count as a resolvable link target.
+    existing = frozenset(concept_path(d.doc_id) for d in docs if not d.deleted)
     proposal = synthesizer.synthesize(changed_docs, changeset, existing)
+
+    # Assigned here, never taken from the synthesizer: deletion is structure,
+    # not prose, so an LLM synthesizer cannot delete a file it dislikes.
+    proposal.files_removed = sorted(concept_path(d) for d in changeset.removed)
 
     failures = run_validators(proposal, existing)
     if failures:
