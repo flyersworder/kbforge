@@ -60,8 +60,10 @@ class ProposedChange(BaseModel):
     branch_hint: str
     files: dict[str, str] = Field(default_factory=dict)
     files_removed: list[str] = Field(default_factory=list)
-    """Bundle-relative paths to delete. Assigned by the pipeline, never by a
-    synthesizer — deletion is structure, not prose (§4.4 posture)."""
+    """Bundle-relative paths to delete. Assigned by the pipeline, which overwrites
+    whatever a synthesizer sets here — it is not merely unused by convention, it
+    is discarded. Deletion is structure, not prose (§4.4 posture): a synthesizer
+    must not be able to delete a file it dislikes."""
     concepts: dict[str, ConceptFrontmatter] = Field(default_factory=dict)
     summary: ChangeSummary = Field(default_factory=ChangeSummary)
 

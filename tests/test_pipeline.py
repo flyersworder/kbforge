@@ -1,10 +1,20 @@
+from datetime import UTC, datetime
 from pathlib import Path
 
+from kbforge.canonical import content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
-from kbforge.models import ConceptFrontmatter, ProposedChange
+from kbforge.models import (
+    CanonicalDocument,
+    ConceptFrontmatter,
+    ConnectorInfo,
+    Cursor,
+    FetchResult,
+    ProposedChange,
+    ResourceAnchor,
+)
 from kbforge.pipeline import NoOp, Published, run
 from kbforge.publishers.dry_run import DryRunPublisher
-from kbforge.synthesize import concept_path
+from kbforge.synthesize import StubSynthesizer, concept_path
 
 DOC = """---
 type: application
@@ -166,3 +176,150 @@ def test_run_uses_injected_synthesizer(tmp_path: Path):
     )
     assert isinstance(result, Published)
     assert "Injected body." in (Path(result.url) / "concepts/x/overview.md").read_text()
+
+
+def _doc(
+    native_id: str,
+    title: str,
+    *,
+    deleted: bool = False,
+    relations: list[str] | None = None,
+) -> CanonicalDocument:
+    """A fixed, clock-free CanonicalDocument keyed under system "sys" — deletions
+    and referrer-relations require a fake source, since LocalFilesConnector
+    derives docs from files that exist and can never emit a tombstone."""
+    doc = CanonicalDocument(
+        anchor=ResourceAnchor(
+            system="sys",
+            native_id=native_id,
+            url=None,
+            retrieved_at=datetime(2024, 1, 1, tzinfo=UTC),
+            content_hash="",
+        ),
+        doc_id=f"sys:{native_id}",
+        title=title,
+        text=title,
+        relations=relations or [],
+        deleted=deleted,
+    )
+    doc.anchor.content_hash = content_hash(doc)
+    return doc
+
+
+class _FakeConnector:
+    """Returns a fixed list of CanonicalDocuments, deterministically — satisfies
+    assert_stability without a clock or any real I/O."""
+
+    def __init__(self, docs: list[CanonicalDocument]):
+        self._docs = docs
+
+    def kbforge_connector_info(self) -> ConnectorInfo:
+        return ConnectorInfo(name="fake", version="0.1.0", source_system="sys")
+
+    def kbforge_validate_config(self, config: dict) -> list[str]:
+        return []
+
+    def kbforge_fetch(self, config: dict, cursor) -> FetchResult:
+        return FetchResult(records=[], cursor=Cursor(connector="fake"))
+
+    def kbforge_normalize(self, records) -> list[CanonicalDocument]:
+        return self._docs
+
+
+class _RecordingPublisher:
+    """Stores the last ProposedChange it was handed, for direct inspection."""
+
+    def __init__(self):
+        self.last_change: ProposedChange | None = None
+
+    def kbforge_publisher_info(self) -> ConnectorInfo:
+        return ConnectorInfo(name="recording", version="0.1.0", source_system="test")
+
+    def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
+        self.last_change = change
+        return "recorded://ok"
+
+
+def _run_once(
+    tmp_path: Path, docs: list[CanonicalDocument], synthesizer=None
+) -> _RecordingPublisher:
+    """Runs the pipeline against a fake connector returning `docs`, publishing via
+    a recording publisher. Reuses tmp_path's mirror/state across calls in a test,
+    so a second call diffs against the first."""
+    publisher = _RecordingPublisher()
+    result = run(
+        _FakeConnector(docs),
+        publisher,
+        config={},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={},
+        synthesizer=synthesizer,
+    )
+    # Narrows last_change from `ProposedChange | None` for callers, and fails
+    # loudly (rather than with a bare AttributeError) if a run unexpectedly
+    # didn't publish.
+    assert publisher.last_change is not None, f"pipeline did not publish: {result!r}"
+    return publisher
+
+
+def test_a_tombstone_reaches_the_publisher_as_a_removal(tmp_path):
+    """The review body already advertised '## Removed'; the change must honour it."""
+    # First run establishes the concept in the mirror.
+    _run_once(tmp_path, [_doc("gone.md", "Gone")])
+    publisher = _run_once(tmp_path, [_doc("gone.md", "Gone", deleted=True)])
+    assert publisher.last_change is not None
+
+    change = publisher.last_change
+    assert change.files_removed == ["concepts/gone/overview.md"]
+
+
+def test_a_synthesizer_cannot_decide_deletions(tmp_path):
+    """Deletion is structure, not prose: whatever a synthesizer returns in
+    files_removed is discarded, so an LLM cannot delete a file it dislikes."""
+
+    class Meddling:
+        def synthesize(self, changed_docs, changeset, existing_paths=frozenset()):
+            change = StubSynthesizer().synthesize(
+                changed_docs, changeset, existing_paths
+            )
+            change.files_removed = ["concepts/victim/overview.md"]
+            return change
+
+    _run_once(tmp_path, [_doc("a.md", "A")])
+    publisher = _run_once(tmp_path, [_doc("a.md", "A2")], synthesizer=Meddling())
+    assert publisher.last_change is not None
+
+    assert "concepts/victim/overview.md" not in publisher.last_change.files_removed
+
+
+def test_a_tombstoned_concept_is_not_treated_as_an_existing_link_target(tmp_path):
+    """existing feeds law 2; counting a concept this run deletes would let a
+    dangling link ship."""
+    _run_once(tmp_path, [_doc("gone.md", "Gone"), _doc("keep.md", "Keep")])
+    publisher = _run_once(
+        tmp_path,
+        [_doc("gone.md", "Gone", deleted=True), _doc("keep.md", "Keep2")],
+    )
+    assert publisher.last_change is not None
+
+    concept = publisher.last_change.concepts["concepts/keep/overview.md"]
+    assert "concepts/gone/overview.md" not in concept.links
+
+
+def test_a_concept_linking_to_a_deleted_one_is_pulled_into_scope(tmp_path):
+    """referrer is unchanged, so nothing would otherwise re-synthesize it and its
+    link to the deleted concept would survive in the bundle."""
+    _run_once(
+        tmp_path,
+        [
+            _doc("gone.md", "Gone"),
+            _doc("referrer.md", "Ref", relations=["sys:gone.md"]),
+        ],
+    )
+    publisher = _run_once(tmp_path, [_doc("gone.md", "Gone", deleted=True)])
+    assert publisher.last_change is not None
+
+    change = publisher.last_change
+    assert "concepts/referrer/overview.md" in change.files
+    assert change.concepts["concepts/referrer/overview.md"].links == []
