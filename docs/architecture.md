@@ -435,6 +435,22 @@ defects the offline suite structurally could not see. Hence `tests/test_forge_li
 (`--run-live`), which asserts through `gh`/`glab` rather than through kbforge's
 own readers.
 
+While a review request is open, a run sets the sync branch from the branch
+itself rather than from the default branch, so successive runs accumulate into
+one review request. When none is open the branch is rebuilt from the default
+branch, which is how a merged or abandoned request self-heals. Deletions travel
+as `ProposedChange.files_removed`, assigned by the pipeline rather than by a
+synthesizer: deletion is structure, not prose, so a model cannot delete a
+concept it dislikes.
+
+Declined as scope, deliberately rather than by omission: rebasing the sync
+branch when the default branch moves under an open review request (the branch
+may go stale; the forge's own merge handles it, and conflicts are unlikely
+because only kbforge writes concept files); inferring a deletion from a
+document's absence (tombstones stay explicit — see §4.2); and flagging
+non-kbforge commits pushed onto the sync branch in the review body (the README
+documents the sharp edge instead).
+
 ### 5.3 Core-stage extension hooks (narrow, additive-only)
 
 ```python

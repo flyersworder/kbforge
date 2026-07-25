@@ -100,9 +100,11 @@ kbforge maintains **one long-lived sync branch and one open review request** per
 source system: a later run force-updates that branch and edits the existing
 PR/MR rather than opening a second one. Two consequences worth knowing:
 
-- Manual commits pushed onto the sync branch are discarded by the next run.
-- Concepts deleted from the source are not deleted from the target repo; files
-  absent from a run are inherited from the base branch.
+- Concepts deleted from the source are deleted from the target repo, provided the
+  connector emits an explicit tombstone. Absence never implies a deletion.
+- Manual commits on the sync branch are preserved — a later run builds on the
+  branch while its review request is open. A hand edit to a concept kbforge
+  later regenerates is overwritten by that regeneration.
 
 kbforge never merges. No publisher has a merge method.
 
