@@ -65,8 +65,15 @@ class GitHubClient:
         return self._call("GET", f"/repos/{self._repo}")["default_branch"]
 
     def put_files(
-        self, branch: str, base: str, files: dict[str, str], message: str
+        self,
+        branch: str,
+        base: str,
+        files: dict[str, str],
+        removed: list[str],
+        message: str,
     ) -> None:
+        # `removed` is honoured in the adapter-specific delete task; accepting it
+        # here keeps the protocol change and the delete mechanics reviewable apart.
         # One call yields both the base commit SHA and its tree SHA, so no
         # separate ref lookup is needed. Contents go inline in the tree entries,
         # so no blob calls are needed either.

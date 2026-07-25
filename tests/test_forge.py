@@ -24,8 +24,8 @@ class FakeForgeClient:
         self.calls.append(("default_branch",))
         return self._default
 
-    def put_files(self, branch, base, files, message) -> None:
-        self.calls.append(("put_files", branch, base, files, message))
+    def put_files(self, branch, base, files, removed, message) -> None:
+        self.calls.append(("put_files", branch, base, files, removed, message))
 
     def find_open_pr(self, branch):
         self.calls.append(("find_open_pr", branch))
@@ -187,7 +187,7 @@ def test_publish_creates_a_pr_when_none_is_open():
 
     assert url == "https://forge.example/pr/1"
     names = [c[0] for c in client.calls]
-    assert names == ["put_files", "find_open_pr", "create_pr"]
+    assert names == ["find_open_pr", "put_files", "create_pr"]
 
 
 def test_publish_updates_the_open_pr_when_one_exists():
@@ -196,7 +196,7 @@ def test_publish_updates_the_open_pr_when_one_exists():
 
     assert url == "https://forge.example/pr/7"
     names = [c[0] for c in client.calls]
-    assert names == ["put_files", "find_open_pr", "update_pr"]
+    assert names == ["find_open_pr", "put_files", "update_pr"]
     assert client.calls[-1][1] == "7"
 
 
@@ -204,7 +204,7 @@ def test_publish_resolves_default_branch_when_base_is_unset():
     client = FakeForgeClient(default="trunk")
     publish_to_forge(client, _change(), _cfg())
 
-    assert client.calls[0] == ("default_branch",)
+    assert ("default_branch",) in client.calls
     put = next(c for c in client.calls if c[0] == "put_files")
     assert put[2] == "trunk"
 
@@ -247,7 +247,7 @@ def test_publish_uses_the_title_as_the_commit_message():
     publish_to_forge(client, _change(), _cfg(base="main", title="kbforge: sync"))
 
     put = next(c for c in client.calls if c[0] == "put_files")
-    assert put[4] == "kbforge: sync"
+    assert put[5] == "kbforge: sync"
 
 
 def test_publish_rejects_a_traversing_file_key():
@@ -280,3 +280,60 @@ def test_forge_client_protocol_has_no_merge_method():
 
     assert not hasattr(forge.ForgeClient, "merge")
     assert not any("merge" in name for name in dir(forge.ForgeClient))
+
+
+def test_an_open_review_request_makes_the_branch_build_on_itself():
+    """The 0.3.0 data-loss bug: resetting to base rebuilt away anything an
+    earlier run put on a branch whose review request had not merged."""
+    client = FakeForgeClient(open_pr="7")
+    change = ProposedChange(branch_hint="sync/x", files={"a.md": "A"})
+
+    publish_to_forge(client, change, _cfg())
+
+    put = next(c for c in client.calls if c[0] == "put_files")
+    assert put[2] == "sync/x", "base must be the branch when a review request is open"
+    assert client.calls[0][0] == "find_open_pr", "must be asked before put_files"
+
+
+def test_no_open_review_request_rebuilds_from_the_default_branch():
+    client = FakeForgeClient(open_pr=None, default="main")
+    change = ProposedChange(branch_hint="sync/x", files={"a.md": "A"})
+
+    publish_to_forge(client, change, _cfg())
+
+    put = next(c for c in client.calls if c[0] == "put_files")
+    assert put[2] == "main"
+
+
+def test_a_new_review_request_targets_the_default_branch_not_the_sync_branch():
+    client = FakeForgeClient(open_pr=None, default="main")
+    change = ProposedChange(branch_hint="sync/x", files={"a.md": "A"})
+
+    publish_to_forge(client, change, _cfg())
+
+    create = next(c for c in client.calls if c[0] == "create_pr")
+    assert create[2] == "main"
+
+
+def test_removed_paths_are_prefixed_and_path_checked_like_files():
+    client = FakeForgeClient(open_pr=None)
+    change = ProposedChange(
+        branch_hint="sync/x", files={"a.md": "A"}, files_removed=["old.md"]
+    )
+
+    publish_to_forge(client, change, _cfg(base_path="kb"))
+
+    put = next(c for c in client.calls if c[0] == "put_files")
+    assert put[4] == ["kb/old.md"]
+
+
+def test_a_traversing_removal_path_is_rejected_before_any_network_call():
+    client = FakeForgeClient(open_pr=None)
+    change = ProposedChange(
+        branch_hint="sync/x", files={}, files_removed=["../../.github/workflows/x.yml"]
+    )
+
+    with pytest.raises(PathError):
+        publish_to_forge(client, change, _cfg())
+
+    assert client.calls == [], "no call may be made before paths are validated"

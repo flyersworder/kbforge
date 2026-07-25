@@ -108,7 +108,7 @@ def test_put_files_commits_in_one_forced_call(monkeypatch):
     monkeypatch.setenv("GITLAB_TOKEN", "t")
     client, transport = _client({TREE_PAGE_1: [], COMMITS: {"id": "abc"}})
 
-    client.put_files("sync/local-files", "main", {"a.md": "A\n"}, "msg")
+    client.put_files("sync/local-files", "main", {"a.md": "A\n"}, [], "msg")
 
     # One listing of base, then exactly one commit.
     assert [c["method"] for c in transport.calls] == ["GET", "POST"]
@@ -126,7 +126,7 @@ def test_put_files_sorts_actions_for_determinism(monkeypatch):
     monkeypatch.setenv("GITLAB_TOKEN", "t")
     client, transport = _client({TREE_PAGE_1: [], COMMITS: {"id": "abc"}})
 
-    client.put_files("b", "main", {"z.md": "Z", "a.md": "A"}, "msg")
+    client.put_files("b", "main", {"z.md": "Z", "a.md": "A"}, [], "msg")
 
     paths = [a["file_path"] for a in transport.calls[-1]["payload"]["actions"]]
     assert paths == ["a.md", "z.md"]
@@ -141,7 +141,7 @@ def test_put_files_updates_a_file_that_already_exists_on_base(monkeypatch):
         {TREE_PAGE_1: _blobs("a.md"), COMMITS: {"id": "abc"}},
     )
 
-    client.put_files("b", "main", {"a.md": "A\n"}, "msg")
+    client.put_files("b", "main", {"a.md": "A\n"}, [], "msg")
 
     assert transport.calls[-1]["payload"]["actions"] == [
         {"action": "update", "file_path": "a.md", "content": "A\n"}
@@ -154,7 +154,7 @@ def test_put_files_creates_a_file_absent_from_base(monkeypatch):
         {TREE_PAGE_1: _blobs("other.md"), COMMITS: {"id": "abc"}},
     )
 
-    client.put_files("b", "main", {"a.md": "A\n"}, "msg")
+    client.put_files("b", "main", {"a.md": "A\n"}, [], "msg")
 
     assert transport.calls[-1]["payload"]["actions"] == [
         {"action": "create", "file_path": "a.md", "content": "A\n"}
@@ -167,7 +167,7 @@ def test_put_files_picks_the_verb_per_path_and_stays_sorted(monkeypatch):
         {TREE_PAGE_1: _blobs("b.md", "z.md", "stale.md"), COMMITS: {"id": "abc"}},
     )
 
-    client.put_files("br", "main", {"z.md": "Z", "a.md": "A", "b.md": "B"}, "msg")
+    client.put_files("br", "main", {"z.md": "Z", "a.md": "A", "b.md": "B"}, [], "msg")
 
     assert transport.calls[-1]["payload"]["actions"] == [
         {"action": "create", "file_path": "a.md", "content": "A"},
@@ -187,7 +187,7 @@ def test_tree_listing_paginates_until_a_short_page(monkeypatch):
         },
     )
 
-    client.put_files("b", "main", {"p000.md": "0", "late.md": "L"}, "msg")
+    client.put_files("b", "main", {"p000.md": "0", "late.md": "L"}, [], "msg")
 
     pages = [c["url"] for c in transport.calls if c["method"] == "GET"]
     assert len(pages) == 2
@@ -209,7 +209,7 @@ def test_tree_listing_ignores_non_blob_entries(monkeypatch):
         },
     )
 
-    client.put_files("b", "main", {"docs": "D"}, "msg")
+    client.put_files("b", "main", {"docs": "D"}, [], "msg")
 
     assert transport.calls[-1]["payload"]["actions"][0]["action"] == "create"
 
@@ -221,7 +221,7 @@ def test_tree_listing_404_means_nothing_exists_yet(monkeypatch):
         errors={("GET", "&page=1"): ForgeError(404, "u", "404 Tree Not Found")},
     )
 
-    client.put_files("b", "main", {"a.md": "A", "z.md": "Z"}, "msg")
+    client.put_files("b", "main", {"a.md": "A", "z.md": "Z"}, [], "msg")
 
     assert [a["action"] for a in transport.calls[-1]["payload"]["actions"]] == [
         "create",
@@ -237,7 +237,7 @@ def test_tree_listing_propagates_other_errors(monkeypatch):
     )
 
     with pytest.raises(ForgeError) as exc:
-        client.put_files("b", "main", {"a.md": "A"}, "msg")
+        client.put_files("b", "main", {"a.md": "A"}, [], "msg")
     assert exc.value.status == 403
 
 
@@ -248,7 +248,7 @@ def test_tree_listing_is_scoped_by_base_path(monkeypatch):
         base_path="knowledge",
     )
 
-    client.put_files("b", "main", {"knowledge/a.md": "A"}, "msg")
+    client.put_files("b", "main", {"knowledge/a.md": "A"}, [], "msg")
 
     assert "path=knowledge" in transport.calls[0]["url"]
     assert "ref=main" in transport.calls[0]["url"]
@@ -269,7 +269,7 @@ def test_tree_listing_raises_instead_of_returning_a_partial_set(monkeypatch):
     )
 
     with pytest.raises(TreeListingTruncatedError, match="_TREE_MAX_PAGES"):
-        client.put_files("b", "main", {"a.md": "A"}, "msg")
+        client.put_files("b", "main", {"a.md": "A"}, [], "msg")
 
     # Never reached the commit call: the error is raised before put_files()
     # commits anything.
