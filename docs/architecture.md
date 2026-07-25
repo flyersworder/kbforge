@@ -438,7 +438,18 @@ own readers.
 While a review request is open, a run sets the sync branch from the branch
 itself rather than from the default branch, so successive runs accumulate into
 one review request. When none is open the branch is rebuilt from the default
-branch, which is how a merged or abandoned request self-heals. Deletions travel
+branch, so a merged or abandoned request leaves no stale *branch* behind.
+
+That is a property of the branch only, and emphatically not of the content.
+The mirror advances after every successful publish, so a concept carried by a
+request that is closed without merging is never re-proposed: the target repo
+lacks it permanently. The same holds in reverse for a deletion — once published,
+the doc is gone from the mirror, so a later tombstone is not even a removal.
+Closing a kbforge review request without merging therefore discards its contents
+for good. Abandon a request by merging it, or reset the mirror (which re-proposes
+everything from scratch).
+
+Deletions travel
 as `ProposedChange.files_removed`, assigned by the pipeline rather than by a
 synthesizer: deletion is structure, not prose, so a model cannot delete a
 concept it dislikes.
