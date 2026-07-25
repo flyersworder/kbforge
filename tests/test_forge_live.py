@@ -34,6 +34,8 @@ import json
 import os
 import subprocess
 import time
+from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 from urllib.parse import quote
 
@@ -67,6 +69,19 @@ def _change(branch: str, body: str) -> ProposedChange:
         branch_hint=branch,
         files={"concepts/checkout.md": body},
         summary=ChangeSummary(claims_added=["checkout accepts a cart"]),
+    )
+
+
+def _change_files(
+    branch: str, files: dict[str, str], removed: list[str] | None = None
+) -> ProposedChange:
+    """Widened sibling of `_change`, for scenarios that touch several files and/or
+    remove some, in one run."""
+    return ProposedChange(
+        branch_hint=branch,
+        files=files,
+        files_removed=removed or [],
+        summary=ChangeSummary(claims_added=sorted(files)),
     )
 
 
@@ -204,3 +219,106 @@ def test_gitlab_publish_update_and_republish_after_merge():
     mrs = _gl_open_mrs(repo, branch)
     assert len(mrs) == 1, f"expected 1 open MR after re-publish, got {len(mrs)}"
     assert mrs[0]["iid"] != mr_iid
+
+
+# --------------------------------------------------------------------------
+# Accumulation and deletion, across both forges
+# --------------------------------------------------------------------------
+#
+# Both defects this scenario guards live in the *steady state* between runs —
+# never in any single run — so the offline suite (which drives each adapter
+# through a FakeTransport, one call at a time) cannot see either one. Only a
+# real forge, driven across several runs against one never-merged branch, can:
+#
+#   run 1: publish A and B
+#   run 2: touch only B — A must survive (rebuilding the branch from base here
+#           is the shipped 0.3.0 data-loss bug)
+#   run 3: delete A — A must be gone
+#   run 4: touch only B again — A must stay deleted (under the old model this
+#           reset the branch to base, where A still exists unmerged)
+#
+# all four runs sharing exactly one open review request throughout.
+#
+# GitHub and GitLab run the identical scenario above; only the forge-specific
+# plumbing (env vars, publisher class, how to read a file back, how to list
+# open review requests) differs, so that plumbing is the only thing that
+# varies per forge — captured as data in _ForgeUnderTest below — while the
+# scenario itself is written once and parametrized over both.
+
+
+@dataclass(frozen=True)
+class _ForgeUnderTest:
+    label: str
+    repo_env: str
+    token_env: str
+    branch: str
+    make_publisher: Callable[[], Any]
+    read_file: Callable[[str, str, str], str]
+    open_requests: Callable[[str, str], list[dict]]
+
+
+_FORGES = [
+    _ForgeUnderTest(
+        label="github",
+        repo_env="KBFORGE_LIVE_GITHUB_REPO",
+        token_env="GITHUB_TOKEN",
+        branch=f"sync/accum-gh-{RUN_ID}",
+        make_publisher=GitHubPublisher,
+        read_file=_gh_file,
+        open_requests=_gh_open_prs,
+    ),
+    _ForgeUnderTest(
+        label="gitlab",
+        repo_env="KBFORGE_LIVE_GITLAB_REPO",
+        token_env="GITLAB_TOKEN",
+        branch=f"sync/accum-{RUN_ID}",
+        make_publisher=GitLabPublisher,
+        read_file=_gl_file,
+        open_requests=_gl_open_mrs,
+    ),
+]
+
+
+@pytest.mark.live
+@pytest.mark.parametrize("forge", _FORGES, ids=lambda f: f.label)
+def test_accumulates_across_runs_and_deletes_without_resurrection(
+    forge: _ForgeUnderTest,
+) -> None:
+    repo = _require(forge.repo_env)
+    _require(forge.token_env)
+    branch = forge.branch
+    base_path = f"live/{RUN_ID}-accum-{forge.label}"
+    config = {"repo": repo, "base_path": base_path, "branch": branch}
+    publisher = forge.make_publisher()
+    alpha, beta = "concepts/alpha.md", "concepts/beta.md"
+
+    # Run 1 — two concepts.
+    publisher.kbforge_publish(_change_files(branch, {alpha: "A1", beta: "B1"}), config)
+    assert forge.read_file(repo, branch, f"{base_path}/{alpha}") == "A1"
+
+    # Run 2 — touch only beta, do not merge. Alpha must survive: rebuilding the
+    # branch from base here is the 0.3.0 data-loss bug.
+    publisher.kbforge_publish(_change_files(branch, {beta: "B2"}), config)
+    assert forge.read_file(repo, branch, f"{base_path}/{alpha}") == "A1", (
+        "alpha was rebuilt away"
+    )
+    assert forge.read_file(repo, branch, f"{base_path}/{beta}") == "B2"
+
+    # Run 3 — delete alpha.
+    publisher.kbforge_publish(
+        _change_files(branch, {beta: "B3"}, removed=[alpha]), config
+    )
+    with pytest.raises(AssertionError):
+        forge.read_file(repo, branch, f"{base_path}/{alpha}")
+
+    # Run 4 — an unrelated change must not resurrect alpha. Under the 0.3.0
+    # model this reset the branch to base, where alpha still exists unmerged.
+    publisher.kbforge_publish(_change_files(branch, {beta: "B4"}), config)
+    with pytest.raises(AssertionError):
+        forge.read_file(repo, branch, f"{base_path}/{alpha}")
+    assert forge.read_file(repo, branch, f"{base_path}/{beta}") == "B4"
+
+    open_reqs = forge.open_requests(repo, branch)
+    assert len(open_reqs) == 1, (
+        f"four runs must share one review request, got {len(open_reqs)}"
+    )
