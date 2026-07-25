@@ -98,13 +98,22 @@ Enterprise or a self-managed GitLab), and `token_env`.
 
 kbforge maintains **one long-lived sync branch and one open review request** per
 source system: a later run force-updates that branch and edits the existing
-PR/MR rather than opening a second one. Two consequences worth knowing:
+PR/MR rather than opening a second one. Three consequences worth knowing:
 
 - Concepts deleted from the source are deleted from the target repo, provided the
   connector emits an explicit tombstone. Absence never implies a deletion.
-- Manual commits on the sync branch are preserved — a later run builds on the
-  branch while its review request is open. A hand edit to a concept kbforge
-  later regenerates is overwritten by that regeneration.
+- Manual commits on the sync branch are preserved **while its review request is
+  open** — a later run builds on the branch rather than resetting it. Once no
+  request is open, the next run rebuilds the branch from the default branch and
+  those commits are gone. A hand edit to a concept kbforge later regenerates is
+  overwritten by that regeneration either way.
+- **Close a kbforge review request only by merging it.** The mirror advances on
+  every successful publish, so the concepts a request carries are never
+  re-proposed. Closing one unmerged discards its contents permanently: the
+  target repo simply never gets them, and a published-then-abandoned deletion
+  leaves the doc gone from the mirror, so no later run even sees it as a
+  removal. To undo an abandoned request, reset the mirror (delete the mirror
+  directory) and re-run, which re-proposes everything from scratch.
 
 kbforge never merges. No publisher has a merge method.
 

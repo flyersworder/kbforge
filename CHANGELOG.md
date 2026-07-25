@@ -29,8 +29,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   review request was still open silently rebuilt the branch and lost everything
   the earlier run had put there. The base now resolves to the sync branch
   itself when a request is open, so runs accumulate into one review request;
-  when none is open the branch still rebuilds from the default branch, which is
-  how a merged or abandoned request self-heals.
+  when none is open the branch still rebuilds from the default branch, so a
+  merged or abandoned request leaves no stale branch behind.
+
+  Note the branch self-heals but the *content* does not, and never did: the
+  mirror advances on every successful publish, so a request closed without
+  merging discards its contents permanently — those concepts are never
+  re-proposed, and a published-then-abandoned deletion is not even seen as a
+  removal by a later run. Abandon a review request by merging it, or reset the
+  mirror.
+
+- **Links to still-published concepts were stripped on an incremental fetch.**
+  The set of resolvable link targets handed to synthesis was built from the
+  current fetch alone. An incremental connector's fetch need not contain a
+  concept that still exists, so a run carrying only a tombstone re-rendered the
+  referrer with *every* link removed — including links to concepts that were
+  still live and still published. §4.4 law 2 only fails on links that do not
+  resolve, never on links that went missing, so it shipped silently. That set is
+  now built from the mirror (the published state) unioned with the fetch, minus
+  the run's own tombstones.
+
+- **A fully-filtered removal set produced a degenerate commit payload.** With no
+  files and every removal already absent from base, the adapters posted
+  `actions: []` (GitLab) or `tree: []` (GitHub). Both forges reject it — GitLab
+  400 "Provide at least one action, or set allow_empty to true", GitHub 422
+  "Invalid tree info" — so every later run failed identically until the source
+  changed. Nothing is now committed when the branch already is base; when the
+  commit is also what creates the branch, GitLab sends `allow_empty` and GitHub
+  commits base's own tree.
+
+- The dry-run publisher applies `safe_join` to the paths it writes *and* the
+  paths it deletes, so a connector-supplied `native_id` of `../../../etc/foo`
+  can no longer reach outside the output directory. The forge publishers
+  already guarded this.
 
 ## [0.3.0] - 2026-07-25
 
