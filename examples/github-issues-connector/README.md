@@ -80,6 +80,31 @@ Add `--synthesizer llm --llm-set model=deepseek/deepseek-v4-flash` (with
 `kbforge[llm]` and `OPENROUTER_API_KEY`) to turn each issue into a synthesized concept
 instead of the verbatim stub.
 
+That run stops at the dry-run publisher, which writes the bundle under `--out`.
+To close the loop and open a real merge request (needs kbforge 0.3.0+; this
+package itself only depends on 0.2.0 APIs, since publishing is a kbforge CLI
+capability rather than something a connector links against):
+
+```bash
+export GITLAB_TOKEN=$(glab config get token --host gitlab.com)
+uv run kbforge run \
+  --connector github_issues --set repo=owner/name \
+  --publisher gitlab --publish-set repo=group/knowledge-base \
+  --publish-set base_path=kb-from-issues \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```
+
+The two `repo` values are independent, and the example is deliberately
+cross-forge to make that obvious: the connector *reads* issues from GitHub, the
+publisher *writes* concepts to GitLab. Use `--publisher github` to target a
+GitHub repo instead — the connector side is unchanged either way.
+
+Both halves are credentialed, which is the one wrinkle worth knowing: this
+connector and the `github` publisher both default to `GITHUB_TOKEN`. When the
+source read and the knowledge-base write should carry different scopes, split
+them — `--set token_env=SOURCE_TOKEN` for the connector, `--publish-set
+token_env=KB_TOKEN` for the publisher.
+
 ## Deliberately out of scope
 
 Kept simple so the shape stays legible — each of these is a natural enhancement if
