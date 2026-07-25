@@ -141,6 +141,13 @@ class ForgeClient(Protocol):
         Paths on `base` in neither list are inherited. `base` is the sync branch
         itself when a review request is open, so successive runs accumulate onto
         one branch instead of rebuilding it from the default branch each time.
+
+        `files` may be empty and every removal may filter out against `base`,
+        leaving nothing to commit. An adapter must not send a degenerate commit
+        payload in that case: it commits nothing when `base == branch` (the
+        branch already holds exactly the intended state) and makes an empty
+        commit when `base != branch`, since the commit is also what creates the
+        branch the review request will point at.
         """
         ...
 
@@ -158,9 +165,12 @@ def publish_to_forge(
 ) -> str:
     """Open or update one review request; return its URL. Never merges.
 
-    Validates every file path with safe_join() before making any client call
-    (including client.default_branch(), used when cfg.base is unset) so a
-    traversing file key is rejected before it can reach the network.
+    Validates every path it will send with safe_join() — both the keys of
+    change.files and every entry of change.files_removed — before making any
+    client call (including client.default_branch(), used when cfg.base is
+    unset), so a traversing path is rejected before it can reach the network.
+    Removals matter at least as much as writes: a traversing removal names a
+    file to delete outside the bundle.
     """
     files = {safe_join(cfg.base_path, rel): body for rel, body in change.files.items()}
     removed = sorted(safe_join(cfg.base_path, rel) for rel in change.files_removed)
@@ -170,10 +180,13 @@ def publish_to_forge(
     # Asked before put_files, not after: an open review request means the branch
     # must build on itself, or work from earlier runs is rebuilt away.
     pr_id = client.find_open_pr(branch)
-    target = cfg.base or client.default_branch()
-    base = branch if pr_id is not None else target
-
-    client.put_files(branch, base, files, removed, cfg.title)
     if pr_id is not None:
+        client.put_files(branch, branch, files, removed, cfg.title)
         return client.update_pr(pr_id, cfg.title, body)
+
+    # Resolved only here: on the update path `target` is never used, and
+    # default_branch() is a network call that would fail an otherwise-viable
+    # update to an already-open review request.
+    target = cfg.base or client.default_branch()
+    client.put_files(branch, target, files, removed, cfg.title)
     return client.create_pr(branch, target, cfg.title, body)

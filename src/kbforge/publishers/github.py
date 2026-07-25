@@ -83,8 +83,12 @@ class GitHubClient:
         if tree.get("truncated"):
             raise TreeListingTruncatedError(
                 f"base tree {tree_sha} exceeds GitHub's recursive listing limit; "
-                "refusing to return a partial listing. Scope the publish "
-                "config's 'base_path' to a narrower subtree."
+                "refusing to return a partial listing. Note this listing is of "
+                "the repository root and is NOT narrowed by the publish "
+                "config's 'base_path' — GitHub's tree endpoint takes a tree SHA "
+                "and offers no path filter, so scoping 'base_path' does not "
+                "shrink it. Publish to a repository small enough to list, such "
+                "as a dedicated knowledge repository."
             )
         return {e["path"] for e in tree.get("tree", []) if e.get("type") == "blob"}
 
@@ -105,25 +109,49 @@ class GitHubClient:
             {"path": path, "mode": "100644", "type": "blob", "content": body}
             for path, body in sorted(files.items())  # deterministic
         ]
+        base_tree = head["commit"]["tree"]["sha"]
         if removed:
             # Only the listing call is conditional on there being something to
             # remove, so an ordinary publish costs no extra request.
-            existing = self._existing_paths(head["commit"]["tree"]["sha"])
+            existing = self._existing_paths(base_tree)
             entries += [
                 {"path": path, "mode": "100644", "type": "blob", "sha": None}
                 for path in sorted(removed)  # deterministic
                 if path in existing
             ]
+        if not entries:
+            # Nothing to commit: no files, and every removal is already gone
+            # from base. Reachable — put_files can succeed and update_pr then
+            # fail, leaving the mirror un-advanced so the next run re-emits a
+            # tombstone for a path the branch no longer has.
+            #
+            # Observed against a real repo: POST /git/trees with tree=[] answers
+            # 422 "Invalid tree info", so the degenerate payload is not merely
+            # ugly, it fails. Skipping the tree call and committing base's own
+            # tree makes a valid empty commit, which GitHub accepts and will
+            # open a PR from (a branch with no commits at all is refused: 422
+            # "No commits between main and <branch>").
+            if base == branch:
+                return  # the branch already is base; nothing to do at all
+            self._set_ref(branch, self._commit(message, base_tree, head["sha"]))
+            return
         tree = self._call(
             "POST",
             f"/repos/{self._repo}/git/trees",
-            {"base_tree": head["commit"]["tree"]["sha"], "tree": entries},
+            {"base_tree": base_tree, "tree": entries},
         )
+        self._set_ref(branch, self._commit(message, tree["sha"], head["sha"]))
+
+    def _commit(self, message: str, tree_sha: str, parent_sha: str) -> str:
         commit = self._call(
             "POST",
             f"/repos/{self._repo}/git/commits",
-            {"message": message, "tree": tree["sha"], "parents": [head["sha"]]},
+            {"message": message, "tree": tree_sha, "parents": [parent_sha]},
         )
+        return commit["sha"]
+
+    def _set_ref(self, branch: str, sha: str) -> None:
+        """Point `branch` at `sha`, creating the ref if it does not exist yet."""
         # The PATCH target is a URL *path*, so it is percent-encoded via
         # _ref_path(). The POST body below is JSON, not a path — "ref" there
         # must be the literal, fully-qualified ref name, unencoded. A URL path
@@ -132,7 +160,7 @@ class GitHubClient:
             self._call(
                 "PATCH",
                 f"/repos/{self._repo}/git/refs/heads/{_ref_path(branch)}",
-                {"sha": commit["sha"], "force": True},
+                {"sha": sha, "force": True},
             )
         except ForgeError as exc:
             if exc.status not in _REF_MISSING:
@@ -140,7 +168,7 @@ class GitHubClient:
             self._call(
                 "POST",
                 f"/repos/{self._repo}/git/refs",
-                {"ref": f"refs/heads/{branch}", "sha": commit["sha"]},
+                {"ref": f"refs/heads/{branch}", "sha": sha},
             )
 
     def find_open_pr(self, branch: str) -> str | None:
@@ -172,7 +200,7 @@ class GitHubPublisher:
     @hookimpl
     def kbforge_publisher_info(self) -> ConnectorInfo:
         return ConnectorInfo(
-            name="github", version="0.3.0", source_system="GitHub pull requests"
+            name="github", version="0.4.0", source_system="GitHub pull requests"
         )
 
     @hookimpl

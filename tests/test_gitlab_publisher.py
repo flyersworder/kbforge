@@ -357,6 +357,70 @@ def test_a_removal_absent_from_base_is_not_sent(monkeypatch):
     assert all(a["action"] != "delete" for a in actions)
 
 
+def test_files_and_removals_travel_in_one_sorted_action_list(monkeypatch):
+    """The mixed case: one commit carrying both. Every action shares one list,
+    so a per-path verb chosen wrongly or a collision would show here."""
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, transport = _client(
+        {TREE_PAGE_1: _blobs("z.md", "old.md"), COMMITS: {"id": "abc"}}
+    )
+
+    client.put_files("b", "main", {"z.md": "Z", "a.md": "A"}, ["old.md"], "msg")
+
+    actions = transport.calls[-1]["payload"]["actions"]
+    # Writes first (sorted, verb per path against base), then removals (sorted).
+    assert actions == [
+        {"action": "create", "file_path": "a.md", "content": "A"},
+        {"action": "update", "file_path": "z.md", "content": "Z"},
+        {"action": "delete", "file_path": "old.md"},
+    ]
+    assert len({a["file_path"] for a in actions}) == len(actions)
+
+
+def test_nothing_to_commit_onto_the_branch_itself_sends_no_commit(monkeypatch):
+    """files={} and every removal already gone from base. Reachable: put_files
+    succeeds, update_pr fails on a blip, the mirror never advances, the next run
+    re-emits the tombstone for a path the branch no longer has.
+
+    base == branch, so the branch already holds exactly the intended state.
+    Observed live: actions=[] answers 400 'Provide at least one action, or set
+    allow_empty to true', so the degenerate payload does not merely look wrong,
+    it fails.
+    """
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, transport = _client({TREE_PAGE_1: [], COMMITS: {"id": "abc"}})
+
+    client.put_files("b", "b", {}, ["already-gone.md"], "msg")
+
+    assert [c["method"] for c in transport.calls] == ["GET"], transport.calls
+
+
+def test_nothing_to_commit_onto_a_new_branch_still_creates_it(monkeypatch):
+    """base != branch, so this commit is also what creates the branch the review
+    request will point at; skipping it would leave no branch. allow_empty is
+    GitLab's own remedy, named in the 400 above, and observed live to create the
+    branch and let an MR open from it."""
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, transport = _client({TREE_PAGE_1: [], COMMITS: {"id": "abc"}})
+
+    client.put_files("b", "main", {}, ["already-gone.md"], "msg")
+
+    payload = transport.calls[-1]["payload"]
+    assert payload["actions"] == []
+    assert payload["allow_empty"] is True
+    assert payload["branch"] == "b"
+    assert payload["start_branch"] == "main"
+
+
+def test_an_ordinary_commit_does_not_set_allow_empty(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, transport = _client({TREE_PAGE_1: [], COMMITS: {"id": "abc"}})
+
+    client.put_files("b", "main", {"a.md": "A"}, [], "msg")
+
+    assert "allow_empty" not in transport.calls[-1]["payload"]
+
+
 def test_publisher_info_names_it_gitlab():
     info = GitLabPublisher().kbforge_publisher_info()
     assert info.name == "gitlab"

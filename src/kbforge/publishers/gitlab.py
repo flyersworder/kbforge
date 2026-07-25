@@ -135,17 +135,28 @@ class GitLabClient:
             for path in sorted(removed)
             if path in existing
         ]
-        self._call(
-            "POST",
-            f"/projects/{self._project}/repository/commits",
-            {
-                "branch": branch,
-                "start_branch": base,
-                "force": True,
-                "commit_message": message,
-                "actions": actions,
-            },
-        )
+        if not actions and base == branch:
+            # Nothing to commit and the branch already is base, so there is
+            # nothing to do. Reachable — put_files can succeed and update_pr
+            # then fail, leaving the mirror un-advanced so the next run
+            # re-emits a tombstone for a path the branch no longer has.
+            # Observed against a real project: actions=[] answers 400 "Provide
+            # at least one action, or set allow_empty to true".
+            return
+        payload = {
+            "branch": branch,
+            "start_branch": base,
+            "force": True,
+            "commit_message": message,
+            "actions": actions,
+        }
+        if not actions:
+            # base != branch, so this commit is also what *creates* the branch
+            # the review request points at; skipping it would leave no branch.
+            # allow_empty is GitLab's own remedy, named in the 400 above, and
+            # observed to create the branch and let an MR open from it.
+            payload["allow_empty"] = True
+        self._call("POST", f"/projects/{self._project}/repository/commits", payload)
 
     def find_open_pr(self, branch: str) -> str | None:
         # A branch never reaches a URL *path* here — it is a query value (so
@@ -184,7 +195,7 @@ class GitLabPublisher:
     @hookimpl
     def kbforge_publisher_info(self) -> ConnectorInfo:
         return ConnectorInfo(
-            name="gitlab", version="0.3.0", source_system="GitLab merge requests"
+            name="gitlab", version="0.4.0", source_system="GitLab merge requests"
         )
 
     @hookimpl
