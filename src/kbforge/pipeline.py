@@ -113,34 +113,59 @@ def run(
     changed = set(changeset.added) | set(changeset.modified)
     changed_docs = [d for d in docs if d.doc_id in changed]  # "scope"
 
+    # Read once per run, and only past the no-op gate. The mirror is still the
+    # pre-run published state here: commit() below is the only thing that
+    # mutates it, and it runs only after a successful publish.
+    mirror_docs = load_all(mirror_path)
+
     # A concept linking to a deleted one must be re-synthesized, or its link
     # survives as a dangling reference (§4.4 law 2) that nothing checks: the
     # validators only inspect concepts carried by this proposal. The mirror, not
     # `docs`, is the source — an incremental connector's fetch need not contain
     # the referrer.
     removed_ids = set(changeset.removed)
+    referrers: list[CanonicalDocument] = []
     if removed_ids:
         referrers = [
             d
-            for d in load_all(mirror_path)
+            for d in mirror_docs
             if d.doc_id not in changed
             and d.doc_id not in removed_ids
             and removed_ids.intersection(d.relations)
         ]
         changed_docs += referrers
 
-    # Existing bundle paths = every fetched doc's concept path, so a link from a
-    # changed concept to an unchanged-but-present sibling still resolves (§4.4 law 2)
-    # instead of being dropped. (Feed-less full-fetch connector: `docs` is complete —
-    # unlike the referrer scan above, which reads the mirror because an incremental
-    # connector's fetch need not be.) Tombstoned docs are excluded: a concept this
-    # run deletes must not count as a resolvable link target.
-    existing = frozenset(concept_path(d.doc_id) for d in docs if not d.deleted)
+    # Existing bundle paths feed §4.4 law 2: assemble() drops any link that is
+    # not in here, so a link to an unchanged-but-still-published concept would
+    # otherwise vanish from a re-rendered file. The mirror is the published
+    # state, so it — not `docs` — is the honest source: an incremental
+    # connector's fetch carries only what changed, and building this from
+    # `docs` alone silently stripped every surviving link off any referrer
+    # pulled into scope above. `docs` is unioned in because this run's additions
+    # are not in the mirror yet. Tombstones are subtracted from both: a concept
+    # this run deletes must not count as a resolvable link target.
+    tombstoned = {concept_path(doc_id) for doc_id in changeset.removed}
+    existing = (
+        frozenset(
+            {concept_path(d.doc_id) for d in mirror_docs}
+            | {concept_path(d.doc_id) for d in docs if not d.deleted}
+        )
+        - tombstoned
+    )
     proposal = synthesizer.synthesize(changed_docs, changeset, existing)
 
     # Assigned here, never taken from the synthesizer: deletion is structure,
     # not prose, so an LLM synthesizer cannot delete a file it dislikes.
     proposal.files_removed = sorted(concept_path(d) for d in changeset.removed)
+
+    # A referrer is in change.files but in none of claims_added/modified/removed,
+    # so without this the reviewer sees a file in the diff that the body never
+    # accounts for.
+    for doc in referrers:
+        proposal.summary.grounding_notes.append(
+            f"{concept_path(doc.doc_id)}: re-synthesized to drop links to "
+            "concepts removed in this run; its own source is unchanged"
+        )
 
     failures = run_validators(proposal, existing)
     if failures:

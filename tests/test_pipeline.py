@@ -310,6 +310,53 @@ def test_a_tombstoned_concept_is_not_treated_as_an_existing_link_target(tmp_path
     assert "concepts/gone/overview.md" not in concept.links
 
 
+def test_an_incremental_tombstone_keeps_a_referrers_other_links(tmp_path):
+    """The regression: `existing` built from `docs` alone.
+
+    An incremental connector's second fetch carries only the tombstone, so
+    `docs` holds no live document at all. The referrer is pulled in from the
+    mirror and re-synthesized — but assemble() drops every link not in
+    `existing`, so an empty `existing` strips the referrer's link to 'other',
+    which still exists and is still published. §4.4 law 2 only fails on links
+    that do not resolve, never on links that went missing, so it ships silently.
+    """
+    _run_once(
+        tmp_path,
+        [
+            _doc("gone.md", "Gone"),
+            _doc("other.md", "Other"),
+            _doc("ref.md", "Ref", relations=["sys:gone.md", "sys:other.md"]),
+        ],
+    )
+
+    # Incremental fetch: the tombstone and nothing else.
+    publisher = _run_once(tmp_path, [_doc("gone.md", "Gone", deleted=True)])
+    assert publisher.last_change is not None
+
+    change = publisher.last_change
+    ref = "concepts/ref/overview.md"
+    assert ref in change.files, "the referrer must be re-synthesized"
+    assert change.concepts[ref].links == ["concepts/other/overview.md"], (
+        "the link to the still-published 'other' must survive; only the link "
+        "to the deleted 'gone' may be dropped"
+    )
+    assert "concepts/other/overview.md" in change.files[ref]
+
+
+def test_a_referrer_pulled_into_scope_is_explained_in_the_summary(tmp_path):
+    """It lands in change.files and therefore in the diff, but in none of
+    claims_added/modified/removed — an unexplained file change otherwise."""
+    _run_once(
+        tmp_path,
+        [_doc("gone.md", "Gone"), _doc("ref.md", "Ref", relations=["sys:gone.md"])],
+    )
+    publisher = _run_once(tmp_path, [_doc("gone.md", "Gone", deleted=True)])
+    assert publisher.last_change is not None
+
+    notes = publisher.last_change.summary.grounding_notes
+    assert any("concepts/ref/overview.md" in n for n in notes), notes
+
+
 def test_a_concept_linking_to_a_deleted_one_is_pulled_into_scope(tmp_path):
     """referrer is unchanged, so nothing would otherwise re-synthesize it and its
     link to the deleted concept would survive in the bundle."""

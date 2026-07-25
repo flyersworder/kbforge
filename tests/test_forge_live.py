@@ -76,12 +76,18 @@ def _change_files(
     branch: str, files: dict[str, str], removed: list[str] | None = None
 ) -> ProposedChange:
     """Widened sibling of `_change`, for scenarios that touch several files and/or
-    remove some, in one run."""
+    remove some, in one run.
+
+    claims_removed is populated alongside files_removed so the review body a
+    real forge renders carries the '## Removed' heading — the spec asked for
+    that section and nothing was confirming a forge ever displays it."""
     return ProposedChange(
         branch_hint=branch,
         files=files,
         files_removed=removed or [],
-        summary=ChangeSummary(claims_added=sorted(files)),
+        summary=ChangeSummary(
+            claims_added=sorted(files), claims_removed=sorted(removed or [])
+        ),
     )
 
 
@@ -102,6 +108,16 @@ def _gh_file(repo: str, ref: str, path: str) -> str:
 def _gh_open_prs(repo: str, branch: str) -> list[dict]:
     prs = _gh(repo, "/pulls?state=open&per_page=100")
     return [pr for pr in prs if pr["head"]["ref"] == branch]
+
+
+def _gh_tree(repo: str, ref: str) -> set[str]:
+    """Every blob path on `ref`. A *positive* observation: absence of a path is
+    read off a listing that succeeded, so a CLI failure makes this raise rather
+    than silently satisfy an "it's gone" assertion."""
+    head = _gh(repo, f"/commits/{ref}")
+    tree = _gh(repo, f"/git/trees/{head['commit']['tree']['sha']}?recursive=1")
+    assert not tree.get("truncated"), "tree listing truncated; assertion unsound"
+    return {e["path"] for e in tree["tree"] if e["type"] == "blob"}
 
 
 @pytest.mark.live
@@ -168,6 +184,22 @@ def _gl_open_mrs(repo: str, branch: str) -> list[dict]:
     return _gl(
         repo, f"/merge_requests?state=opened&source_branch={quote(branch, safe='')}"
     )
+
+
+def _gl_tree(repo: str, ref: str) -> set[str]:
+    """Every blob path on `ref` — see _gh_tree for why this is a listing rather
+    than a failed read."""
+    paths: set[str] = set()
+    for page in range(1, 21):
+        entries = _gl(
+            repo,
+            f"/repository/tree?ref={quote(ref, safe='')}&recursive=true"
+            f"&per_page=100&page={page}",
+        )
+        paths.update(e["path"] for e in entries if e["type"] == "blob")
+        if len(entries) < 100:
+            return paths
+    raise AssertionError("tree listing did not finish; assertion unsound")
 
 
 def _gl_merge(repo: str, iid: int) -> None:
@@ -255,6 +287,8 @@ class _ForgeUnderTest:
     make_publisher: Callable[[], Any]
     read_file: Callable[[str, str, str], str]
     open_requests: Callable[[str, str], list[dict]]
+    list_paths: Callable[[str, str], set[str]]
+    body_key: str  # what the forge calls a review request's description
 
 
 _FORGES = [
@@ -266,6 +300,8 @@ _FORGES = [
         make_publisher=GitHubPublisher,
         read_file=_gh_file,
         open_requests=_gh_open_prs,
+        list_paths=_gh_tree,
+        body_key="body",
     ),
     _ForgeUnderTest(
         label="gitlab",
@@ -275,6 +311,8 @@ _FORGES = [
         make_publisher=GitLabPublisher,
         read_file=_gl_file,
         open_requests=_gl_open_mrs,
+        list_paths=_gl_tree,
+        body_key="description",
     ),
 ]
 
@@ -304,18 +342,32 @@ def test_accumulates_across_runs_and_deletes_without_resurrection(
     )
     assert forge.read_file(repo, branch, f"{base_path}/{beta}") == "B2"
 
-    # Run 3 — delete alpha.
+    # Run 3 — delete alpha. Asserted by *listing* the branch, not by failing to
+    # read the file: `pytest.raises(AssertionError)` around a read cannot tell
+    # "the file is gone" from "the CLI errored", since _cli raises
+    # AssertionError on any non-zero exit — an expired token or a transient 5xx
+    # would satisfy it. A listing that succeeds and does not contain the path is
+    # a positive observation; a CLI failure makes it raise instead.
     publisher.kbforge_publish(
         _change_files(branch, {beta: "B3"}, removed=[alpha]), config
     )
-    with pytest.raises(AssertionError):
-        forge.read_file(repo, branch, f"{base_path}/{alpha}")
+    paths = forge.list_paths(repo, branch)
+    assert f"{base_path}/{beta}" in paths, "listing did not see the branch's own files"
+    assert f"{base_path}/{alpha}" not in paths, "alpha was not deleted"
+
+    # The review body must actually carry the '## Removed' section the spec
+    # asks for — rendered by a real forge, read back through its own CLI.
+    open_reqs = forge.open_requests(repo, branch)
+    assert len(open_reqs) == 1, f"expected one review request, got {len(open_reqs)}"
+    body = open_reqs[0][forge.body_key] or ""
+    assert "## Removed" in body, f"review body has no Removed section: {body!r}"
+    assert alpha in body, f"review body does not name the removed path: {body!r}"
 
     # Run 4 — an unrelated change must not resurrect alpha. Under the 0.3.0
     # model this reset the branch to base, where alpha still exists unmerged.
     publisher.kbforge_publish(_change_files(branch, {beta: "B4"}), config)
-    with pytest.raises(AssertionError):
-        forge.read_file(repo, branch, f"{base_path}/{alpha}")
+    paths = forge.list_paths(repo, branch)
+    assert f"{base_path}/{alpha}" not in paths, "alpha was resurrected"
     assert forge.read_file(repo, branch, f"{base_path}/{beta}") == "B4"
 
     open_reqs = forge.open_requests(repo, branch)

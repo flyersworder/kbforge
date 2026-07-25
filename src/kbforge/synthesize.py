@@ -94,10 +94,16 @@ def assemble(
     # Paths, not doc_ids: the review body must speak one identifier format.
     summary.claims_removed = sorted(concept_path(x) for x in changeset.removed)
     # A deletion-only run has no items, so the system has to come from the
-    # removed doc_ids ("system:native_id"). Falling back to a literal would
-    # publish to a different branch and open a second review request.
+    # removed doc_ids. Falling back to a literal would publish to a different
+    # branch and open a second review request — and so would deriving the two
+    # cases from two different fields, which is why both read the doc_id's
+    # "system:native_id" prefix rather than one reading doc_id and the other
+    # anchor.system. Nothing enforces that a connector keeps those two in
+    # agreement (every shipped one does), and a plugin where they diverged
+    # would otherwise get a second branch and a second review request on its
+    # deletion-only runs.
     if items:
-        system = items[0][0].anchor.system
+        system = items[0][0].doc_id.partition(":")[0]
     elif changeset.removed:
         system = changeset.removed[0].partition(":")[0]
     else:

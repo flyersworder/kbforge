@@ -436,6 +436,102 @@ def test_a_truncated_base_tree_listing_raises(monkeypatch):
         client.put_files("b", "main", {}, ["old.md"], "msg")
 
 
+def test_files_and_removals_travel_in_one_sorted_tree(monkeypatch):
+    """The mixed case: one call carrying both. Writes and deletes share a single
+    tree, so a path in both lists or a mis-ordered entry would collide here."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, transport = _client(
+        {
+            ("GET", "/repos/acme/kb/commits/main"): {
+                "sha": "c1",
+                "commit": {"tree": {"sha": "t1"}},
+            },
+            ("GET", "/repos/acme/kb/git/trees/t1?recursive=1"): {
+                "tree": _gh_blobs("m.md", "old.md"),
+                "truncated": False,
+            },
+            ("POST", "/repos/acme/kb/git/trees"): {"sha": "t2"},
+            ("POST", "/repos/acme/kb/git/commits"): {"sha": "c2"},
+            ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+        }
+    )
+
+    client.put_files("b", "main", {"z.md": "Z", "a.md": "A"}, ["old.md"], "msg")
+
+    tree = next(
+        c["payload"]["tree"]
+        for c in transport.calls
+        if c["method"] == "POST" and c["url"].endswith("/git/trees")
+    )
+    # Writes first (sorted), then removals (sorted) — one entry per path.
+    assert tree == [
+        {"path": "a.md", "mode": "100644", "type": "blob", "content": "A"},
+        {"path": "z.md", "mode": "100644", "type": "blob", "content": "Z"},
+        {"path": "old.md", "mode": "100644", "type": "blob", "sha": None},
+    ]
+    assert len({e["path"] for e in tree}) == len(tree), "duplicate path in one tree"
+
+
+def _gh_blobs(*paths):
+    return [{"type": "blob", "path": p} for p in paths]
+
+
+_EMPTY_ROUTES = {
+    ("GET", "/repos/acme/kb/commits/main"): {
+        "sha": "c1",
+        "commit": {"tree": {"sha": "t1"}},
+    },
+    ("GET", "/repos/acme/kb/commits/b"): {
+        "sha": "c1",
+        "commit": {"tree": {"sha": "t1"}},
+    },
+    ("GET", "/repos/acme/kb/git/trees/t1?recursive=1"): {
+        "tree": [],
+        "truncated": False,
+    },
+    ("POST", "/repos/acme/kb/git/commits"): {"sha": "c2"},
+    ("PATCH", "/repos/acme/kb/git/refs/heads/b"): {},
+}
+
+
+def test_nothing_to_commit_onto_the_branch_itself_sends_no_commit(monkeypatch):
+    """files={} and every removal already gone from base. Reachable: put_files
+    succeeds, update_pr fails on a blip, the mirror never advances, the next run
+    re-emits the tombstone for a path the branch no longer has.
+
+    base == branch, so the branch already holds exactly the intended state.
+    Observed live: POST /git/trees with tree=[] answers 422 'Invalid tree info',
+    so the degenerate payload does not merely look wrong, it fails.
+    """
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, transport = _client(_EMPTY_ROUTES)
+
+    client.put_files("b", "b", {}, ["already-gone.md"], "msg")
+
+    assert [c["method"] for c in transport.calls] == ["GET", "GET"], transport.calls
+    assert not any(c["url"].endswith("/git/trees") for c in transport.calls)
+
+
+def test_nothing_to_commit_onto_a_new_branch_still_creates_it(monkeypatch):
+    """base != branch, so the commit is also what creates the branch the review
+    request will point at. Skipping it entirely would leave no branch, and
+    GitHub refuses to open a PR from a branch with no commits ('No commits
+    between main and b'). An empty commit — base's own tree, no /git/trees call
+    — is what GitHub accepts, and it opens a PR from it."""
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, transport = _client(_EMPTY_ROUTES)
+
+    client.put_files("b", "main", {}, ["already-gone.md"], "msg")
+
+    assert not any(c["url"].endswith("/git/trees") for c in transport.calls)
+    commit = next(c for c in transport.calls if c["url"].endswith("/git/commits"))[
+        "payload"
+    ]
+    assert commit == {"message": "msg", "tree": "t1", "parents": ["c1"]}
+    assert transport.calls[-1]["method"] == "PATCH"
+    assert transport.calls[-1]["payload"] == {"sha": "c2", "force": True}
+
+
 def test_ordinary_publish_makes_no_tree_listing_call(monkeypatch):
     """No removals means no reason to pay for the extra listing GET."""
     monkeypatch.setenv("GITHUB_TOKEN", "t")
