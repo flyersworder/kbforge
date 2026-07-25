@@ -446,8 +446,14 @@ request that is closed without merging is never re-proposed: the target repo
 lacks it permanently. The same holds in reverse for a deletion — once published,
 the doc is gone from the mirror, so a later tombstone is not even a removal.
 Closing a kbforge review request without merging therefore discards its contents
-for good. Abandon a request by merging it, or reset the mirror (which re-proposes
-everything from scratch).
+for good. Abandon a request by merging it, or by resetting **both** the mirror
+and the connector's cursor (`_load_cursor`/`_save_cursor` in `pipeline.py` keep
+it in the state directory, at `<state-dir>/cursor-<connector-name>.json`,
+separate from the mirror). Deleting the mirror alone is not enough for an
+incremental connector: the surviving cursor still bounds `kbforge_fetch` to
+records past it, so the next run can fetch few or no records, `ChangeSet.is_noop`
+fires, and nothing is re-proposed. Only deleting both re-proposes everything
+from scratch.
 
 Deletions travel
 as `ProposedChange.files_removed`, assigned by the pipeline rather than by a

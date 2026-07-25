@@ -112,8 +112,14 @@ PR/MR rather than opening a second one. Three consequences worth knowing:
   re-proposed. Closing one unmerged discards its contents permanently: the
   target repo simply never gets them, and a published-then-abandoned deletion
   leaves the doc gone from the mirror, so no later run even sees it as a
-  removal. To undo an abandoned request, reset the mirror (delete the mirror
-  directory) and re-run, which re-proposes everything from scratch.
+  removal. To undo an abandoned request, reset **both** the mirror and the
+  connector's cursor: delete the mirror directory and, in the state directory
+  (`--state`), the connector's `cursor-<connector-name>.json`. Deleting the
+  mirror alone does not work for an incremental connector — its cursor still
+  points past the abandoned content, so the next `kbforge_fetch` returns only
+  what changed since then, which can be little or nothing, and no re-proposal
+  happens at all. Only once both are gone does a re-run re-propose everything
+  from scratch.
 
 kbforge never merges. No publisher has a merge method.
 
