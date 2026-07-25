@@ -128,10 +128,13 @@ def run(
             and removed_ids.intersection(d.relations)
         ]
         changed_docs += referrers
-        changed |= {d.doc_id for d in referrers}
 
-    # Tombstoned docs are excluded: existing feeds law 2, and a concept this run
-    # deletes must not count as a resolvable link target.
+    # Existing bundle paths = every fetched doc's concept path, so a link from a
+    # changed concept to an unchanged-but-present sibling still resolves (§4.4 law 2)
+    # instead of being dropped. (Feed-less full-fetch connector: `docs` is complete —
+    # unlike the referrer scan above, which reads the mirror because an incremental
+    # connector's fetch need not be.) Tombstoned docs are excluded: a concept this
+    # run deletes must not count as a resolvable link target.
     existing = frozenset(concept_path(d.doc_id) for d in docs if not d.deleted)
     proposal = synthesizer.synthesize(changed_docs, changeset, existing)
 

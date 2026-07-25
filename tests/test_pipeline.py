@@ -299,7 +299,10 @@ def test_a_tombstoned_concept_is_not_treated_as_an_existing_link_target(tmp_path
     _run_once(tmp_path, [_doc("gone.md", "Gone"), _doc("keep.md", "Keep")])
     publisher = _run_once(
         tmp_path,
-        [_doc("gone.md", "Gone", deleted=True), _doc("keep.md", "Keep2")],
+        [
+            _doc("gone.md", "Gone", deleted=True),
+            _doc("keep.md", "Keep2", relations=["sys:gone.md"]),
+        ],
     )
     assert publisher.last_change is not None
 
