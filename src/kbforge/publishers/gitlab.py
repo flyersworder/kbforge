@@ -16,7 +16,7 @@ from urllib.parse import quote
 
 from kbforge.hookspecs import hookimpl
 from kbforge.models import ConnectorInfo, ProposedChange
-from kbforge.publishers._http import ForgeError, Transport, request
+from kbforge.publishers._http import ForgeError, PublishError, Transport, request
 from kbforge.publishers.forge import ForgeConfig, build_config, publish_to_forge
 
 DEFAULTS = {"api_base": "https://gitlab.com/api/v4", "token_env": "GITLAB_TOKEN"}
@@ -31,7 +31,7 @@ _TREE_PAGE_SIZE = 100
 _TREE_MAX_PAGES = 1000
 
 
-class TreeListingTruncatedError(RuntimeError):
+class TreeListingTruncatedError(PublishError):
     """The base tree has more pages than _TREE_MAX_PAGES covers.
 
     Returning the partial set gathered so far would be worse than raising: a

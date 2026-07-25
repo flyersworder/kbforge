@@ -14,7 +14,23 @@ from typing import Any
 Transport = Callable[..., Any]
 
 
-class ForgeError(RuntimeError):
+# urlopen() without this blocks on socket.getdefaulttimeout(), which is None:
+# a black-holed connection would wedge the pipeline forever rather than fail.
+# Generous enough for a slow forge, finite enough that a scheduled sync cannot
+# hang indefinitely.
+TIMEOUT_SECONDS = 30
+
+
+class PublishError(RuntimeError):
+    """Base for publish failures the CLI reports as a message, not a traceback.
+
+    Subclassed rather than caught by type in the CLI so a new failure mode
+    cannot be added without inheriting the user-facing treatment — the way
+    TreeListingTruncatedError originally was.
+    """
+
+
+class ForgeError(PublishError):
     """A forge API call failed.
 
     Carries status, URL and *response* body only. Request headers are never
@@ -43,7 +59,7 @@ def request(
     if data is not None:
         req.add_header("Content-Type", "application/json")
     try:
-        with urllib.request.urlopen(req) as resp:
+        with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
             raw = resp.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         # `from None` so the chained HTTPError — which holds the Request — can
@@ -51,4 +67,9 @@ def request(
         raise ForgeError(exc.code, url, exc.read().decode("utf-8", "replace")) from None
     except urllib.error.URLError as exc:
         raise ForgeError(0, url, str(exc.reason)) from None
+    except TimeoutError:
+        # A *connect* timeout arrives wrapped as URLError above, but a read
+        # timeout is raised bare from resp.read(); without this it would escape
+        # as an unhandled exception rather than a publish failure.
+        raise ForgeError(0, url, f"timed out after {TIMEOUT_SECONDS}s") from None
     return json.loads(raw) if raw else None

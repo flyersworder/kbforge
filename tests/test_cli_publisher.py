@@ -5,6 +5,7 @@ import pytest
 from kbforge.__main__ import _publishers, main
 from kbforge.publishers._http import ForgeError
 from kbforge.publishers.forge import PathError
+from kbforge.publishers.gitlab import TreeListingTruncatedError
 from kbforge.registry import build_registry
 
 DOC = "---\ntype: application\ntitle: App X\n---\nApp X.\n"
@@ -160,6 +161,24 @@ def test_forge_error_from_the_publish_step_exits_1(tmp_path: Path, capsys, monke
     out = capsys.readouterr().out
     assert "Publish failed" in out
     assert "500" in out
+
+
+def test_tree_listing_truncated_from_the_publish_step_exits_1(
+    tmp_path: Path, capsys, monkeypatch
+):
+    """Not a ForgeError, so naming publisher exception types one by one had let
+    this escape as a traceback — losing remediation advice written for the user.
+    Every PublishError subclass must reach the same handler."""
+    code = _run_with_publish_error(
+        tmp_path,
+        monkeypatch,
+        TreeListingTruncatedError("did not finish within _TREE_MAX_PAGES (1000) pages"),
+    )
+
+    assert code == 1
+    out = capsys.readouterr().out
+    assert "Publish failed" in out
+    assert "_TREE_MAX_PAGES" in out
 
 
 def test_path_error_from_the_publish_step_exits_1(tmp_path: Path, capsys, monkeypatch):

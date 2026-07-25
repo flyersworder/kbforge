@@ -6,7 +6,7 @@ from email.message import Message
 
 import pytest
 
-from kbforge.publishers._http import ForgeError, request
+from kbforge.publishers._http import TIMEOUT_SECONDS, ForgeError, request
 
 
 class _Resp:
@@ -26,7 +26,7 @@ class _Resp:
 def test_request_sends_json_and_parses_response(monkeypatch):
     seen = {}
 
-    def fake_urlopen(req):
+    def fake_urlopen(req, timeout=None):
         seen["method"] = req.method
         seen["url"] = req.full_url
         seen["payload"] = json.loads(req.data)
@@ -54,7 +54,7 @@ def test_request_sends_json_and_parses_response(monkeypatch):
 def test_request_without_payload_sends_no_body(monkeypatch):
     seen = {}
 
-    def fake_urlopen(req):
+    def fake_urlopen(req, timeout=None):
         seen["data"] = req.data
         seen["method"] = req.method
         return _Resp(b'{"default_branch": "main"}')
@@ -68,12 +68,12 @@ def test_request_without_payload_sends_no_body(monkeypatch):
 
 
 def test_request_returns_none_for_empty_body(monkeypatch):
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req: _Resp(b""))
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=None: _Resp(b""))
     assert request("DELETE", "https://api.example/x", headers={}) is None
 
 
 def test_http_error_becomes_forge_error_with_status_and_body(monkeypatch):
-    def fake_urlopen(req):
+    def fake_urlopen(req, timeout=None):
         raise urllib.error.HTTPError(
             req.full_url,
             422,
@@ -93,7 +93,7 @@ def test_http_error_becomes_forge_error_with_status_and_body(monkeypatch):
 
 
 def test_forge_error_never_exposes_the_token(monkeypatch):
-    def fake_urlopen(req):
+    def fake_urlopen(req, timeout=None):
         raise urllib.error.HTTPError(
             req.full_url,
             401,
@@ -117,7 +117,7 @@ def test_forge_error_never_exposes_the_token(monkeypatch):
 
 
 def test_url_error_becomes_forge_error_with_status_zero(monkeypatch):
-    def fake_urlopen(req):
+    def fake_urlopen(req, timeout=None):
         raise urllib.error.URLError("name resolution failed")
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
@@ -127,3 +127,38 @@ def test_url_error_becomes_forge_error_with_status_zero(monkeypatch):
 
     assert exc.value.status == 0
     assert "name resolution failed" in exc.value.body
+
+
+def test_request_passes_a_finite_timeout(monkeypatch):
+    """socket.getdefaulttimeout() is None, so an omitted timeout means a
+    black-holed connection wedges the pipeline forever instead of failing."""
+    seen = {}
+
+    def fake_urlopen(req, timeout=None):
+        seen["timeout"] = timeout
+        return _Resp(b"{}")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    request("GET", "https://api.example/x", headers={})
+
+    assert seen["timeout"] == TIMEOUT_SECONDS
+    assert isinstance(TIMEOUT_SECONDS, (int, float)) and TIMEOUT_SECONDS > 0
+
+
+def test_read_timeout_becomes_forge_error(monkeypatch):
+    """A connect timeout arrives wrapped as URLError, but a read timeout is
+    raised bare from resp.read() and would otherwise escape unhandled."""
+
+    class _SlowResp(_Resp):
+        def read(self) -> bytes:
+            raise TimeoutError("timed out")
+
+    monkeypatch.setattr(
+        urllib.request, "urlopen", lambda req, timeout=None: _SlowResp(b"")
+    )
+
+    with pytest.raises(ForgeError) as exc:
+        request("GET", "https://api.example/x", headers={})
+
+    assert exc.value.status == 0
+    assert "timed out" in exc.value.body
