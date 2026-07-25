@@ -164,6 +164,23 @@ prek install                 # ruff + ty on every commit
 uv run pytest
 ```
 
+The default suite never touches the network. Tests that call a real external
+service are marked `live` and skipped unless you pass `--run-live`.
+
+The forge publishers have a live suite because their offline tests can only
+assert what we *meant* to send — a real forge is the only thing that can say
+the intent was right. It needs a throwaway repo on each forge and the two CLIs
+(`gh`, `glab`) authenticated; each run writes under a fresh `live/<run-id>/`
+prefix, so nothing accumulates and no repo is ever deleted.
+
+```bash
+GITHUB_TOKEN=$(gh auth token) \
+GITLAB_TOKEN=$(glab config get token --host gitlab.com) \
+KBFORGE_LIVE_GITHUB_REPO=you/kbforge-live-test \
+KBFORGE_LIVE_GITLAB_REPO=you/kbforge-live-test \
+uv run pytest tests/test_forge_live.py --run-live
+```
+
 ## License
 
 MIT

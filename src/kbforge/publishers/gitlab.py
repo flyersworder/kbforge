@@ -55,7 +55,11 @@ class GitLabClient:
         return self._transport(
             method,
             f"{self._api}{path}",
-            headers={"PRIVATE-TOKEN": self._cfg.token()},
+            # Bearer accepts both token families GitLab issues: personal,
+            # project and group access tokens, plus OAuth tokens (which
+            # PRIVATE-TOKEN rejects with a 401). `glab auth login` stores an
+            # OAuth token, so PRIVATE-TOKEN would lock out the official CLI.
+            headers={"Authorization": f"Bearer {self._cfg.token()}"},
             payload=payload,
         )
 

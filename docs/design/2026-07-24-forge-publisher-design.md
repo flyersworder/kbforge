@@ -221,8 +221,12 @@ blob calls are needed.
 
 ### 5.2 GitLab adapter
 
-Auth: `PRIVATE-TOKEN: <token>`. The project id is the URL-encoded path
-(`group/project` → `group%2Fproject`).
+Auth: `Authorization: Bearer <token>`. GitLab accepts this for both token
+families it issues — personal, project and group access tokens, and OAuth
+tokens — whereas `PRIVATE-TOKEN` rejects OAuth tokens with a 401. Since
+`glab auth login` stores an OAuth token, Bearer is the only choice that works
+with the official CLI's credentials as well as with a CI-provisioned PAT.
+The project id is the URL-encoded path (`group/project` → `group%2Fproject`).
 
 | Operation | Calls |
 |---|---|

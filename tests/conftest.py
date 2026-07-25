@@ -15,7 +15,11 @@ def pytest_addoption(parser):
         "--run-live",
         action="store_true",
         default=False,
-        help="run the opt-in live LLM test (needs OPENROUTER_API_KEY)",
+        help=(
+            "run the opt-in live tests that call real external services: the "
+            "LLM synthesizer (OPENROUTER_API_KEY) and the forge publishers "
+            "(GITHUB_TOKEN/GITLAB_TOKEN plus KBFORGE_LIVE_*_REPO)"
+        ),
     )
 
 
@@ -29,7 +33,10 @@ def pytest_collection_modifyitems(config, items):
 
 
 def pytest_configure(config):
-    config.addinivalue_line("markers", "live: test that calls a real LLM provider")
+    config.addinivalue_line(
+        "markers",
+        "live: test that calls a real external service (LLM provider or forge)",
+    )
     # The module-level guard above disables ALL real model requests. When the user
     # explicitly opts in with --run-live, re-enable them so the live test can call a
     # real provider; offline tests use TestModel/FunctionModel and never make one.

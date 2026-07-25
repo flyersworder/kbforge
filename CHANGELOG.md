@@ -16,6 +16,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   open or update a real pull/merge request from a `ProposedChange`. No new
   runtime dependencies — both run on stdlib `urllib`. Tokens are read from
   `GITHUB_TOKEN` / `GITLAB_TOKEN` (configurable via `token_env`), never the CLI.
+  Both send `Authorization: Bearer`, so either forge accepts a personal,
+  project or group access token as well as an OAuth token from `gh`/`glab`.
+- `tests/test_forge_live.py` — an opt-in (`--run-live`) suite that publishes to
+  real GitHub and GitLab scratch repos and reads the result back through `gh`
+  and `glab`, so no assertion depends on the code that wrote the state. Covers
+  the sequence offline tests structurally cannot: publish, republish, human
+  merge, publish again.
 - `--publisher NAME` and `--publish-set KEY=VALUE` CLI flags; `kbforge list` now
   lists publishers.
 - `kbforge_validate_publish_config` hookspec so publisher config is checked
