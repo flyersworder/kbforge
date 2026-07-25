@@ -36,6 +36,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The core design stance is now "zero credentialed *connectors*" — publishing is
   delivery, not a system-of-record integration.
 
+### Fixed
+
+- `kbforge.__version__` reported `0.1.0` for the whole of the 0.2.0 release. It
+  is now derived from installed package metadata, so `pyproject.toml` is the
+  single source of truth and the two cannot drift again.
+
 ## [0.2.0] - 2026-07-19
 
 ### Added
