@@ -120,13 +120,27 @@ class GitLabClient:
         removed: list[str],
         message: str,
     ) -> None:
-        # `removed` is honoured in the adapter-specific delete task; accepting it
-        # here keeps the protocol change and the delete mechanics reviewable apart.
         # The commit's tree comes from start_branch, so a path already on base
         # must use action="update" — "create" collides with it ("A file with
         # this name already exists"). GitLab's commits API has no upsert action,
         # so the verb is chosen per path against a listing of base.
         existing = self._existing_paths(base)
+        actions = [
+            {
+                "action": "update" if path in existing else "create",
+                "file_path": path,
+                "content": body,
+            }
+            for path, body in sorted(files.items())  # deterministic
+        ]
+        # Only delete what is actually on base: GitLab answers 400 "A file with
+        # this name doesn't exist" otherwise, which would also make any retry
+        # after a partial failure fail outright.
+        actions += [
+            {"action": "delete", "file_path": path}
+            for path in sorted(removed)
+            if path in existing
+        ]
         self._call(
             "POST",
             f"/projects/{self._project}/repository/commits",
@@ -135,14 +149,7 @@ class GitLabClient:
                 "start_branch": base,
                 "force": True,
                 "commit_message": message,
-                "actions": [
-                    {
-                        "action": "update" if path in existing else "create",
-                        "file_path": path,
-                        "content": body,
-                    }
-                    for path, body in sorted(files.items())  # deterministic
-                ],
+                "actions": actions,
             },
         )
 
