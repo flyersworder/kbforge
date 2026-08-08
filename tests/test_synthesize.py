@@ -1,11 +1,18 @@
 from datetime import UTC, datetime
 
 import pytest
+import yaml
 
 from kbforge.models import CanonicalDocument, ChangeSet, ResourceAnchor
 from kbforge.synthesize import assemble, concept_path, synthesize
 
 NOW = datetime(2026, 7, 19, tzinfo=UTC)
+
+
+def _frontmatter(rendered: str) -> dict:
+    """Parse the YAML head of a rendered concept, so the emit-side assertions
+    check what actually ships rather than the projection that fed it."""
+    return yaml.safe_load(rendered.split("---")[1])
 
 
 def _doc(doc_id, structured=None, relations=None):
@@ -39,12 +46,41 @@ def test_synthesizes_a_conformant_concept():
     fm = change.concepts[path]
     assert fm.type == "concept"
     assert fm.facets == {"owner": "team-a"}
-    assert fm.resources == [doc.anchor]
+    assert fm.sources == [doc.anchor]
     assert fm.freshness == NOW
     assert fm.links == []  # no relations declared → no links
     assert change.files[path].startswith("---\n")  # rendered with YAML frontmatter
     # full strict-OKF + §4.4 conformance of synthesized output is proven end-to-end
     # by the pipeline test (Task 8): a Published result means run_validators == [].
+
+
+def test_rendered_frontmatter_uses_okf_02_sources():
+    """OKF §5.1: provenance lives in `sources`, each entry carrying a REQUIRED
+    `resource`. The bare `resource` key is a singular URI in both v0.1 and v0.2
+    and must not be a list."""
+    doc = _doc("local_files:apps/x.md")
+    change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
+    front = _frontmatter(change.files[concept_path("local_files:apps/x.md")])
+
+    assert "resource" not in front
+    assert front["sources"] == [
+        {
+            "id": "local_files:apps/x.md",
+            "resource": "local_files:apps/x.md",
+            "content_hash": "h",
+        }
+    ]
+
+
+def test_source_entry_prefers_a_real_url_when_the_anchor_has_one():
+    """A followable URL is the better `resource`; the scope descriptor is only the
+    fallback OKF §5.1 permits when no artifact URL exists."""
+    doc = _doc("local_files:apps/x.md")
+    doc.anchor.url = "https://wiki.acme/x"
+    change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
+    front = _frontmatter(change.files[concept_path("local_files:apps/x.md")])
+
+    assert front["sources"][0]["resource"] == "https://wiki.acme/x"
 
 
 def test_dangling_relations_are_dropped():

@@ -77,12 +77,12 @@ def _check_type(path: str, concept: ConceptFrontmatter) -> list[Failure]:
 
 
 def _check_anchor_presence(path: str, concept: ConceptFrontmatter) -> list[Failure]:
-    if not concept.resources:
+    if not concept.sources:
         return [
             Failure(
                 path,
                 "anchor-presence",
-                "concept carries no resource anchor (§4.4 law 3)",
+                "concept carries no source anchor (§4.4 law 3)",
             )
         ]
     return []

@@ -16,6 +16,7 @@ from kbforge.models import (
     ChangeSummary,
     ConceptFrontmatter,
     ProposedChange,
+    ResourceAnchor,
 )
 
 _SCALAR = (str, int, float, bool)
@@ -39,6 +40,21 @@ def _facets(structured: dict) -> dict:
     }
 
 
+def _source_entry(anchor: ResourceAnchor) -> dict:
+    """One OKF v0.2 `sources` entry (§5.1). `resource` is REQUIRED within an entry;
+    when the anchor carries no URL, §5.1 permits a scope descriptor in its place,
+    and "system:native_id" is the stable one kbforge already uses as a doc_id.
+    `content_hash` is a producer extension key (§4.1 permits them): it is what
+    makes a published concept auditable back to the canonical form it was
+    synthesized from."""
+    descriptor = f"{anchor.system}:{anchor.native_id}"
+    return {
+        "id": descriptor,
+        "resource": anchor.url or descriptor,
+        "content_hash": anchor.content_hash,
+    }
+
+
 def _render(
     doc: CanonicalDocument,
     fm: ConceptFrontmatter,
@@ -54,10 +70,7 @@ def _render(
         "timestamp": fm.freshness.isoformat() if fm.freshness else None,
     }
     front.update(fm.facets)
-    front["resource"] = [
-        {"system": a.system, "native_id": a.native_id, "url": a.url}
-        for a in fm.resources
-    ]
+    front["sources"] = [_source_entry(a) for a in fm.sources]
     if fm.links:
         front["links"] = fm.links
     head = yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
@@ -82,7 +95,7 @@ def assemble(
         fm = ConceptFrontmatter(
             type=str(doc.structured.get("type") or "concept"),
             facets=_facets(doc.structured),
-            resources=[doc.anchor],
+            sources=[doc.anchor],
             links=sorted(p for p in links if p in known),  # drop dangling (law 2)
             freshness=doc.anchor.retrieved_at,
         )

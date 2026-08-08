@@ -15,7 +15,9 @@ from pydantic import BaseModel, Field
 
 class ResourceAnchor(BaseModel):
     """Provenance. Every document and every downstream concept claim carries one.
-    Each anchor becomes one OKF `resource` frontmatter entry at emit time."""
+    Each anchor becomes one OKF v0.2 `sources` entry at emit time (§5.1), whose
+    REQUIRED `resource` field takes this anchor's `url` — or, when there is none,
+    the "system:native_id" scope descriptor §5.1 permits in its place."""
 
     system: str
     native_id: str
@@ -36,7 +38,7 @@ class ConceptFrontmatter(BaseModel):
 
     type: str = ""  # OKF's one required field (checked non-empty by validate)
     facets: dict = Field(default_factory=dict)  # law 1
-    resources: list[ResourceAnchor] = Field(default_factory=list)  # law 3
+    sources: list[ResourceAnchor] = Field(default_factory=list)  # law 3
     links: list[str] = Field(default_factory=list)  # law 2
     freshness: datetime | None = None  # law 4
 

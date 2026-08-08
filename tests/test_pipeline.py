@@ -157,7 +157,7 @@ class _FixedSynth:
                 path: ConceptFrontmatter(
                     type="concept",
                     freshness=doc.anchor.retrieved_at,
-                    resources=[doc.anchor],
+                    sources=[doc.anchor],
                 )
             },
         )
