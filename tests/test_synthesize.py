@@ -78,7 +78,7 @@ def test_rendered_frontmatter_uses_okf_02_sources():
 
 def test_source_entry_prefers_a_real_url_when_the_anchor_has_one():
     """A followable URL is the better `resource`; the scope descriptor is only the
-    fallback OKF §5.1 permits when no artifact URL exists."""
+    fallback used when no artifact URL exists."""
     doc = _doc("local_files:apps/x.md")
     doc.anchor.url = "https://wiki.acme/x"
     change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
@@ -144,6 +144,43 @@ def test_resolvable_sibling_link_survives():
     )
     fm = change.concepts[concept_path("local_files:apps/x.md")]
     assert fm.links == [concept_path("local_files:apps/y.md")]
+
+
+@pytest.mark.parametrize("key", ["type", "title", "description", "links", "sources"])
+def test_a_source_field_cannot_shadow_an_okf_key(key):
+    """Facets merge into top-level frontmatter, so a source system with a field
+    named like an OKF key used to overwrite it in the *file* while the projection
+    kept the good value — and every law checks the projection. A boolean `type`
+    and a dangling link both shipped that way. `local_files` reserves these keys
+    on its own side; this keeps the emitter safe for any connector.
+
+    The invariant is that the two carriers agree, not that the source value is
+    discarded: `structured["type"]` is the designed source of the OKF type, so
+    there it legitimately flows through to both."""
+    doc = _doc("local_files:apps/x.md", structured={key: "hijacked", "env": "prod"})
+    change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
+    path = concept_path("local_files:apps/x.md")
+    front = _frontmatter(change.files[path])
+    fm = change.concepts[path]
+
+    assert key not in fm.facets  # never carried as a facet
+    assert front["type"] == fm.type
+    assert front.get("links", []) == fm.links
+    assert isinstance(front["sources"], list)
+    assert front["env"] == "prod"  # ordinary facets are untouched
+
+
+def test_a_shadowing_attempt_still_passes_the_gate():
+    """The drop must leave a conformant artifact, not merely a different one."""
+    from kbforge.validate import run_validators
+
+    doc = _doc(
+        "local_files:apps/x.md",
+        structured={"type": False, "links": ["concepts/ghost/overview.md"]},
+    )
+    change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
+
+    assert run_validators(change) == []
 
 
 def test_nested_structured_value_is_not_a_facet():

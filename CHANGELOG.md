@@ -17,8 +17,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   underlying asset*, so this was a divergence from the day it was written, not
   something v0.2 broke — v0.2 simply gives provenance a correct home. Each
   `ResourceAnchor` now becomes one `sources` entry: the anchor's `url` fills the
-  REQUIRED `resource` field, falling back to the `system:native_id` scope
-  descriptor §5.1 permits when there is no URL; `system:native_id` also becomes
+  REQUIRED `resource` field, falling back to `system:native_id` when there is
+  no URL (honest, but not one of the two kinds §5.1 enumerates — see
+  `synthesize._source_entry`); `system:native_id` also becomes
   the stable `id` that per-claim footnote attribution will later join on; and
   `content_hash` rides along as a producer extension key (§4.1), which is what
   keeps a published concept auditable back to the canonical form it came from.
@@ -35,13 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   changing, so their `generated.at` under-reports. That is the fail-safe
   direction — a consumer reads such a concept as staler than it is, never
   fresher. `generated.by` follows the §7 actor convention: `kbforge/<version>`
-  for the stub synthesizer, `kbforge/<model>` for the LLM one. Both are
-  non-`human:` actors, so a freshly produced concept sits in the *unverified*
-  trust tier until a human merges it — which is exactly true of kbforge.
+  for the stub synthesizer, `kbforge/<model>` for the LLM one. This does not
+  set a trust tier: §5.3 derives the tier from `verified`, which kbforge does
+  not emit, so every produced concept reads as *unverified* — and stays so
+  after a merge. See the deferred-decisions note on why kbforge must not
+  stamp `verified` itself.
 - `ConceptFrontmatter` follows: `resources` → `sources`, `freshness` →
   `generated_at`, plus a new `generated_by`. `assemble()` takes a keyword-only
-  `generated_by`. Anyone with a third-party synthesizer constructing these
-  directly must rename; the §4.4 validator gate will catch it if they do not.
+  `generated_by`. See Upgrading for what a third-party synthesizer must change.
 - The strict-OKF required set is now `type`, `title`, `description`, `generated`.
   It stays deliberately stricter than OKF §11 conformance, which requires only a
   non-empty `type` — kbforge is a producer, and holds its own output to more than
@@ -63,8 +65,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-proposes every concept.
 - **Third-party synthesizers must rename before they run.** Anything
   constructing `ConceptFrontmatter` directly needs `resources` → `sources` and
-  `freshness` → `generated_at`, and should set `generated_by`; Pydantic rejects
-  the old keyword outright, so this fails loudly rather than silently.
+  `freshness` → `generated_at`, and should set `generated_by`.
+  `ConceptFrontmatter` now sets `extra="forbid"`, so a retired keyword raises
+  at construction rather than silently yielding a projection with no anchors
+  and no stamp that only fails three stages later at the gate.
 
 ### Notes
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ResourceAnchor(BaseModel):
@@ -37,6 +37,13 @@ class ConceptFrontmatter(BaseModel):
     onto one OKF `sources` entry (§5.1). This is the §4.4 projection, not the
     whole frontmatter: title, description, and the rendered body live in the file
     the publisher writes."""
+
+    # Pydantic ignores unknown keywords by default, which would silently swallow
+    # a third-party synthesizer still passing v0.1's `resources=`/`freshness=`
+    # and hand back a projection with no anchors and no stamp. The gate would
+    # catch it, but three stages later and as a law violation rather than as the
+    # migration error it is. Fail at construction instead.
+    model_config = ConfigDict(extra="forbid")
 
     type: str = ""  # OKF's one required field (checked non-empty by validate)
     facets: dict = Field(default_factory=dict)  # law 1

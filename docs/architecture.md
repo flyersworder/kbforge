@@ -116,7 +116,8 @@ class ResourceAnchor(BaseModel):
     """Provenance. Every document and every downstream concept claim carries one.
     Each anchor becomes one OKF v0.2 `sources` entry at emit time (§5.1), whose
     REQUIRED `resource` field takes this anchor's `url` — or, when there is none,
-    the "system:native_id" scope descriptor §5.1 permits in its place."""
+    falls back to "system:native_id" (see `synthesize._source_entry` for why
+    that fallback is honest but not spec-sanctioned)."""
     system: str                    # "servicenow"
     native_id: str                 # sys_id / page id / repo path
     url: str | None = None         # human-clickable deep link
@@ -359,7 +360,8 @@ seen. The four laws are exactly "emit what those affordances read":
    `retrieved_at`. *Without it:* `whats_stale`, and the agent's ability to caveat
    a stale answer.
 
-These four are the complete v0.1 set — exactly what the serving affordances read,
+These four are the complete set for v0.1 of *this contract* (kbforge's own
+versioning, not OKF's) — exactly what the serving affordances read,
 no more (prose quality is synthesis's job, not mechanically checkable) and no fewer.
 
 **The laws now speak OKF's vocabulary.** OKF v0.1 standardized only the artifact

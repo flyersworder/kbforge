@@ -22,6 +22,11 @@ from kbforge.models import (
 
 _SCALAR = (str, int, float, bool)
 
+# Frontmatter keys the emitter owns on a rendered concept. A facet must never
+# occupy one: the laws check the projection, the bundle receives the file, and a
+# shadowed key makes those two disagree. `validate` binds the same set.
+OKF_OWNED = frozenset({"type", "title", "description", "generated", "sources", "links"})
+
 # OKF §7 actor for the stub synthesizer. The LLM synthesizer overrides it with
 # the model, matching the spec's own `reference_agent/gemini-2.5-pro` example
 # where the version slot carries the model rather than the tool's release.
@@ -36,13 +41,25 @@ def concept_path(doc_id: str) -> str:
 
 
 def _facets(structured: dict) -> dict:
+    """Filterable frontmatter keys from a doc's `structured` fields (law 1).
+
+    Keys kbforge owns are dropped rather than carried. Facets are merged into
+    top-level frontmatter at render time, so a source field named `type` or
+    `links` would otherwise overwrite the OKF field in the shipped file while
+    the projection kept the good value — and every law checks the projection.
+    `local_files` reserves these keys on its own side; dropping them here makes
+    the emitter safe for any connector, including a third-party one that passes
+    an upstream record straight through."""
+
     def ok(v: object) -> bool:
         if isinstance(v, _SCALAR):
             return True
         return isinstance(v, list) and all(isinstance(i, _SCALAR) for i in v)
 
     return {
-        k: v for k, v in structured.items() if v not in (None, "", [], {}) and ok(v)
+        k: v
+        for k, v in structured.items()
+        if k not in OKF_OWNED and v not in (None, "", [], {}) and ok(v)
     }
 
 
@@ -108,6 +125,8 @@ def _render(
         "description": description,
         "generated": _generated(fm),
     }
+    # `_facets` has already dropped anything named like a key kbforge owns, so
+    # this update cannot shadow the four above (see OKF_OWNED).
     front.update(fm.facets)
     front["sources"] = [_source_entry(a) for a in fm.sources]
     if fm.links:

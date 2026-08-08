@@ -119,7 +119,8 @@ but an agent that quietly can't find, traverse, trace, or date what it needs.
    source's `retrieved_at` from its anchor. *Dies without it:* `whats_stale`, and
    the agent's ability to caveat a stale answer.
 
-**These four are the complete set for v0.1.** They are exactly the artifact
+**These four are the complete set for v0.1 of this contract** (kbforge's own
+versioning, not OKF's). They are exactly the artifact
 properties the §2 serving affordances read — no more (we do not legislate prose
 quality, which is synthesis's job and not mechanically checkable) and no fewer
 (dropping any one dims a specific agent capability).
