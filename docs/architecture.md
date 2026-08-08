@@ -25,7 +25,7 @@ This library is the reference implementation of that missing half:
 | Artifact format | OKF v0.1 (Google) | exists |
 | Semantic vocabulary (`type` taxonomy) | us, per domain | our design doc §5.4 |
 | **Production protocol** (connectors, canonicalization, diff, provenance, publish) | **this library** | this spec |
-| Serving protocol | MCP | exists |
+| Serving protocol | MCP — or a context database that ingests the bundle (§4.4) | exists |
 
 Design stance carried over from the main doc: **the core ships zero credentialed
 connectors, zero CI logic.** Connectors are plugins; deployments are separate
@@ -291,6 +291,21 @@ The core **enforces** law 1 mechanically: the test kit (§9) and an optional
 runtime check normalize twice and compare hashes; a connector that fails is
 rejected at registration in strict mode.
 
+**Why this cannot be deferred downstream.** Systems that index documents for
+retrieval do deduplicate, but at the storage layer and on **byte identity** — hash
+the incoming content, skip the write if it matches what is already stored. That
+check is correct and nearly free, and on a real system-of-record export it
+essentially never fires: serialization timestamps, collection ordering, and
+rendered chrome differ on every pull, so the bytes differ, so the corpus is
+re-stored and re-indexed in full on every refresh (and re-summarized, where the
+index is LLM-generated). Volatility exclusion has to happen *before* the hash — at
+ingest, inside the unit that knows which fields carry meaning, which is the
+connector and nothing further downstream. That is why law 2 is a connector
+obligation rather than a core utility, and why the no-op rule (§7) is stated over
+`CanonicalDocument` and never over `RawRecord`. It is also the reason the no-op
+rule is not merely a cost optimization: without it, every refresh presents as a
+full-corpus change, and a human gate over a full-corpus change is not a gate.
+
 ### 4.4 Agent-facing artifact laws (the emit side)
 
 §4.3 governs **ingest** (raw → canonical). These govern **emit** (canonical →
@@ -313,7 +328,13 @@ stated interface:
 | `whats_stale(area?)` — freshness | **frontmatter timestamps** |
 
 kbforge guarantees the left column is satisfiable; it does **not** build the
-serving layer. The four laws are exactly "emit what those affordances read":
+serving layer — and deliberately does not require that layer to be an MCP server
+we recognize. A context database that ingests the bundle (OpenViking and its kin)
+is an equally valid consumer; it reads the same three artifact features under
+different names. Enumerating the features rather than the API is what keeps the
+serving side swappable: the laws are stated against *affordances*, so a bundle
+that satisfies them is portable across serving implementations we have never
+seen. The four laws are exactly "emit what those affordances read":
 
 1. **Facet survival.** Every `structured` field synthesis relied on to make a
    claim appears as a **frontmatter key**, never only in prose. *Without it:*

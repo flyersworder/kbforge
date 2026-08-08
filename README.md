@@ -20,7 +20,7 @@ losing an afternoon to review.
 |---|---|
 | Artifact format | OKF v0.1 |
 | **Production protocol** — connectors, canonicalization, diff, provenance, publish | **kbforge** |
-| Serving protocol | MCP |
+| Serving protocol | MCP — or any context database that ingests the bundle |
 
 "Agent-first" is a *checkable* claim, not a downstream hope. kbforge stays a producer —
 the agent connects over MCP, which kbforge doesn't own — but every publish is gated on
@@ -172,6 +172,31 @@ kbforge is one of three *contracts for agents*, split by seam:
   the *consumption* half for **structured** data: domain-driven governance enforced at
   query time. kbforge is the *production* half for **unstructured** knowledge; both
   independently converged on making freshness legible to the agent.
+
+### Not a context database
+
+[OpenViking](https://github.com/volcengine/OpenViking) and its kin sit in the
+**serving** row of the table above, not the production row. They ingest documents
+and expose them to an agent — OpenViking summarizes each one into retrieval tiers
+on write and serves them over a filesystem API and MCP. kbforge produces the
+documents such a system serves: an OKF bundle in a git repo is a valid input to
+one, so these compose rather than compete.
+
+The difference shows on the *second* pull from a source that mostly did not
+change. A context database refreshes a watched resource by re-ingesting it
+wholesale — no diff, no changed-set, no proposal a human ever sees. kbforge
+[canonicalizes](docs/architecture.md#43-canonicalization-laws-the-load-bearing-part)
+first, so an export whose timestamps and ordering jitter reduces to *no change at
+all*: no LLM spend, no review request, no merge. Byte-level deduplication further
+downstream cannot substitute, because a rendered system-of-record export is rarely
+byte-identical across pulls even when nothing about it has meaningfully changed.
+
+That one mechanism is why both the token bill and the review queue stay bounded on
+a corpus where most documents are stable — and it is what makes the human gate
+affordable rather than ceremonial. Reach for a context database when an agent needs
+to *retrieve* from a corpus; reach for kbforge when a corpus has to stay honest to a
+system of record that keeps changing, and someone has to be accountable for what it
+says.
 
 ## Development
 
