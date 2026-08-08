@@ -33,3 +33,7 @@ def test_live_deepseek_produces_conformant_concept():
     path = concept_path(doc.doc_id)
     assert proposal.files[path].strip()
     assert run_validators(proposal, frozenset({path})) == []
+    # The gate checks `generated.by` is non-blank, never its OKF §7 shape, so a
+    # malformed actor passes run_validators. Assert it here, where the config is
+    # the real one and the model id is provider-qualified.
+    assert proposal.concepts[path].generated_by == "kbforge/deepseek-v4-flash"
