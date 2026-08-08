@@ -3,9 +3,9 @@ type: design-note
 title: Agent-Facing Application Knowledge Base — Design & Literature Reference
 description: Architecture, component specs, and prior-art review for an OKF-based internal knowledge base for application managers, served to humans and agents via MCP.
 tags: [okf, mcp, knowledge-base, application-management, rag, agent-governance]
-timestamp: 2026-07-08T00:00:00Z
+generated: { by: human:flyersworder, at: 2026-07-08T00:00:00Z }
 status: draft
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 # Agent-Facing Application Knowledge Base — Design & Literature Reference
@@ -84,7 +84,7 @@ write-capable) and the **server** (light, always-on, read-only). See ADR-1.
 ### 5.1 Systems of record (SoR)
 Before anything else, declare per information type what the authoritative source is
 (ownership → CMDB/HR; incidents → ITSM; runbooks → Confluence/repo; architecture → …).
-Grounding is meaningless until this is settled. The OKF `resource` field then anchors
+Grounding is meaningless until this is settled. The OKF `sources` field then anchors
 each concept back to its SoR.
 
 ### 5.2 Ingestion layer — `sources/`
@@ -100,7 +100,7 @@ Disciplines borrowed from OpenWiki and Karpathy, adapted to emit OKF:
 
 - **Grounding contract:** never assert what isn't traceable to an inspected source;
   prefer current source evidence over existing docs; flag conflicts rather than pick
-  silently. Every concept carries a `resource` anchor + citations.
+  silently. Every concept carries a `sources` anchor.
 - **Change-scoped, surgical updates:** snapshot the `sources/` mirror; diff since the
   last successful run (OpenWiki's `gitHead`/last-run trick); regenerate only concepts
   whose sources moved. Soft diff budget: few sources changed → touch few concepts, no
@@ -117,7 +117,7 @@ Disciplines borrowed from OpenWiki and Karpathy, adapted to emit OKF:
 ### 5.4 OKF format & proposed type vocabulary
 OKF conformance requires only a non-empty `type` per concept; consumers must be
 permissive (tolerate unknown types/keys, broken links, missing optional fields). The
-reference producer-side check is stricter (`type`, `title`, `description`, `timestamp`) —
+reference producer-side check is stricter (`type`, `title`, `description`, `generated`) —
 we should adopt the stricter check on our producer for quality.
 
 OKF does **not** define a type taxonomy — we must. Draft vocabulary for the application
@@ -169,12 +169,12 @@ calls per question — we follow that discipline):
 - `list_concepts(type?, tags?, owner?, updated_since?)` — faceted browse; the real
   "discover" affordance, powered by frontmatter.
 - `get_concept(id)` — full doc (or expose as a resource read).
-- `related_concepts(id)` — graph neighbours via links and `resource` anchors.
-- `whats_stale(area?)` — timestamp-driven; concepts with no SoR or a long-untouched SoR.
+- `related_concepts(id)` — graph neighbours via links and `sources` anchors.
+- `whats_stale(area?)` — `generated.at`-driven; concepts with no SoR or a long-untouched SoR.
 - `trigger_refresh(area?)` — **dispatch only**; enqueues the producer CI pipeline. Holds
   no source credentials and no write access itself (see ADR-1).
 
-Design invariants: every result carries provenance (`resource` + `timestamp`) so agents
+Design invariants: every result carries provenance (`sources` + `generated.at`) so agents
 can cite and humans can verify; progressive disclosure (search → refs+frontmatter+snippet,
 then fetch one concept) keeps context lean; authz enforced at the MCP boundary per user
 identity, not just at the repo.
@@ -195,7 +195,7 @@ Properties that make it trustworthy rather than annoying:
   frontmatter to assign the reviewer to the concept's owner.
 - **Never auto-merge.** Human merge is the backstop against bad synthesis *and* injected
   content (see §7).
-- **Freshness honesty.** The loop updates `timestamp` = "last synced from source", which
+- **Freshness honesty.** The loop updates `generated.at` = "last synced from source", which
   is not "verified against reality"; `whats_stale` surfaces the difference.
 
 **Web scanning is a restricted mode, not the default** — see ADR-3.
@@ -218,7 +218,7 @@ Mitigations we adopt:
   hidden instructions can be indexed by a RAG system and executed on a routine query
   (exfiltration via, e.g., an image URL). Therefore: (a) the MR review gate also guards
   what enters the served index; (b) consumers must treat retrieved KB content as *data,
-  not instructions*; (c) provenance (`resource`) lets us trace any poisoned concept.
+  not instructions*; (c) provenance (`sources`) lets us trace any poisoned concept.
 - **Secrets exclusion** (from OpenWiki): never read or document secret values, `.env`,
   keys, tokens. App docs attract "where the credentials live" — document only that such
   config exists and where.
