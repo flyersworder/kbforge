@@ -27,20 +27,22 @@ class ResourceAnchor(BaseModel):
 
 
 class ConceptFrontmatter(BaseModel):
-    """The checkable head of an emitted OKF concept (§4.4).
+    """The checkable head of an emitted OKF v0.2 concept (§4.4).
 
     Fields are permissive so a law-violating concept can be represented and then
     reported by the validators — kbforge checks synthesis output, it does not
-    trust it (spec §5). `type` and `freshness` serialize onto the OKF `type` and
-    `timestamp` keys at write time; each `resources` entry becomes a `resource`
-    entry. This is the §4.4 projection, not the whole frontmatter: title,
-    description, and the rendered body live in the file the publisher writes."""
+    trust it (spec §5). `type` serializes onto the OKF `type` key; `generated_by`
+    and `generated_at` onto `generated: {by, at}` (§5.2); each `sources` entry
+    onto one OKF `sources` entry (§5.1). This is the §4.4 projection, not the
+    whole frontmatter: title, description, and the rendered body live in the file
+    the publisher writes."""
 
     type: str = ""  # OKF's one required field (checked non-empty by validate)
     facets: dict = Field(default_factory=dict)  # law 1
     sources: list[ResourceAnchor] = Field(default_factory=list)  # law 3
     links: list[str] = Field(default_factory=list)  # law 2
-    freshness: datetime | None = None  # law 4
+    generated_at: datetime | None = None  # law 4 — OKF `generated.at`
+    generated_by: str = ""  # OKF `generated.by`, an §7 actor
 
 
 class ChangeSummary(BaseModel):

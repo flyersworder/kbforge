@@ -47,7 +47,7 @@ def test_synthesizes_a_conformant_concept():
     assert fm.type == "concept"
     assert fm.facets == {"owner": "team-a"}
     assert fm.sources == [doc.anchor]
-    assert fm.freshness == NOW
+    assert fm.generated_at == NOW
     assert fm.links == []  # no relations declared → no links
     assert change.files[path].startswith("---\n")  # rendered with YAML frontmatter
     # full strict-OKF + §4.4 conformance of synthesized output is proven end-to-end
@@ -81,6 +81,35 @@ def test_source_entry_prefers_a_real_url_when_the_anchor_has_one():
     front = _frontmatter(change.files[concept_path("local_files:apps/x.md")])
 
     assert front["sources"][0]["resource"] == "https://wiki.acme/x"
+
+
+def test_rendered_frontmatter_uses_okf_02_generated():
+    """§13.1: `timestamp` is superseded by `generated: {by, at}`."""
+    from kbforge import __version__
+
+    doc = _doc("local_files:apps/x.md")
+    change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
+    front = _frontmatter(change.files[concept_path("local_files:apps/x.md")])
+
+    assert "timestamp" not in front
+    assert front["generated"] == {
+        "by": f"kbforge/{__version__}",
+        "at": NOW.isoformat(),
+    }
+
+
+def test_generated_by_is_overridable_for_llm_synthesis():
+    """OKF §7 actor convention: the version slot carries the model, following the
+    spec's own `reference_agent/gemini-2.5-pro` example."""
+    doc = _doc("local_files:apps/x.md")
+    change = assemble(
+        [(doc, "T", "D", "body")],
+        ChangeSet(added=["local_files:apps/x.md"]),
+        generated_by="kbforge/deepseek-v4-flash",
+    )
+    fm = change.concepts[concept_path("local_files:apps/x.md")]
+
+    assert fm.generated_by == "kbforge/deepseek-v4-flash"
 
 
 def test_dangling_relations_are_dropped():

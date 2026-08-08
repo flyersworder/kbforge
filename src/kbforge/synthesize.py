@@ -10,6 +10,7 @@ from typing import Protocol
 
 import yaml
 
+from kbforge import __version__
 from kbforge.models import (
     CanonicalDocument,
     ChangeSet,
@@ -20,6 +21,11 @@ from kbforge.models import (
 )
 
 _SCALAR = (str, int, float, bool)
+
+# OKF §7 actor for the stub synthesizer. The LLM synthesizer overrides it with
+# the model, matching the spec's own `reference_agent/gemini-2.5-pro` example
+# where the version slot carries the model rather than the tool's release.
+_DEFAULT_ACTOR = f"kbforge/{__version__}"
 
 
 def concept_path(doc_id: str) -> str:
@@ -38,6 +44,20 @@ def _facets(structured: dict) -> dict:
     return {
         k: v for k, v in structured.items() if v not in (None, "", [], {}) and ok(v)
     }
+
+
+def _generated(fm: ConceptFrontmatter) -> dict:
+    """The OKF v0.2 `generated` block (§5.2), which supersedes v0.1 `timestamp`.
+
+    `at` is the anchor's `retrieved_at` — a fetch time standing in for "last
+    meaningful change". kbforge earns that equivalence from the no-op rule: a
+    concept is re-rendered only when its canonical form actually changed, so the
+    run that rewrote it *is* its last meaningful change. A producer without
+    canonicalization cannot make the same claim."""
+    out: dict = {"by": fm.generated_by}
+    if fm.generated_at is not None:
+        out["at"] = fm.generated_at.isoformat()
+    return out
 
 
 def _source_entry(anchor: ResourceAnchor) -> dict:
@@ -67,7 +87,7 @@ def _render(
         "type": fm.type,
         "title": title,
         "description": description,
-        "timestamp": fm.freshness.isoformat() if fm.freshness else None,
+        "generated": _generated(fm),
     }
     front.update(fm.facets)
     front["sources"] = [_source_entry(a) for a in fm.sources]
@@ -81,6 +101,8 @@ def assemble(
     items: list[tuple[CanonicalDocument, str, str, str]],
     changeset: ChangeSet,
     existing_paths: frozenset[str] = frozenset(),
+    *,
+    generated_by: str = _DEFAULT_ACTOR,
 ) -> ProposedChange:
     """Build the ProposedChange frame from per-doc prose (doc, title, description,
     body). Both synthesizers produce `items` differently and share this assembly, so
@@ -97,7 +119,8 @@ def assemble(
             facets=_facets(doc.structured),
             sources=[doc.anchor],
             links=sorted(p for p in links if p in known),  # drop dangling (law 2)
-            freshness=doc.anchor.retrieved_at,
+            generated_at=doc.anchor.retrieved_at,
+            generated_by=generated_by,
         )
         concepts[path] = fm
         files[path] = _render(doc, fm, title=title, description=description, body=body)

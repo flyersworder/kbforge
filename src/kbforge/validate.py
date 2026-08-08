@@ -89,7 +89,7 @@ def _check_anchor_presence(path: str, concept: ConceptFrontmatter) -> list[Failu
 
 
 def _check_freshness_legible(path: str, concept: ConceptFrontmatter) -> list[Failure]:
-    if concept.freshness is None:
+    if concept.generated_at is None:
         return [
             Failure(
                 path,
@@ -97,7 +97,7 @@ def _check_freshness_legible(path: str, concept: ConceptFrontmatter) -> list[Fai
                 "concept carries no freshness stamp (§4.4 law 4)",
             )
         ]
-    if concept.freshness.utcoffset() is None:
+    if concept.generated_at.utcoffset() is None:
         return [
             Failure(
                 path,
@@ -182,7 +182,11 @@ def run_artifact_validators(
     return failures
 
 
-_STRICT_REQUIRED = ("type", "title", "description", "timestamp")
+# Stricter than OKF §11, which requires only a non-empty `type`. kbforge is a
+# producer: it holds its own output to `title`/`description`/`generated` so a
+# rendered file can never satisfy the §4.4 projection while omitting the stamp
+# law 4 depends on. Consumers stay permissive; producers do not have to be.
+_STRICT_REQUIRED = ("type", "title", "description", "generated")
 
 
 def _parse_frontmatter(content: str) -> dict:

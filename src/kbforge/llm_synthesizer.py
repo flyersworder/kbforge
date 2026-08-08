@@ -158,6 +158,11 @@ class LLMSynthesizer:
             c = result.output
             body = _strip_title_heading(c.body, c.title)
             items.append((doc, c.title, c.description, body))
-        proposal = assemble(items, changeset, existing_paths)
+        proposal = assemble(
+            items,
+            changeset,
+            existing_paths,
+            generated_by=f"kbforge/{self.config.model}",
+        )
         proposal.summary.grounding_notes.extend(notes)
         return proposal

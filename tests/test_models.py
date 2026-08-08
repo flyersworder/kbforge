@@ -16,7 +16,7 @@ def test_concept_frontmatter_defaults_are_permissive():
     assert c.facets == {}
     assert c.sources == []
     assert c.links == []
-    assert c.freshness is None
+    assert c.generated_at is None
 
 
 def test_proposed_change_holds_files_and_concepts():
@@ -30,7 +30,7 @@ def test_proposed_change_holds_files_and_concepts():
         type="application",
         facets={"owner": "team-a"},
         sources=[anchor],
-        freshness=NOW,
+        generated_at=NOW,
     )
     change = ProposedChange(
         branch_hint="sync/app-x",

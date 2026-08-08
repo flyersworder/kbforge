@@ -5,7 +5,7 @@ GOOD = """---
 type: concept
 title: X
 description: X
-timestamp: 2026-07-19T00:00:00+00:00
+generated: {by: kbforge/test, at: 2026-07-19T00:00:00+00:00}
 ---
 # X
 body
@@ -14,7 +14,16 @@ body
 MISSING_DESC = """---
 type: concept
 title: X
-timestamp: 2026-07-19T00:00:00+00:00
+generated: {by: kbforge/test, at: 2026-07-19T00:00:00+00:00}
+---
+# X
+"""
+
+
+MISSING_GENERATED = """---
+type: concept
+title: X
+description: X
 ---
 # X
 """
@@ -30,6 +39,14 @@ def _proposal(path, content, concept=None):
 
 def test_rendered_file_missing_required_field_is_reported():
     failures = run_validators(_proposal("concepts/x/overview.md", MISSING_DESC))
+    assert any(f.law == "okf-strict" for f in failures)
+
+
+def test_rendered_file_without_generated_is_reported():
+    """kbforge requires `generated` even though OKF §11 requires only `type`:
+    producer-side strictness, so law 4 can never be satisfied by a projection
+    whose rendered file omits the stamp."""
+    failures = run_validators(_proposal("concepts/x/overview.md", MISSING_GENERATED))
     assert any(f.law == "okf-strict" for f in failures)
 
 
