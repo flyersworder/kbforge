@@ -16,31 +16,31 @@ def _proposal(concept, path="apps/x/overview.md"):
 
 
 def test_missing_anchor_is_reported():
-    c = ConceptFrontmatter(type="application", freshness=NOW)  # no resources
+    c = ConceptFrontmatter(type="application", generated_at=NOW)  # no sources
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "anchor-presence" for f in failures)
 
 
 def test_missing_freshness_is_reported():
-    c = ConceptFrontmatter(type="application", resources=[ANCHOR])  # freshness None
+    c = ConceptFrontmatter(type="application", sources=[ANCHOR])  # generated_at None
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "freshness-legibility" for f in failures)
 
 
 def test_empty_type_is_reported():
-    c = ConceptFrontmatter(type="", resources=[ANCHOR], freshness=NOW)
+    c = ConceptFrontmatter(type="", sources=[ANCHOR], generated_at=NOW)
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "okf-type" for f in failures)
 
 
 def test_conformant_concept_passes_per_concept_checks():
-    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    c = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
     assert run_artifact_validators(_proposal(c)) == []
 
 
 def test_empty_facet_value_is_reported():
     c = ConceptFrontmatter(
-        type="application", facets={"owner": ""}, resources=[ANCHOR], freshness=NOW
+        type="application", facets={"owner": ""}, sources=[ANCHOR], generated_at=NOW
     )
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "facet-wellformedness" for f in failures)
@@ -50,8 +50,8 @@ def test_nested_facet_value_is_reported():
     c = ConceptFrontmatter(
         type="application",
         facets={"owner": {"team": "a"}},
-        resources=[ANCHOR],
-        freshness=NOW,
+        sources=[ANCHOR],
+        generated_at=NOW,
     )
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "facet-wellformedness" for f in failures)
@@ -61,8 +61,8 @@ def test_scalar_and_flat_list_facets_pass():
     c = ConceptFrontmatter(
         type="application",
         facets={"owner": "team-a", "tags": ["prod", "db"], "replicas": 3},
-        resources=[ANCHOR],
-        freshness=NOW,
+        sources=[ANCHOR],
+        generated_at=NOW,
     )
     failures = run_artifact_validators(_proposal(c))
     facet_failures = [f for f in failures if f.law == "facet-wellformedness"]
@@ -72,8 +72,8 @@ def test_scalar_and_flat_list_facets_pass():
 def test_dangling_link_is_reported():
     c = ConceptFrontmatter(
         type="application",
-        resources=[ANCHOR],
-        freshness=NOW,
+        sources=[ANCHOR],
+        generated_at=NOW,
         links=["apps/y/overview.md"],  # y not in the bundle
     )
     failures = run_artifact_validators(_proposal(c))
@@ -83,11 +83,11 @@ def test_dangling_link_is_reported():
 def test_link_to_sibling_in_same_change_resolves():
     x = ConceptFrontmatter(
         type="application",
-        resources=[ANCHOR],
-        freshness=NOW,
+        sources=[ANCHOR],
+        generated_at=NOW,
         links=["apps/y/overview.md"],
     )
-    y = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    y = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
     change = ProposedChange(
         branch_hint="b",
         files={"apps/x/overview.md": "...", "apps/y/overview.md": "..."},
@@ -102,8 +102,8 @@ def test_link_to_sibling_in_same_change_resolves():
 def test_link_to_existing_bundle_path_resolves():
     c = ConceptFrontmatter(
         type="application",
-        resources=[ANCHOR],
-        freshness=NOW,
+        sources=[ANCHOR],
+        generated_at=NOW,
         links=["apps/z/overview.md"],
     )
     link_failures = [
@@ -120,11 +120,11 @@ def _conformant_change():
     concept = ConceptFrontmatter(
         type="application",
         facets={"owner": "team-a", "criticality": "high"},
-        resources=[ANCHOR],
+        sources=[ANCHOR],
         links=["apps/y/overview.md"],
-        freshness=NOW,
+        generated_at=NOW,
     )
-    sibling = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    sibling = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
     return ProposedChange(
         branch_hint="sync/app-x",
         files={"apps/x/overview.md": "# X", "apps/y/overview.md": "# Y"},
@@ -142,11 +142,11 @@ def test_each_law_catches_its_own_violation():
     base = _conformant_change()
 
     no_anchor = base.model_copy(deep=True)
-    no_anchor.concepts["apps/x/overview.md"].resources = []
+    no_anchor.concepts["apps/x/overview.md"].sources = []
     assert any(f.law == "anchor-presence" for f in run_artifact_validators(no_anchor))
 
     no_freshness = base.model_copy(deep=True)
-    no_freshness.concepts["apps/x/overview.md"].freshness = None
+    no_freshness.concepts["apps/x/overview.md"].generated_at = None
     assert any(
         f.law == "freshness-legibility" for f in run_artifact_validators(no_freshness)
     )
@@ -179,7 +179,7 @@ def test_file_without_projection_is_reported():
 
 
 def test_projection_without_file_is_reported():
-    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    c = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
     change = ProposedChange(
         branch_hint="b", files={}, concepts={"apps/x/overview.md": c}
     )
@@ -189,7 +189,7 @@ def test_projection_without_file_is_reported():
 
 def test_reserved_files_need_no_projection():
     # index.md (listing) and log.md (history) carry no frontmatter — exempt.
-    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=NOW)
+    c = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
     change = ProposedChange(
         branch_hint="b",
         files={
@@ -209,6 +209,6 @@ def test_naive_freshness_is_reported():
     # A timezone-naive stamp is "present" but crashes whats_stale's
     # aware-minus-naive subtraction — law 4 must reject it (red-team finding #4).
     naive = datetime(2026, 7, 18)  # deliberately naive (no tzinfo)
-    c = ConceptFrontmatter(type="application", resources=[ANCHOR], freshness=naive)
+    c = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=naive)
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "freshness-legibility" for f in failures)

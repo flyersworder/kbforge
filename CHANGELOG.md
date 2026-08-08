@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-08-08
+
+### Changed
+
+- **BREAKING — provenance is emitted as OKF v0.2 `sources`, not `resource`.**
+  kbforge wrote its anchors as a list of dicts under the `resource` key. Both
+  OKF v0.1 and v0.2 define `resource` as a *singular optional URI for the
+  underlying asset*, so this was a divergence from the day it was written, not
+  something v0.2 broke — v0.2 simply gives provenance a correct home. Each
+  `ResourceAnchor` now becomes one `sources` entry: the anchor's `url` fills the
+  REQUIRED `resource` field, falling back to `system:native_id` when there is
+  no URL (honest, but not one of the two kinds §5.1 enumerates — see
+  `synthesize._source_entry`); `system:native_id` also becomes
+  the stable `id` that per-claim footnote attribution will later join on; and
+  `content_hash` rides along as a producer extension key (§4.1), which is what
+  keeps a published concept auditable back to the canonical form it came from.
+  Law 3 is unchanged in meaning and keeps its `anchor-presence` slug.
+- **BREAKING — freshness is emitted as `generated: {by, at}`, not `timestamp`.**
+  OKF v0.2 §13.1 supersedes `timestamp`. The modelling matters more than the
+  rename: v0.1's `timestamp` meant "last meaningful change" and kbforge was
+  filling it with the anchor's `retrieved_at`, a fetch time. v0.2 splits the two
+  ideas, and the no-op rule is what makes `retrieved_at` an honest
+  `generated.at` for the ordinary case — a concept is re-synthesized only when
+  its canonical form changed, so the fetch that rewrote it is its last
+  meaningful change. One exception: referrers pulled from the mirror after a
+  tombstone are re-rendered to drop a dangling link without their canonical form
+  changing, so their `generated.at` under-reports. That is the fail-safe
+  direction — a consumer reads such a concept as staler than it is, never
+  fresher. `generated.by` follows the §7 actor convention: `kbforge/<version>`
+  for the stub synthesizer, `kbforge/<model>` for the LLM one. This does not
+  set a trust tier: §5.3 derives the tier from `verified`, which kbforge does
+  not emit, so every produced concept reads as *unverified* — and stays so
+  after a merge. See the deferred-decisions note on why kbforge must not
+  stamp `verified` itself.
+- `ConceptFrontmatter` follows: `resources` → `sources`, `freshness` →
+  `generated_at`, plus a new `generated_by`. `assemble()` takes a keyword-only
+  `generated_by`. See Upgrading for what a third-party synthesizer must change.
+- The strict-OKF required set is now `type`, `title`, `description`, `generated`.
+  It stays deliberately stricter than OKF §11 conformance, which requires only a
+  non-empty `type` — kbforge is a producer, and holds its own output to more than
+  it asks of consumers.
+- `local_files` reserves `generated` and `sources` so a source document cannot
+  collide with them, and keeps the retired `timestamp` and `resource` reserved so
+  a v0.1-era source document cannot reintroduce a superseded key as a facet.
+
+### Upgrading
+
+- **Existing bundles migrate lazily, per concept.** Synthesis is scoped to what
+  changed, so upgrading does not rewrite a bundle: a concept whose source has not
+  changed keeps its v0.1 `resource` and `timestamp` keys until its next real
+  change, and a large bundle can sit mixed for a long time. Consumers should
+  apply the OKF §13.1 fallbacks during the transition — read `sources` but fall
+  back to `resource`, read `generated.at` but fall back to `timestamp`. To
+  migrate in one shot instead, reset the mirror **and** the connector's cursor
+  (see the README's note on abandoned review requests) so the next run
+  re-proposes every concept.
+- **Third-party synthesizers must rename before they run.** Anything
+  constructing `ConceptFrontmatter` directly needs `resources` → `sources` and
+  `freshness` → `generated_at`, and should set `generated_by`.
+  `ConceptFrontmatter` now sets `extra="forbid"`, so a retired keyword raises
+  at construction rather than silently yielding a projection with no anchors
+  and no stamp that only fails three stages later at the gate.
+
+### Notes
+
+- Four v0.2 families are deliberately **not** emitted: `verified` (§5.2),
+  `status: deprecated` (§5.4), `stale_after` (§5.5), and footnote attribution
+  (§5.1). Each is blocked on a decision rather than on effort — `verified` most
+  of all, since the stamp belongs to the merge event kbforge refuses to own, and
+  a producer asserting a review that has not happened is a well-formed lie no
+  §4.4 law could catch. Reasoning and options:
+  [`docs/design/2026-08-08-okf-02-deferred-decisions.md`](docs/design/2026-08-08-okf-02-deferred-decisions.md).
+
 ## [0.4.0] - 2026-07-25
 
 ### Added
@@ -166,7 +239,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/flyersworder/kbforge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/flyersworder/kbforge/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/flyersworder/kbforge/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/flyersworder/kbforge/compare/v0.1.0...v0.2.0

@@ -10,15 +10,27 @@ from typing import Protocol
 
 import yaml
 
+from kbforge import __version__
 from kbforge.models import (
     CanonicalDocument,
     ChangeSet,
     ChangeSummary,
     ConceptFrontmatter,
     ProposedChange,
+    ResourceAnchor,
 )
 
 _SCALAR = (str, int, float, bool)
+
+# Frontmatter keys the emitter owns on a rendered concept. A facet must never
+# occupy one: the laws check the projection, the bundle receives the file, and a
+# shadowed key makes those two disagree. `validate` binds the same set.
+OKF_OWNED = frozenset({"type", "title", "description", "generated", "sources", "links"})
+
+# OKF §7 actor for the stub synthesizer. The LLM synthesizer overrides it with
+# the model, matching the spec's own `reference_agent/gemini-2.5-pro` example
+# where the version slot carries the model rather than the tool's release.
+_DEFAULT_ACTOR = f"kbforge/{__version__}"
 
 
 def concept_path(doc_id: str) -> str:
@@ -29,13 +41,73 @@ def concept_path(doc_id: str) -> str:
 
 
 def _facets(structured: dict) -> dict:
+    """Filterable frontmatter keys from a doc's `structured` fields (law 1).
+
+    Keys kbforge owns are dropped rather than carried. Facets are merged into
+    top-level frontmatter at render time, so a source field named `type` or
+    `links` would otherwise overwrite the OKF field in the shipped file while
+    the projection kept the good value — and every law checks the projection.
+    `local_files` reserves these keys on its own side; dropping them here makes
+    the emitter safe for any connector, including a third-party one that passes
+    an upstream record straight through."""
+
     def ok(v: object) -> bool:
         if isinstance(v, _SCALAR):
             return True
         return isinstance(v, list) and all(isinstance(i, _SCALAR) for i in v)
 
     return {
-        k: v for k, v in structured.items() if v not in (None, "", [], {}) and ok(v)
+        k: v
+        for k, v in structured.items()
+        if k not in OKF_OWNED and v not in (None, "", [], {}) and ok(v)
+    }
+
+
+def _generated(fm: ConceptFrontmatter) -> dict:
+    """The OKF v0.2 `generated` block (§5.2), which supersedes v0.1 `timestamp`.
+
+    `at` is the anchor's `retrieved_at` — a fetch time standing in for "last
+    meaningful change". The no-op rule makes that honest for the ordinary case:
+    a concept is re-synthesized only when its canonical form changed, so the
+    fetch that rewrote it is its last meaningful change.
+
+    There is one real exception. `pipeline.run` pulls *referrers* out of the
+    mirror when a link target is tombstoned and re-renders them to drop the
+    dangling link; their canonical form did not change, so their anchors still
+    carry an earlier run's `retrieved_at` while the file genuinely did change.
+    `generated.at` under-reports there. That is the safe direction — a consumer
+    reads the concept as staler than it is, never fresher — which is why it
+    ships, but the equivalence above is not unconditional and should not be
+    quoted as though it were."""
+    out: dict = {"by": fm.generated_by}
+    if fm.generated_at is not None:
+        out["at"] = fm.generated_at.isoformat()
+    return out
+
+
+def _source_entry(anchor: ResourceAnchor) -> dict:
+    """One OKF v0.2 `sources` entry (§5.1).
+
+    `resource` is REQUIRED within an entry. §5.1 enumerates two kinds of value —
+    a concrete artifact a consumer can follow, or a population/scope descriptor
+    it cannot ("all queries in BigQuery project X") — and when the anchor has no
+    URL, kbforge's fallback is neither: `system:native_id` names one concrete
+    artifact that the consumer still cannot follow, a third case the spec does
+    not enumerate. It is the honest value available (it is the doc_id, so it is
+    stable and joinable) and §11 forbids consumers from rejecting it, but do not
+    read it as spec-sanctioned.
+
+    `content_hash` is carried as a producer extension key. §4.1 permits extra
+    *frontmatter* keys and §11 forbids rejecting unknown ones; §5.1 enumerates
+    entry fields without an explicit extension clause, so reading that
+    permission down into an entry is reasonable rather than certain. It is what
+    makes a published concept auditable back to the canonical form it was
+    synthesized from."""
+    descriptor = f"{anchor.system}:{anchor.native_id}"
+    return {
+        "id": descriptor,
+        "resource": anchor.url or descriptor,
+        "content_hash": anchor.content_hash,
     }
 
 
@@ -51,13 +123,12 @@ def _render(
         "type": fm.type,
         "title": title,
         "description": description,
-        "timestamp": fm.freshness.isoformat() if fm.freshness else None,
+        "generated": _generated(fm),
     }
+    # `_facets` has already dropped anything named like a key kbforge owns, so
+    # this update cannot shadow the four above (see OKF_OWNED).
     front.update(fm.facets)
-    front["resource"] = [
-        {"system": a.system, "native_id": a.native_id, "url": a.url}
-        for a in fm.resources
-    ]
+    front["sources"] = [_source_entry(a) for a in fm.sources]
     if fm.links:
         front["links"] = fm.links
     head = yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
@@ -68,6 +139,8 @@ def assemble(
     items: list[tuple[CanonicalDocument, str, str, str]],
     changeset: ChangeSet,
     existing_paths: frozenset[str] = frozenset(),
+    *,
+    generated_by: str = _DEFAULT_ACTOR,
 ) -> ProposedChange:
     """Build the ProposedChange frame from per-doc prose (doc, title, description,
     body). Both synthesizers produce `items` differently and share this assembly, so
@@ -82,9 +155,10 @@ def assemble(
         fm = ConceptFrontmatter(
             type=str(doc.structured.get("type") or "concept"),
             facets=_facets(doc.structured),
-            resources=[doc.anchor],
+            sources=[doc.anchor],
             links=sorted(p for p in links if p in known),  # drop dangling (law 2)
-            freshness=doc.anchor.retrieved_at,
+            generated_at=doc.anchor.retrieved_at,
+            generated_by=generated_by,
         )
         concepts[path] = fm
         files[path] = _render(doc, fm, title=title, description=description, body=body)

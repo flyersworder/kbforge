@@ -10,12 +10,15 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ResourceAnchor(BaseModel):
     """Provenance. Every document and every downstream concept claim carries one.
-    Each anchor becomes one OKF `resource` frontmatter entry at emit time."""
+    Each anchor becomes one OKF v0.2 `sources` entry at emit time (§5.1), whose
+    REQUIRED `resource` field takes this anchor's `url` — or, when there is none,
+    falls back to "system:native_id" (see `synthesize._source_entry` for why that
+    fallback is honest but not spec-sanctioned)."""
 
     system: str
     native_id: str
@@ -25,20 +28,29 @@ class ResourceAnchor(BaseModel):
 
 
 class ConceptFrontmatter(BaseModel):
-    """The checkable head of an emitted OKF concept (§4.4).
+    """The checkable head of an emitted OKF v0.2 concept (§4.4).
 
     Fields are permissive so a law-violating concept can be represented and then
     reported by the validators — kbforge checks synthesis output, it does not
-    trust it (spec §5). `type` and `freshness` serialize onto the OKF `type` and
-    `timestamp` keys at write time; each `resources` entry becomes a `resource`
-    entry. This is the §4.4 projection, not the whole frontmatter: title,
-    description, and the rendered body live in the file the publisher writes."""
+    trust it (spec §5). `type` serializes onto the OKF `type` key; `generated_by`
+    and `generated_at` onto `generated: {by, at}` (§5.2); each `sources` entry
+    onto one OKF `sources` entry (§5.1). This is the §4.4 projection, not the
+    whole frontmatter: title, description, and the rendered body live in the file
+    the publisher writes."""
+
+    # Pydantic ignores unknown keywords by default, which would silently swallow
+    # a third-party synthesizer still passing v0.1's `resources=`/`freshness=`
+    # and hand back a projection with no anchors and no stamp. The gate would
+    # catch it, but three stages later and as a law violation rather than as the
+    # migration error it is. Fail at construction instead.
+    model_config = ConfigDict(extra="forbid")
 
     type: str = ""  # OKF's one required field (checked non-empty by validate)
     facets: dict = Field(default_factory=dict)  # law 1
-    resources: list[ResourceAnchor] = Field(default_factory=list)  # law 3
+    sources: list[ResourceAnchor] = Field(default_factory=list)  # law 3
     links: list[str] = Field(default_factory=list)  # law 2
-    freshness: datetime | None = None  # law 4
+    generated_at: datetime | None = None  # law 4 — OKF `generated.at`
+    generated_by: str = ""  # OKF `generated.by`, an §7 actor
 
 
 class ChangeSummary(BaseModel):

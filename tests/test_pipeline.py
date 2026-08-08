@@ -144,11 +144,17 @@ class _FixedSynth:
     def synthesize(self, changed_docs, changeset, existing_paths=frozenset()):
         doc = changed_docs[0]
         path = concept_path(doc.doc_id)
+        descriptor = f"{doc.anchor.system}:{doc.anchor.native_id}"
+        # The rendered `at` must equal the projection's generated_at below —
+        # the strict gate binds the two carriers, since law 4 reads one and
+        # whats_stale reads the other.
+        at = doc.anchor.retrieved_at.isoformat()
         fm_file = (
             "---\ntype: concept\ntitle: Injected\ndescription: Injected\n"
-            "timestamp: '2026-01-01T00:00:00+00:00'\nresource:\n"
-            f"- system: {doc.anchor.system}\n  native_id: {doc.anchor.native_id}\n"
-            "  url: null\n---\n\n# Injected\n\nInjected body.\n"
+            f"generated:\n  by: kbforge/test\n  at: '{at}'\n"
+            f"sources:\n- id: {descriptor}\n  resource: {descriptor}\n"
+            f"  content_hash: {doc.anchor.content_hash}\n"
+            "---\n\n# Injected\n\nInjected body.\n"
         )
         return ProposedChange(
             branch_hint="sync/injected",
@@ -156,8 +162,8 @@ class _FixedSynth:
             concepts={
                 path: ConceptFrontmatter(
                     type="concept",
-                    freshness=doc.anchor.retrieved_at,
-                    resources=[doc.anchor],
+                    generated_at=doc.anchor.retrieved_at,
+                    sources=[doc.anchor],
                 )
             },
         )

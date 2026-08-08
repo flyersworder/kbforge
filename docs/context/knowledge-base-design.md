@@ -47,7 +47,7 @@ layers, each mapped to a source of prior art:
 
 | Layer | Choice | Borrowed from |
 |---|---|---|
-| **Format** | Open Knowledge Format (OKF) v0.1 | Google Cloud spec |
+| **Format** | Open Knowledge Format (OKF) v0.2 | Google Cloud spec |
 | **Producer** (authoring + maintenance agent) | Custom agent, patterned on OpenWiki + Karpathy LLM-wiki disciplines | LangChain OpenWiki; Karpathy gist |
 | **Storage** | GitLab repo (bundle in git) | OKF "just files"; OpenWiki CI model |
 | **Consumer** (serving) | MCP read server over an internal retrieval stack (semantic search + an LLM gateway such as LiteLLM), plus static visualizer for humans | Context7, docs-mcp-server, Hjarni |

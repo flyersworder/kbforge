@@ -3,9 +3,9 @@ type: design-note
 title: kbforge — Library Architecture & Connector Protocol (Sketch)
 description: Package architecture, Pluggy hookspecs, connector protocol, and conformance rules for a Python library that standardizes the production side of OKF knowledge bundles.
 tags: [okf, pluggy, connectors, knowledge-base, producer, agent-governance]
-timestamp: 2026-07-11T00:00:00Z
+generated: { by: human:flyersworder, at: 2026-07-11T00:00:00Z }
 status: draft
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 # kbforge — Library Architecture & Connector Protocol
@@ -16,13 +16,13 @@ okf_version: "0.1"
 
 ## 0. What we are standardizing
 
-OKF v0.1 standardizes the **artifact at rest** — files, frontmatter, `index.md`/`log.md`.
+OKF v0.2 standardizes the **artifact at rest** — files, frontmatter, `index.md`/`log.md`.
 It says nothing about how bundles are produced, grounded, kept fresh, or trusted.
 This library is the reference implementation of that missing half:
 
 | Layer | Standardized by | Status |
 |---|---|---|
-| Artifact format | OKF v0.1 (Google) | exists |
+| Artifact format | OKF v0.2 (Google) | exists |
 | Semantic vocabulary (`type` taxonomy) | us, per domain | our design doc §5.4 |
 | **Production protocol** (connectors, canonicalization, diff, provenance, publish) | **this library** | this spec |
 | Serving protocol | MCP — or a context database that ingests the bundle (§4.4) | exists |
@@ -114,7 +114,10 @@ class Cursor(BaseModel):
 
 class ResourceAnchor(BaseModel):
     """Provenance. Every document and every downstream concept claim carries one.
-    Each anchor becomes one OKF `resource` frontmatter entry at emit time."""
+    Each anchor becomes one OKF v0.2 `sources` entry at emit time (§5.1), whose
+    REQUIRED `resource` field takes this anchor's `url` — or, when there is none,
+    falls back to "system:native_id" (see `synthesize._source_entry` for why
+    that fallback is honest but not spec-sanctioned)."""
     system: str                    # "servicenow"
     native_id: str                 # sys_id / page id / repo path
     url: str | None = None         # human-clickable deep link
@@ -189,24 +192,28 @@ class ChangeSummary(BaseModel):
 
 
 class ConceptFrontmatter(BaseModel):
-    """The checkable head of an emitted OKF concept. Serialized to YAML
+    """The checkable head of an emitted OKF v0.2 concept. Serialized to YAML
     frontmatter at write time; validated against the §4.4 laws before publish.
     OKF requires only a non-empty `type` and permits arbitrary extra keys.
 
     This is the §4.4 *projection*, not the whole frontmatter: the remaining
-    strict-OKF fields (title, description, timestamp) live in the rendered
-    file, where the strict validator checks them. At write time `freshness`
-    serializes to the OKF `timestamp` key (main doc §6: "last synced from
-    source") and each anchor in `resources` to a `resource` entry — so
-    `whats_stale`, which reads `timestamp`, sees law 4's stamp."""
+    strict-OKF fields (title, description, generated) live in the rendered
+    file, where the strict validator checks them. At write time `generated_by`
+    and `generated_at` serialize to the OKF `generated: {by, at}` block (§5.2,
+    which supersedes v0.1's `timestamp`) and each anchor in `sources` to one
+    OKF `sources` entry (§5.1) — so `whats_stale`, which reads the freshness
+    stamp, sees law 4's."""
     type: str = ""                 # OKF's required field; validate checks non-empty
     facets: dict = Field(default_factory=dict)   # law 1: filterable keys
-    resources: list[ResourceAnchor] = Field(default_factory=list)  # law 3: >=1,
+    sources: list[ResourceAnchor] = Field(default_factory=list)  # law 3: >=1,
                                    # enforced by validate (permissive so a
                                    # violation is reported, not a construct error)
     links: list[str] = Field(default_factory=list)   # law 2: must resolve
-    freshness: datetime | None = None            # law 4: retrieved_at; validate
-                                   # requires presence
+    generated_at: datetime | None = None         # law 4: retrieved_at; validate
+                                   # requires presence. OKF `generated.at`.
+    generated_by: str = ""         # OKF `generated.by`, an §7 actor:
+                                   # "kbforge/<version>", or "kbforge/<model>"
+                                   # when the LLM synthesizer wrote the prose
 ```
 
 ---
@@ -344,16 +351,28 @@ seen. The four laws are exactly "emit what those affordances read":
    file (or is dropped, never dangling); meaning stays in the prose — OKF keeps
    links untyped, and we do not invent an edge vocabulary. *Without it:*
    `related_concepts` returns a broken graph, killing multi-hop reasoning.
-3. **Anchor presence.** Every concept carries ≥1 `resource` anchor in frontmatter,
-   tracing to a canonical doc → a SoR. *Without it:* provenance and anchor-based
-   `related_concepts`; the §4.3 grounding chain is only *useful* if it survives to
-   the emitted frontmatter.
+3. **Anchor presence.** Every concept carries ≥1 `sources` entry in frontmatter
+   (OKF §5.1), tracing to a canonical doc → a SoR. *Without it:* provenance and
+   anchor-based `related_concepts`; the §4.3 grounding chain is only *useful* if
+   it survives to the emitted frontmatter.
 4. **Freshness legibility.** Every concept's frontmatter carries a machine-readable
-   freshness stamp (the anchor's `retrieved_at`). *Without it:* `whats_stale`, and
-   the agent's ability to caveat a stale answer.
+   freshness stamp — `generated.at` (OKF §5.2), holding the anchor's
+   `retrieved_at`. *Without it:* `whats_stale`, and the agent's ability to caveat
+   a stale answer.
 
-These four are the complete v0.1 set — exactly what the serving affordances read,
+These four are the complete set for v0.1 of *this contract* (kbforge's own
+versioning, not OKF's) — exactly what the serving affordances read,
 no more (prose quality is synthesis's job, not mechanically checkable) and no fewer.
+
+**The laws now speak OKF's vocabulary.** OKF v0.1 standardized only the artifact
+shell, so laws 3 and 4 had to invent field names — `resource` for provenance,
+`timestamp` for freshness. v0.2 makes provenance, trust, and lifecycle
+first-class, and the laws now read its fields directly: law 3 checks `sources`
+(§5.1), law 4 checks `generated.at` (§5.2). Nothing about what they enforce
+changed; the encoding stopped being private. Two families v0.2 adds — `verified`
+(§5.2) and `stale_after` (§5.5) — are deliberately not emitted yet, and neither
+is `status: deprecated` (§5.4) in place of kbforge's hard delete; see
+[`design/2026-08-08-okf-02-deferred-decisions.md`](design/2026-08-08-okf-02-deferred-decisions.md).
 
 **What the runtime enforces vs. what the laws name.** The validators check what a
 `ProposedChange` can decide alone, so two laws run at reduced strength (see the
@@ -636,7 +655,7 @@ def run(bundle: Path, mirror: Path, registry, publisher, synthesizer, cfg):
 
 Everything main-doc §5.3 requires falls out of the seams: change-scoped updates
 (diff drives synthesis scope), no-op detection (`is_noop` gate), grounding
-(synthesis reads only canonical docs, emits `resource` = anchors), reviewability
+(synthesis reads only canonical docs, emits `sources` = anchors), reviewability
 (`ChangeSummary` becomes the MR body), and the security split (fetch stage holds
 credentials but no external action; publish stage acts but holds no SoR access).
 

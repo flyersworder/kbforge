@@ -8,7 +8,7 @@
 **Agent-first knowledge bases, forged from your systems of record.**
 
 The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
-(OKF) v0.1 standardizes the *artifact at rest* — markdown concept files, frontmatter,
+(OKF) v0.2 standardizes the *artifact at rest* — markdown concept files, frontmatter,
 `index.md`, `log.md`. It says nothing about how those bundles get **produced**: how you
 pull from a wiki or a CMDB, how you tell a real change from an export timestamp jittering,
 how a claim stays traceable to its source, and how an update reaches `main` without a human
@@ -18,7 +18,7 @@ losing an afternoon to review.
 
 | Layer | Standardized by |
 |---|---|
-| Artifact format | OKF v0.1 |
+| Artifact format | OKF v0.2 |
 | **Production protocol** — connectors, canonicalization, diff, provenance, publish | **kbforge** |
 | Serving protocol | MCP — or any context database that ingests the bundle |
 
@@ -160,6 +160,9 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
   — the roadmap for agentic fetch, the refresh model, and KB bootstrap.
 - [`docs/design/2026-07-18-datacontract-bridge-design.md`](docs/design/2026-07-18-datacontract-bridge-design.md)
   — how kbforge bridges to `agentic-data-contracts` via the OKF bundle (future, cross-project).
+- [`docs/design/2026-08-08-okf-02-deferred-decisions.md`](docs/design/2026-08-08-okf-02-deferred-decisions.md)
+  — the OKF v0.2 families kbforge does not emit yet (`verified`, `status: deprecated`,
+  `stale_after`, footnote attribution) and why each is a decision, not a backlog item.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Related projects

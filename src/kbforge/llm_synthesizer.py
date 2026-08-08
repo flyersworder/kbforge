@@ -46,6 +46,19 @@ class SynthesizedConcept(BaseModel):
         return v
 
 
+def actor_for(model: str) -> str:
+    """The OKF §7 actor for a model-written concept.
+
+    §7 fixes a two-part `<producer>/<version>` form, and the spec's own example
+    (`reference_agent/gemini-2.5-pro`) puts the model in the version slot. Model
+    ids are routinely provider-qualified — the default below is
+    `deepseek/deepseek-v4-flash` — so interpolating one whole yields a
+    three-segment actor that a consumer splitting on `/` reads as the producer
+    "kbforge/deepseek". Only the last segment names the model, so only the last
+    segment goes in the version slot."""
+    return f"kbforge/{model.rsplit('/', 1)[-1]}"
+
+
 @dataclass
 class LLMConfig:
     model: str = "deepseek/deepseek-v4-flash"
@@ -158,6 +171,8 @@ class LLMSynthesizer:
             c = result.output
             body = _strip_title_heading(c.body, c.title)
             items.append((doc, c.title, c.description, body))
-        proposal = assemble(items, changeset, existing_paths)
+        proposal = assemble(
+            items, changeset, existing_paths, generated_by=actor_for(self.config.model)
+        )
         proposal.summary.grounding_notes.extend(notes)
         return proposal

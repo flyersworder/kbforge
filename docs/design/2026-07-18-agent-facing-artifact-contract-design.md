@@ -3,9 +3,9 @@ type: design-note
 title: kbforge — Agent-Facing Artifact Contract
 description: The emit-side contract that makes kbforge's "agent-first" claim checkable — four artifact laws, their enforcement in the validate stage, and the ConceptFrontmatter model — without kbforge owning the serving layer.
 tags: [okf, agent-first, artifact-contract, validate, mcp, producer]
-timestamp: 2026-07-18T00:00:00Z
+generated: { by: human:flyersworder, at: 2026-07-18T00:00:00Z }
 status: draft
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 # kbforge — Agent-Facing Artifact Contract
@@ -14,7 +14,7 @@ okf_version: "0.1"
 (adds §4.4, a serving-contract statement, and extends §7 and §9)
 **Companion:** [`../context/knowledge-base-design.md`](../context/knowledge-base-design.md)
 **Related:** [`2026-07-19-agentic-ingest-design.md`](2026-07-19-agentic-ingest-design.md)
-— the `resource` anchors these laws guarantee are the provenance each refreshed concept
+— the `sources` anchors these laws guarantee are the provenance each refreshed concept
 carries; that note's Refresh model detects change against the core-owned mirror, not
 these anchors.
 
@@ -69,12 +69,12 @@ and every affordance is powered by exactly one of three things in the artifact:
 |---|---|
 | `search_knowledge(query, filters?)` — hybrid semantic + frontmatter filter | **frontmatter** |
 | `list_concepts(type?, tags?, owner?, updated_since?)` — faceted browse | **frontmatter** |
-| `related_concepts(id)` — graph neighbours | **resolvable cross-links** + **resource anchors** |
-| `whats_stale(area?)` — freshness | **frontmatter timestamps** |
+| `related_concepts(id)` — graph neighbours | **resolvable cross-links** + **`sources` anchors** |
+| `whats_stale(area?)` — freshness | **frontmatter `generated.at`** |
 
 So the artifact must expose three things and only three things for the agent to get
-a good experience: **frontmatter fields, resolvable cross-links, and resource
-anchors (with timestamps).** Naming this here turns "serving is out of scope" from a
+a good experience: **frontmatter fields, resolvable cross-links, and `sources`
+anchors (with `generated.at`).** Naming this here turns "serving is out of scope" from a
 hand-wave into a stated interface. kbforge guarantees the left column is
 satisfiable; the MCP layer (someone else's code) does the serving.
 
@@ -107,19 +107,20 @@ but an agent that quietly can't find, traverse, trace, or date what it needs.
    service Y — who owns Y?"). The agent recovers edge meaning by reading the prose,
    which LLM agents do well; it cannot recover a link that does not resolve.
 
-3. **Anchor presence.** Every concept MUST carry ≥1 `resource` anchor in
-   frontmatter, tracing to a canonical document (which traces to a SoR). *Dies
-   without it:* provenance queries and anchor-based `related_concepts`; the agent
+3. **Anchor presence.** Every concept MUST carry ≥1 `sources` entry in
+   frontmatter (OKF §5.1), tracing to a canonical document (which traces to a
+   SoR). *Dies without it:* provenance queries and anchor-based `related_concepts`; the agent
    cannot say "this claim traces to Confluence page 123." The §4.3 grounding chain
    (claim → canonical doc → anchor) is only *useful* to the agent if it survives to
    the emitted frontmatter — this law is what carries it across the emit boundary.
 
 4. **Freshness legibility.** Every concept's frontmatter MUST carry a
-   machine-readable freshness stamp (the source's `retrieved_at` / last-verified
-   time from its anchor). *Dies without it:* `whats_stale`, and the agent's ability
-   to caveat a stale answer.
+   machine-readable freshness stamp — `generated.at` (OKF §5.2), holding the
+   source's `retrieved_at` from its anchor. *Dies without it:* `whats_stale`, and
+   the agent's ability to caveat a stale answer.
 
-**These four are the complete set for v0.1.** They are exactly the artifact
+**These four are the complete set for v0.1 of this contract** (kbforge's own
+versioning, not OKF's). They are exactly the artifact
 properties the §2 serving affordances read — no more (we do not legislate prose
 quality, which is synthesis's job and not mechanically checkable) and no fewer
 (dropping any one dims a specific agent capability).
@@ -162,11 +163,12 @@ class ConceptFrontmatter(BaseModel):
     facets: dict = Field(default_factory=dict) # Law 1: structured fields used in a
                                                #   claim, emitted as filterable keys
                                                #   (owner, env, tags, ...)
-    resources: list[ResourceAnchor] = Field(default_factory=list)   # Law 3: ≥1,
+    sources: list[ResourceAnchor] = Field(default_factory=list)     # Law 3: ≥1,
                                                #   provenance to a SoR
     links: list[str] = Field(default_factory=list)   # Law 2: doc_ids / bundle paths
                                                #   that MUST resolve within the bundle
-    freshness: datetime | None = None          # Law 4: source retrieved_at / verified
+    generated_at: datetime | None = None       # Law 4: source retrieved_at
+    generated_by: str = ""                     # OKF §7 actor that wrote the concept
 ```
 
 Notes:
@@ -179,15 +181,20 @@ Notes:
   confirms it; the model itself is fixed here.
 - `type` deliberately does not constrain the taxonomy — the type *vocabulary* is the
   deployment's concern (companion §5.4), not the core's.
-- `resources` reuses the existing `ResourceAnchor` (architecture §3) unchanged — the
+- `sources` reuses the existing `ResourceAnchor` (architecture §3) unchanged — the
   same anchor produced at ingest flows through to emit; no parallel provenance type.
-- **Serialization onto OKF keys.** `ConceptFrontmatter` is the §4.4 *projection*, not
-  the whole frontmatter: the remaining strict-OKF fields (`title`, `description`,
-  `timestamp`) live in the rendered file, where the existing strict validator checks
-  them. At write time `freshness` serializes to the OKF `timestamp` key (companion
-  §6's "last synced from source") and each anchor in `resources` to a `resource`
-  entry — so `whats_stale`, which reads `timestamp`, sees Law 4's stamp under the
-  key the serving layer already expects.
+- **Serialization onto OKF v0.2 keys.** `ConceptFrontmatter` is the §4.4
+  *projection*, not the whole frontmatter: the remaining strict-OKF fields
+  (`title`, `description`, `generated`) live in the rendered file, where the strict
+  validator checks them. At write time `generated_by`/`generated_at` serialize to
+  the OKF `generated: {by, at}` block (§5.2, which supersedes v0.1's `timestamp`)
+  and each anchor in `sources` to one OKF `sources` entry (§5.1) — so
+  `whats_stale`, which reads the freshness stamp, sees Law 4's under the key the
+  serving layer expects. The strict validator additionally checks the *shape* of
+  the rendered `generated` block and binds its `at` to the projection's
+  `generated_at`: presence alone cannot judge a mapping, and the two carriers are
+  read by different consumers (Law 4 reads the projection, `whats_stale` reads the
+  file).
 - Fields are permissive so every law is a runtime validator that reports (spec §5),
   not a construction constraint — the validate stage is the single accountable gate.
 
