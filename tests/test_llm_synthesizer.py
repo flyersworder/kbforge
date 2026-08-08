@@ -48,6 +48,23 @@ def _synth(concept: SynthesizedConcept, **cfg) -> LLMSynthesizer:
     return LLMSynthesizer(LLMConfig(**cfg), agent=_agent_returning(concept))
 
 
+def test_llm_synthesizer_stamps_the_model_derived_actor():
+    """Binds the seam, not the helper. `actor_for` and `assemble(generated_by=)`
+    were each covered alone, so reverting this call site to interpolate the model
+    id whole — reintroducing the three-segment `kbforge/deepseek/deepseek-v4-flash`
+    actor — failed no test. The live suite would not catch it either: the gate
+    checks that `generated.by` is non-blank, never its §7 shape."""
+    doc = _doc()
+    concept = SynthesizedConcept(title="X", description="X.", body="X.")
+    synth = _synth(concept, model="deepseek/deepseek-v4-flash")
+
+    proposal = synth.synthesize([doc], ChangeSet(added=[doc.doc_id]))
+
+    fm = proposal.concepts[concept_path(doc.doc_id)]
+    assert fm.generated_by == "kbforge/deepseek-v4-flash"
+    assert fm.generated_by.count("/") == 1  # §7 is <producer>/<version>
+
+
 def test_llm_output_becomes_conformant_concept():
     doc = _doc()
     concept = SynthesizedConcept(
