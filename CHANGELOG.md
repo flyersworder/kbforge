@@ -27,10 +27,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   OKF v0.2 §13.1 supersedes `timestamp`. The modelling matters more than the
   rename: v0.1's `timestamp` meant "last meaningful change" and kbforge was
   filling it with the anchor's `retrieved_at`, a fetch time. v0.2 splits the two
-  ideas, and the no-op rule is what lets kbforge keep using `retrieved_at`
-  honestly for `generated.at` — a concept is re-rendered only when its canonical
-  form actually changed, so the run that rewrote it *is* its last meaningful
-  change. `generated.by` follows the §7 actor convention: `kbforge/<version>`
+  ideas, and the no-op rule is what makes `retrieved_at` an honest
+  `generated.at` for the ordinary case — a concept is re-synthesized only when
+  its canonical form changed, so the fetch that rewrote it is its last
+  meaningful change. One exception: referrers pulled from the mirror after a
+  tombstone are re-rendered to drop a dangling link without their canonical form
+  changing, so their `generated.at` under-reports. That is the fail-safe
+  direction — a consumer reads such a concept as staler than it is, never
+  fresher. `generated.by` follows the §7 actor convention: `kbforge/<version>`
   for the stub synthesizer, `kbforge/<model>` for the LLM one. Both are
   non-`human:` actors, so a freshly produced concept sits in the *unverified*
   trust tier until a human merges it — which is exactly true of kbforge.
@@ -45,6 +49,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `local_files` reserves `generated` and `sources` so a source document cannot
   collide with them, and keeps the retired `timestamp` and `resource` reserved so
   a v0.1-era source document cannot reintroduce a superseded key as a facet.
+
+### Upgrading
+
+- **Existing bundles migrate lazily, per concept.** Synthesis is scoped to what
+  changed, so upgrading does not rewrite a bundle: a concept whose source has not
+  changed keeps its v0.1 `resource` and `timestamp` keys until its next real
+  change, and a large bundle can sit mixed for a long time. Consumers should
+  apply the OKF §13.1 fallbacks during the transition — read `sources` but fall
+  back to `resource`, read `generated.at` but fall back to `timestamp`. To
+  migrate in one shot instead, reset the mirror **and** the connector's cursor
+  (see the README's note on abandoned review requests) so the next run
+  re-proposes every concept.
+- **Third-party synthesizers must rename before they run.** Anything
+  constructing `ConceptFrontmatter` directly needs `resources` → `sources` and
+  `freshness` → `generated_at`, and should set `generated_by`; Pydantic rejects
+  the old keyword outright, so this fails loudly rather than silently.
 
 ### Notes
 

@@ -11,8 +11,12 @@ NOW = datetime(2026, 7, 19, tzinfo=UTC)
 
 def _frontmatter(rendered: str) -> dict:
     """Parse the YAML head of a rendered concept, so the emit-side assertions
-    check what actually ships rather than the projection that fed it."""
-    return yaml.safe_load(rendered.split("---")[1])
+    check what actually ships rather than the projection that fed it. Splits the
+    way `validate._parse_frontmatter` does — on the closing "\\n---" rather than
+    on every "---" — so a title or body containing a rule cannot mis-parse."""
+    _, _, rest = rendered.partition("---")
+    front, _, _ = rest.partition("\n---")
+    return yaml.safe_load(front)
 
 
 def _doc(doc_id, structured=None, relations=None):

@@ -17,7 +17,8 @@ class ResourceAnchor(BaseModel):
     """Provenance. Every document and every downstream concept claim carries one.
     Each anchor becomes one OKF v0.2 `sources` entry at emit time (§5.1), whose
     REQUIRED `resource` field takes this anchor's `url` — or, when there is none,
-    the "system:native_id" scope descriptor §5.1 permits in its place."""
+    falls back to "system:native_id" (see `synthesize._source_entry` for why that
+    fallback is honest but not spec-sanctioned)."""
 
     system: str
     native_id: str

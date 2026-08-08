@@ -653,7 +653,7 @@ def run(bundle: Path, mirror: Path, registry, publisher, synthesizer, cfg):
 
 Everything main-doc §5.3 requires falls out of the seams: change-scoped updates
 (diff drives synthesis scope), no-op detection (`is_noop` gate), grounding
-(synthesis reads only canonical docs, emits `resource` = anchors), reviewability
+(synthesis reads only canonical docs, emits `sources` = anchors), reviewability
 (`ChangeSummary` becomes the MR body), and the security split (fetch stage holds
 credentials but no external action; publish stage acts but holds no SoR access).
 

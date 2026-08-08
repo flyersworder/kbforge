@@ -50,10 +50,18 @@ def _generated(fm: ConceptFrontmatter) -> dict:
     """The OKF v0.2 `generated` block (§5.2), which supersedes v0.1 `timestamp`.
 
     `at` is the anchor's `retrieved_at` — a fetch time standing in for "last
-    meaningful change". kbforge earns that equivalence from the no-op rule: a
-    concept is re-rendered only when its canonical form actually changed, so the
-    run that rewrote it *is* its last meaningful change. A producer without
-    canonicalization cannot make the same claim."""
+    meaningful change". The no-op rule makes that honest for the ordinary case:
+    a concept is re-synthesized only when its canonical form changed, so the
+    fetch that rewrote it is its last meaningful change.
+
+    There is one real exception. `pipeline.run` pulls *referrers* out of the
+    mirror when a link target is tombstoned and re-renders them to drop the
+    dangling link; their canonical form did not change, so their anchors still
+    carry an earlier run's `retrieved_at` while the file genuinely did change.
+    `generated.at` under-reports there. That is the safe direction — a consumer
+    reads the concept as staler than it is, never fresher — which is why it
+    ships, but the equivalence above is not unconditional and should not be
+    quoted as though it were."""
     out: dict = {"by": fm.generated_by}
     if fm.generated_at is not None:
         out["at"] = fm.generated_at.isoformat()
@@ -61,10 +69,21 @@ def _generated(fm: ConceptFrontmatter) -> dict:
 
 
 def _source_entry(anchor: ResourceAnchor) -> dict:
-    """One OKF v0.2 `sources` entry (§5.1). `resource` is REQUIRED within an entry;
-    when the anchor carries no URL, §5.1 permits a scope descriptor in its place,
-    and "system:native_id" is the stable one kbforge already uses as a doc_id.
-    `content_hash` is a producer extension key (§4.1 permits them): it is what
+    """One OKF v0.2 `sources` entry (§5.1).
+
+    `resource` is REQUIRED within an entry. §5.1 enumerates two kinds of value —
+    a concrete artifact a consumer can follow, or a population/scope descriptor
+    it cannot ("all queries in BigQuery project X") — and when the anchor has no
+    URL, kbforge's fallback is neither: `system:native_id` names one concrete
+    artifact that the consumer still cannot follow, a third case the spec does
+    not enumerate. It is the honest value available (it is the doc_id, so it is
+    stable and joinable) and §11 forbids consumers from rejecting it, but do not
+    read it as spec-sanctioned.
+
+    `content_hash` is carried as a producer extension key. §4.1 permits extra
+    *frontmatter* keys and §11 forbids rejecting unknown ones; §5.1 enumerates
+    entry fields without an explicit extension clause, so reading that
+    permission down into an entry is reasonable rather than certain. It is what
     makes a published concept auditable back to the canonical form it was
     synthesized from."""
     descriptor = f"{anchor.system}:{anchor.native_id}"

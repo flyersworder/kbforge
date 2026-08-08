@@ -61,19 +61,23 @@ kbforge deletes on tombstone: `ProposedChange.files_removed`, assigned by the
 pipeline. OKF v0.2 offers `deprecated` — "kept for links and history; no longer
 current".
 
-**Deleting is lossier than it looks.** Law 2 filters links only in the concepts
-being *rendered this run*. A concept already on `main` that links to a deleted
-concept, and that this run does not pull into scope, keeps a link to a file that
-no longer exists. OKF §6.1 says consumers MUST tolerate broken links, so this is
-not a conformance failure — but it is a quiet degradation of exactly the graph
-law 2 exists to protect.
+**The dangling-link argument does not apply here** — `pipeline.run` already
+loads the whole mirror and pulls in every document whose `relations` intersect
+the removed ids, precisely so referrers get re-rendered without their links. So
+the case for `deprecated` is *not* "deletion leaves dangling links"; that was
+fixed. The residual exposure is narrow: a bundle path present on `main` but
+absent from the mirror, which is a mirror-reset situation, not a deletion one.
 
-`deprecated` avoids it: the file stays, the link resolves, the reader learns the
-concept is no longer current, and history is preserved for anyone auditing what
-the KB used to assert. Against that: the bundle grows without bound, and
-"deleted at the source" and "deprecated in the KB" are not quite the same claim —
-a source deletion may mean the thing never should have been published, not that
-it is superseded.
+**The real argument is history.** `deprecated` keeps the file, so the link
+resolves, the reader learns the concept is no longer current, and anyone
+auditing what the KB used to assert can still find it. Deletion erases the claim
+and the fact that it was ever made — and since the mirror advances on every
+publish, kbforge itself cannot reconstruct it either.
+
+Against that: the bundle grows without bound, and "deleted at the source" and
+"deprecated in the KB" are not quite the same claim — a source deletion may mean
+the thing never should have been published, not that it is superseded. A
+producer cannot tell those apart from a tombstone alone.
 
 This changes deletion semantics, which are load-bearing (architecture §4.2), so
 it needs its own decision rather than riding along with a conformance pass.
@@ -91,9 +95,15 @@ not connector knowledge and not core knowledge. Introducing it means deciding
 where that policy lives without letting it become a way to weaken law 4.
 
 Note the ordering constraint: an absolute date computed at synthesis time from a
-TTL would move on every re-render, but re-renders only happen when the canonical
-form changed (the no-op rule), so it would not churn. That is the same property
-that lets `generated.at` hold `retrieved_at` honestly.
+TTL would move on every re-render, and re-renders are *mostly* driven by real
+canonical change (the no-op rule), so it would mostly not churn. "Mostly" is
+load-bearing — referrers pulled from the mirror after a tombstone are
+re-rendered without their canonical form changing, which is the same exception
+that makes `generated.at` under-report for those concepts (see `_generated` in
+`synthesize.py`). A TTL-derived `stale_after` would need to decide whether a
+referrer re-render resets the clock. Deriving it from `sources[].last_modified`
+rather than from render time sidesteps the question entirely, and is probably
+the right shape.
 
 ## 4. Footnote attribution (§5.1)
 
