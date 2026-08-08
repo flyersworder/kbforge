@@ -218,6 +218,15 @@ the intent was right. It needs a throwaway repo on each forge and the two CLIs
 (`gh`, `glab`) authenticated; each run writes under a fresh `live/<run-id>/`
 prefix, so nothing accumulates and no repo is ever deleted.
 
+That suite covers two levels. Most tests hand-build a `ProposedChange` and pin
+the publisher adapters. One drives `kbforge.pipeline.run` end to end against a
+real forge and pins the *composition* — that an unchanged source is still a
+no-op, and that a later run accumulates into the same review request instead of
+rebuilding the branch and dropping concepts an earlier run put there. Those three
+pieces of state (mirror, cursor, open-request detection) can each be correct
+while the whole is not, which is exactly how the 0.3.0 data-loss bug passed a
+clean offline suite.
+
 ```bash
 GITHUB_TOKEN=$(gh auth token) \
 GITLAB_TOKEN=$(glab config get token --host gitlab.com) \

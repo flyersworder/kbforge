@@ -16,7 +16,15 @@ So the rules here are:
 Isolation: each run picks a fresh `live/<run-id>` base_path inside one
 persistent scratch repo, so runs never see each other's files and no repo has
 to be created or deleted (which would need a `delete_repo` scope we don't ask
-for).
+for). The pipeline-level test additionally overrides the branch, because the
+pipeline derives `branch_hint` from the connector and would otherwise put every
+run on `sync/local_files`.
+
+Two levels are tested here, and they fail differently. The publisher-level tests
+hand-build a `ProposedChange`, so they pin the adapters. The pipeline-level test
+drives `pipeline.run`, so it pins the *composition* — the mirror advancing, the
+cursor persisting, and open-request detection all being right at once, which is
+where the 0.3.0 data-loss bug lived while every piece was individually correct.
 
 Run with:
 
@@ -118,6 +126,105 @@ def _gh_tree(repo: str, ref: str) -> set[str]:
     tree = _gh(repo, f"/git/trees/{head['commit']['tree']['sha']}?recursive=1")
     assert not tree.get("truncated"), "tree listing truncated; assertion unsound"
     return {e["path"] for e in tree["tree"] if e["type"] == "blob"}
+
+
+@pytest.mark.live
+def test_pipeline_publishes_and_accumulates_across_runs(tmp_path):
+    """The pipeline→publisher seam, against a real forge.
+
+    Every other live test hand-builds a `ProposedChange` and calls a publisher
+    directly, so the thing that *decides* what to publish is never exercised
+    against a forge. That decision is stateful in three places at once — the
+    mirror advances, the cursor persists, and the publisher looks for an open
+    review request — and the 0.3.0 data-loss bug lived exactly there: each piece
+    was correct alone and the composition was not. A clean 199-test offline
+    suite did not see it.
+
+    Isolation needs one thing the publisher-level tests do not. They scope a run
+    by `base_path` alone, but the pipeline derives `branch_hint` from the
+    connector, so every run would land on `sync/local_files`. The branch is
+    overridden per run as well.
+    """
+    from kbforge.connectors.local_files import LocalFilesConnector
+    from kbforge.pipeline import NoOp, Published
+    from kbforge.pipeline import run as pipeline_run
+
+    repo = _require("KBFORGE_LIVE_GITHUB_REPO")
+    _require("GITHUB_TOKEN")
+
+    branch = f"live-pipeline/{RUN_ID}"
+    base_path = f"live/{RUN_ID}-pipeline"
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "orders.md").write_text(
+        "---\ntitle: Orders\nowner: team-a\n---\n\nOwns checkout.\n", "utf-8"
+    )
+    (src / "billing.md").write_text(
+        "---\ntitle: Billing\nowner: team-b\n---\n\nIssues invoices.\n", "utf-8"
+    )
+
+    def _run():
+        return pipeline_run(
+            LocalFilesConnector(),
+            GitHubPublisher(),
+            config={"path": str(src)},
+            mirror=str(tmp_path / "mirror"),
+            state_dir=str(tmp_path / "state"),
+            publish_config={"repo": repo, "base_path": base_path, "branch": branch},
+        )
+
+    orders = f"{base_path}/concepts/orders/overview.md"
+    billing = f"{base_path}/concepts/billing/overview.md"
+
+    # Run 1 — bootstrap. The whole chain runs: fetch, normalize, mirror, diff,
+    # synthesize, validate, publish.
+    first = _run()
+    assert isinstance(first, Published), f"run 1 did not publish: {first}"
+    prs = _gh_open_prs(repo, branch)
+    assert len(prs) == 1, f"run 1 should open exactly one PR, got {len(prs)}"
+    pr_number = prs[0]["number"]
+
+    rendered = _gh_file(repo, branch, orders)
+    assert "generated:" in rendered, f"not OKF v0.2 frontmatter: {rendered!r}"
+    assert "sources:" in rendered, f"no provenance in the shipped file: {rendered!r}"
+    assert "timestamp:" not in rendered, "retired v0.1 key reached the forge"
+
+    # Run 2 — nothing changed at the source. The no-op rule is a trust guarantee,
+    # and this is the only place it is checked with a real forge on the other
+    # side: a second PR here would mean the rule fires on intent but not in
+    # composition.
+    second = _run()
+    assert isinstance(second, NoOp), f"unchanged source must be a no-op: {second}"
+    prs = _gh_open_prs(repo, branch)
+    assert len(prs) == 1, f"a no-op run opened another PR: {len(prs)}"
+    assert prs[0]["number"] == pr_number, "no-op run replaced the review request"
+
+    # Run 3 — edit one source file. This is the composition claim: the run must
+    # accumulate into the SAME request and leave the untouched concept alone.
+    # It passes only if the mirror advanced, the cursor persisted, and the
+    # publisher found the open PR.
+    (src / "orders.md").write_text(
+        "---\ntitle: Orders\nowner: team-c\n---\n\nOwns checkout and refunds.\n",
+        "utf-8",
+    )
+    third = _run()
+    assert isinstance(third, Published), f"a real change must publish: {third}"
+
+    prs = _gh_open_prs(repo, branch)
+    assert len(prs) == 1, f"three runs must share one review request, got {len(prs)}"
+    assert prs[0]["number"] == pr_number, "run 3 opened a second review request"
+
+    assert "refunds" in _gh_file(repo, branch, orders), (
+        "the edit did not reach the forge"
+    )
+    # Read off a listing that succeeded, not off a failed read: _cli raises on any
+    # non-zero exit, so a transient error must not look like "the file is there".
+    paths = _gh_tree(repo, branch)
+    assert billing in paths, "the untouched concept was rebuilt away"
+    assert orders in paths
+
+    # Merge to leave no open PR behind, as the other live tests do.
+    _cli("gh", "pr", "merge", str(pr_number), "--squash", "--repo", repo)
 
 
 @pytest.mark.live
