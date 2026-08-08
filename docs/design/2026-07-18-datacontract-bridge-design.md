@@ -12,8 +12,8 @@ okf_version: "0.1"
 
 **Status:** Draft v0.1 · **cross-project, future** (kbforge core unchanged;
 `agentic-data-contracts` repo untouched by this note)
-**Companions:** [`2026-07-18-agent-facing-artifact-contract-design.md`](2026-07-18-agent-facing-artifact-contract-design.md)
-· [`../architecture.md`](../architecture.md) §8
+**Companions:** [`../architecture.md`](../architecture.md) §4.4 (the emit-side
+artifact laws) and §8
 
 ## 1. Why bridge, not fold
 

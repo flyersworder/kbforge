@@ -13,10 +13,10 @@ okf_version: "0.1"
 **Status:** Draft v0.1 · **Amends:** [`../architecture.md`](../architecture.md)
 (sharpens §4.1 transport / MCP-source note and §4.2 incremental contract; builds on
 §4.4 and §7)
-**Related:** [`2026-07-18-agent-facing-artifact-contract-design.md`](2026-07-18-agent-facing-artifact-contract-design.md)
-— the `resource` anchors its §4.4 laws guarantee are the *provenance* every refreshed
-concept carries (and a lead surface for Refresh-plus); change detection itself runs on
-the core-owned mirror, not the bundle.
+**Related:** [`../architecture.md`](../architecture.md) §4.4
+— the `sources` anchors its emit-side laws guarantee are the *provenance* every
+refreshed concept carries (and a lead surface for Refresh-plus); change detection
+itself runs on the core-owned mirror, not the bundle.
 
 ## 1. Problem
 

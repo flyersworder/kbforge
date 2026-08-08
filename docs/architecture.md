@@ -320,8 +320,7 @@ OKF concept), and carry the same status: load-bearing, mechanically checkable,
 enforced at a fixed stage. They exist because the README's "agent-first" claim is
 otherwise an *assumption about what happens after the MR merges* — kbforge is a
 producer; the agent connects downstream via MCP and never touches this
-architecture. These laws make the claim checkable. (Full rationale:
-[`design/2026-07-18-agent-facing-artifact-contract-design.md`](design/2026-07-18-agent-facing-artifact-contract-design.md).)
+architecture. These laws make the claim checkable.
 
 **The serving contract we depend on (documented, not owned).** The main doc
 §5.7 fixes the MCP read server's surface. Every affordance is powered by one of
@@ -375,16 +374,55 @@ is `status: deprecated` (§5.4) in place of kbforge's hard delete; see
 [`design/2026-08-08-okf-02-deferred-decisions.md`](design/2026-08-08-okf-02-deferred-decisions.md).
 
 **What the runtime enforces vs. what the laws name.** The validators check what a
-`ProposedChange` can decide alone, so two laws run at reduced strength (see the
-artifact-contract spec §5.1): law 1's runtime check is facet *well-formedness*
-(slug `facet-wellformedness`), not *survival* — completeness needs the source
-`CanonicalDocument` synthesis read, absent here; and law 3 checks anchor *presence*,
-not *validity*. Law 4 additionally requires a timezone-aware stamp (a naive one
-crashes `whats_stale`). Underneath the four laws, a **projection↔files coherence**
-check runs first: the laws inspect `concepts`, but the publisher writes `files`, so
-every non-reserved file must have a projection and vice versa — otherwise a file
-ships unvalidated and `run_validators == []` would be a false pass. The named paths
-from reduced to full strength are the spec's §10 open items.
+`ProposedChange` can decide alone, so two of the four run at reduced strength. The
+reduction is deliberate and bounded, and stating it is the difference between a
+checked claim and a slogan:
+
+- **Law 1 is *well-formedness*, not *survival*.** The runtime check (slug
+  `facet-wellformedness`) verifies that the facets present are filterable scalars
+  or flat lists. It cannot verify the completeness direction — "a field the claim
+  relied on must appear as a facet, not only in prose" — because that needs the
+  source `CanonicalDocument.structured` synthesis read, which is not in a
+  `ProposedChange`. Structurally impossible with the current inputs, not merely
+  undecidable. Note the scope: the core checks presence of *the fields synthesis
+  used*, never a fixed key list — which facet keys matter (owner, env, …) is a
+  deployment vocabulary concern.
+- **Law 3 checks anchor *presence*, not *validity*.** ≥1 anchor is required, but an
+  anchor with empty identity fields still satisfies it. The grounding chain is only
+  as strong as synthesis fills the anchor.
+- **Law 2's confidence is contingent on normalization that does not exist yet.**
+  Resolution is exact string membership, so it assumes links are already
+  bundle-root-relative and normalized. A raw markdown cross-link
+  (`../y/overview.md`, a `#section` anchor, a self-link) is not what it handles.
+  Until the normalizing renderer lands, law 2 protects the *declared* `links`
+  field under that precondition, not arbitrary body links.
+
+Law 4 runs at full strength and additionally requires a timezone-aware stamp (a
+naive one crashes `whats_stale`'s aware-minus-naive subtraction). Underneath the
+four, a **projection↔files coherence** check runs first: the laws inspect
+`concepts`, but the publisher writes `files`, so every non-reserved file must have
+a projection and vice versa — otherwise a file ships unvalidated and
+`run_validators == []` would be a false pass. The strict pass additionally binds
+the OKF-owned keys by value (§7), because coherence binds path *sets* and the two
+carriers are read by different consumers.
+
+**Named paths from reduced to full strength** (deferred, not blocking):
+
+- **Law 1 survival.** Thread the source `CanonicalDocument.structured` into the
+  validator so it can check that fields the claim relied on became facets.
+- **Law 3 anchor validity.** Min-length constraints on `ResourceAnchor.system` /
+  `native_id` / `content_hash`. A model-level constraint is acceptable here: an
+  anchor with no identity is nonsensical to *represent*, unlike a law-violating
+  but meaningful concept.
+- **Law 2 link normalization.** Build the renderer that normalizes emitted
+  cross-links to bundle-root-relative paths, and extract the links actually present
+  in the rendered body rather than only the declared field.
+- **Freshness sanity bound.** Law 4 rejects naive stamps but not future-dated ones.
+  A "not in the future" check needs a clock, which the pure validator deliberately
+  lacks — so it would live in the pipeline, if wanted.
+- **Typed relations.** OKF keeps links untyped and we accept that. If a real
+  multi-hop use case demands typed edges, revisit a governed private vocabulary
+  (`depends_on`, `owned_by`) like the type vocabulary in §5.4 of the companion doc.
 
 **Law 4 also dissolves the freshness-vs-human-gate tension.** The never-auto-merge
 rule (a trust guarantee) seems to conflict with an agent's need for current data: a

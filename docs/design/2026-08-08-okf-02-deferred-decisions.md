@@ -118,7 +118,7 @@ The `events_` table is sharded daily.[^ga4-schema]
 
 This is the shape the deferred faithfulness judge (architecture §7) would check,
 and the path from law 3's *anchor presence* to *anchor validity* — one of the
-artifact-contract spec's §10 open items. It is the most valuable of the four for
+named paths to full strength in architecture.md §4.4. It is the most valuable of the four for
 kbforge's grounding contract, because it is the first mechanism that ties an
 individual claim, rather than a whole concept, back to a source.
 
