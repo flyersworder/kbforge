@@ -107,13 +107,20 @@ def test_bom_prefixed_frontmatter_is_parsed(tmp_path: Path):
 
 def test_reserved_okf_keys_never_become_facets(tmp_path: Path):
     # Source frontmatter named like emit-side OKF fields must not leak into facets
-    # and corrupt the rendered frontmatter (projection↔files divergence).
-    _write(tmp_path, "a.md", "---\ntitle: A\nlinks: nope\nresource: nope\n---\nbody\n")
+    # and corrupt the rendered frontmatter (projection↔files divergence). The
+    # retired v0.1 names stay reserved too, so a v0.1-era source document cannot
+    # reintroduce a superseded key into output that no longer emits it.
+    _write(
+        tmp_path,
+        "a.md",
+        "---\ntitle: A\nlinks: nope\ngenerated: nope\nsources: nope\n"
+        "timestamp: nope\nresource: nope\n---\nbody\n",
+    )
     conn = LocalFilesConnector()
     result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
     docs = conn.kbforge_normalize(result.records)
-    assert "links" not in docs[0].structured
-    assert "resource" not in docs[0].structured
+    for key in ("links", "generated", "sources", "timestamp", "resource"):
+        assert key not in docs[0].structured
 
 
 def _ids(records) -> set[str]:

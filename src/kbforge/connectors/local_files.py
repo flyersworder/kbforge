@@ -25,10 +25,22 @@ _SYSTEM = "local_files"
 # Keys handled structurally, so they never leak into `structured` (hence facets):
 # title → the concept title; relations → cross-links; type is dropped here because
 # the OKF type comes from synthesis taxonomy (the stub emits "concept"); description,
-# timestamp, resource, and links are emit-side OKF fields the synthesizer owns — a
-# source key of the same name must not collide with them in the rendered frontmatter.
+# generated, sources, and links are emit-side OKF v0.2 fields the synthesizer owns —
+# a source key of the same name must not collide with them in the rendered
+# frontmatter. The retired v0.1 names (timestamp, resource) stay reserved so a
+# v0.1-era source document cannot reintroduce a superseded key as a facet.
 _RESERVED_KEYS = frozenset(
-    {"type", "title", "relations", "description", "timestamp", "resource", "links"}
+    {
+        "type",
+        "title",
+        "relations",
+        "description",
+        "generated",
+        "sources",
+        "links",
+        "timestamp",
+        "resource",
+    }
 )
 # Dependency, VCS, and tool-cache directories that a blind rglob would sweep into
 # the KB (a real live test pulled 98 vendored `.venv` docs of 132 total). These
