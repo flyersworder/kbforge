@@ -10,7 +10,7 @@ okf_version: "0.2"
 
 # kbforge — Library Architecture & Connector Protocol
 
-**Status:** Draft v0.1 · **Companion to:** [`context/knowledge-base-design.md`](context/knowledge-base-design.md)
+**Status:** describes kbforge 0.5.0; sections marked **not built** are specification, not shipped code · **Companion to:** [`context/knowledge-base-design.md`](context/knowledge-base-design.md)
 **Name:** `kbforge` — *agent-first knowledge bases, forged from your systems of record.*
 **Repo:** `flyersworder/kbforge` · connectors: `kbforge-<system>` · entry points: `kbforge.connectors`
 
@@ -42,20 +42,29 @@ credentials from the environment, never from config.
 kbforge (core, PyPI)
 ├── kbforge/
 │   ├── models.py          # Pydantic data model (§3)
-│   ├── hookspecs.py       # Pluggy specs (§5)
+│   ├── hookspecs.py       # Pluggy specs (§5) — ConnectorSpec, PublisherSpec
 │   ├── registry.py        # plugin discovery via entry points
 │   ├── pipeline.py        # the sync algorithm (§7) — core, NOT pluggable
 │   ├── canonical.py       # stability checker, hashing (§4.3)
-│   ├── validate.py        # strict producer-side OKF checks (4 required fields)
-│   └── testing/           # contract-test kit for connector authors (§9)
+│   ├── mirror.py          # the replay-safe mirror and diff
+│   ├── synthesize.py      # the stub synthesizer + the shared emit frame
+│   ├── llm_synthesizer.py # the grounded LLM synthesizer (kbforge[llm])
+│   ├── validate.py        # strict producer-side OKF checks + the §4.4 laws
+│   ├── connectors/        # local_files, git_commits (credential-free references)
+│   ├── publishers/        # dry-run, github, gitlab
+│   └── __main__.py        # the CLI
 │
-kbforge-confluence   (separate package, own release cycle)
-kbforge-servicenow   (separate package)
-kbforge-gitlab-repo  (separate package; in-house-apps case)
+kbforge-<system>     (separate package per system of record, own release cycle;
+                      none published yet — examples/github-issues-connector/ is
+                      a complete worked reference, §6)
 │
 <deployment repo>          (private; config, credentials via CI vars, type vocab,
                             MR templates, schedule — everything org-specific)
 ```
+
+**Not built:** `kbforge.testing`, the conformance test kit (§9), and the
+`PipelineHooks` extension family (§5.3). Both are specified below and neither
+ships; §10 sequences them.
 
 Discovery: connectors register under the entry-point group **`kbforge.connectors`**.
 `pip install kbforge-confluence` is the entire installation story.
@@ -77,7 +86,7 @@ remove them. (This is the same posture as ADR-2 in the main doc.)
 ## 2. Two plugin families
 
 1. **Connectors** (`ConnectorSpec`, §5.1) — bring data *in* from a system of record.
-   Fully specified in this sketch; this is what we build first.
+   Two credential-free references ship in core; real systems of record are plugins.
 2. **Publishers** (`PublisherSpec`, §5.2) — push proposals *out*. Three ship in core:
    `dry-run` (local), `github` (PR), `gitlab` (MR).
 
@@ -546,7 +555,14 @@ document's absence (tombstones stay explicit — see §4.2); and flagging
 non-kbforge commits pushed onto the sync branch in the review body (the README
 documents the sharp edge instead).
 
-### 5.3 Core-stage extension hooks (narrow, additive-only)
+### 5.3 Core-stage extension hooks (narrow, additive-only) — **not built**
+
+Specified, not implemented: `hookspecs.py` defines `ConnectorSpec` and
+`PublisherSpec` only, and `registry.build_registry` registers those two. Nothing
+calls `kbforge_extra_validators` or `kbforge_run_observer` today, so a plugin
+advertising them is silently inert. The shape below is the intended one; it is
+recorded here so the §4.4 laws' "core, never additive" posture has something
+concrete to contrast with.
 
 ```python
 class PipelineHooks:
@@ -661,35 +677,37 @@ class ConfluenceConnector:
 ## 7. The core pipeline (fixed order — this IS the standard)
 
 ```python
-# kbforge/pipeline.py (sketch of the run loop)
-def run(bundle: Path, mirror: Path, registry, publisher, synthesizer, cfg):
-    for name, conn in registry.items():
-        problems = conn.validate_config(cfg.connectors[name])
-        if problems: abort(name, problems)                    # fail fast, no I/O
+# kbforge/pipeline.py — shape of the run loop; see the module for the real thing
+def run(connector, publisher, *, config, mirror, state_dir, publish_config,
+        synthesizer=None) -> NoOp | Aborted | Published:
+    problems = connector.kbforge_validate_config(config)
+    if problems: raise ConfigError(...)                       # fail fast, no I/O
 
-    changesets = {}
-    for name, conn in registry.items():
-        result = conn.fetch(cfg.connectors[name], load_cursor(name))
-        docs = conn.normalize(result.records)
-        assert_stability(conn, result.records, docs)          # §4.3 law 1
-        changesets[name] = mirror_and_diff(mirror, docs, result.complete)
+    result = connector.kbforge_fetch(config, load_cursor(state_dir, name))
+    docs = connector.kbforge_normalize(result.records)
+    assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
+    changeset = mirror_and_diff(mirror, docs, result.complete)
 
-    total = merge(changesets)
-    if total.is_noop:
+    if changeset.is_noop:
         return NoOp()                                         # no MR. ever.
 
     proposal = synthesizer.synthesize(                        # LLM stage; grounding
-        bundle, mirror, total,                                # contract lives here,
-        budget=cfg.token_budget,                              # scoped to changed
-    )                                                         # concepts only
+        changed_docs, changeset, existing_paths,              # contract lives here,
+    )                                                         # scoped to changed
 
-    failures = run_validators(bundle, proposal)               # strict OKF + §4.4
-    if failures: abort_with_report(failures)                  # laws (core) + extras
+    failures = run_validators(proposal, existing_paths)       # strict OKF + §4.4
+    if failures: return Aborted(failures)                     # laws, core only
 
-    url = publisher.publish(proposal, cfg.publisher)          # opens MR; never merges
-    persist_cursors(changesets)                               # only on full success
+    url = publisher.kbforge_publish(proposal, publish_config) # opens MR; never merges
+    save_cursor(state_dir, result.cursor)                     # only on full success
     return Published(url=url)
 ```
+
+**One connector per run**, not a registry fan-out: the CLI resolves a single
+connector by name and calls `run` with it, so multi-source assembly is a
+deployment's business (run kbforge once per system of record, each with its own
+mirror, cursor, and sync branch) rather than the core's. That keeps the no-op
+rule and the branch-per-system model decidable from one run's inputs.
 
 Everything main-doc §5.3 requires falls out of the seams: change-scoped updates
 (diff drives synthesis scope), no-op detection (`is_noop` gate), grounding
@@ -768,9 +786,14 @@ Cross-project, out of scope for v0.1; kbforge core needs no change for it.
 
 ---
 
-## 9. Conformance & the contract-test kit
+## 9. Conformance & the contract-test kit — **not built**
 
-`kbforge.testing` ships a reusable suite any connector repo runs in its CI:
+`kbforge.testing` does not exist yet. What follows is the specification for it,
+not a description of shipped code; a connector author today writes these checks
+by hand, and `examples/github-issues-connector/tests/` is the closest worked
+reference. Sequenced in §10.
+
+The kit would ship a reusable suite any connector repo runs in its CI:
 
 - **Stability test:** normalize the same fixtures twice → identical hashes (law 1).
 - **Volatility test:** author provides two raw exports of the *same unchanged
@@ -786,22 +809,32 @@ Cross-project, out of scope for v0.1; kbforge core needs no change for it.
   is in frontmatter (1), every link resolves (2), every concept carries a
   resolvable anchor (3), every concept carries a freshness stamp (4).
 
-A connector passing the kit may claim **"kbforge conformant"** — this badge,
-not the core code, is what makes the connector ecosystem trustworthy, and it is
-the operational meaning of the "standard" we are materializing.
+A connector passing the kit could claim **"kbforge conformant"** — that badge,
+not the core code, is what would make the connector ecosystem trustworthy, and it
+is the operational meaning of the "standard" we are materializing. Until the kit
+ships, the badge does not exist and conformance is a claim an author makes for
+themselves.
 
-## 10. Build sequence (extraction, not upfront design)
+## 10. Build sequence
 
-1. **Now:** monorepo pilot; `kbforge/` as an importable package with these
-   hookspecs; Confluence + ServiceNow (or GitLab-repo, pending main-doc §9.1)
-   connectors written in-tree against the protocol.
-2. **After connector #2 forces interface honesty:** freeze hookspec v0.1, split
-   connectors into their own packages, publish core to PyPI.
-3. **Then:** publish the contract-test kit + a `cookiecutter-kbforge-connector`
-   template; that's the moment this becomes a standard others can implement
-   rather than a library we happen to own.
+**Done.** Core is on PyPI (0.5.0), with the fixed pipeline, both credential-free
+reference connectors, three publishers, the stub and LLM synthesizers, and the
+§4.4 gate. Hookspecs are frozen in practice — `ConnectorSpec` and `PublisherSpec`
+have not changed shape since 0.1.0 — and `examples/github-issues-connector/` is a
+complete worked credentialed connector proving the plugin seam end to end.
 
-Open items for v0.2 of this sketch: attachment/binary handling in the mirror
-(object store vs git, per main-doc review), a `SynthesizerSpec` decision (keep
-closed vs open cautiously), and async fetch (likely `anyio` from the start —
-cheap now, painful to retrofit).
+**Next, in order:**
+
+1. **A credentialed system-of-record connector**, as a separate package. It is
+   the first thing that will exercise tombstones and therefore deletion
+   propagation against a real source, since neither built-in connector emits one.
+2. **The contract-test kit** (§9) plus a `cookiecutter-kbforge-connector`
+   template. That is the moment this becomes a standard others can implement
+   rather than a library we happen to own — and it wants a real third-party
+   connector (1) to have shaken out the interface first.
+3. **`PipelineHooks`** (§5.3), if a deployment actually needs the additive
+   validator or observer seam. Nothing has asked for it yet.
+
+Open items, unchanged: attachment/binary handling in the mirror (object store vs
+git), a `SynthesizerSpec` decision (keep closed vs open cautiously), and async
+fetch (likely `anyio` — cheap early, painful to retrofit).

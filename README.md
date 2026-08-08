@@ -148,8 +148,9 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
 ## Documentation
 
 - [`docs/architecture.md`](docs/architecture.md) — package architecture, the Pluggy
-  hookspecs, the connector protocol and its canonicalization laws, the fixed pipeline, and
-  the conformance test kit.
+  hookspecs, the connector protocol and its canonicalization laws, the fixed pipeline, the
+  §4.4 emit-side laws, and the build sequence. Sections headed **not built** are
+  specification rather than shipped code.
 - [`docs/context/knowledge-base-design.md`](docs/context/knowledge-base-design.md) — the
   system kbforge was extracted from: an OKF knowledge base for application managers served
   over MCP, including the security model and a literature review.

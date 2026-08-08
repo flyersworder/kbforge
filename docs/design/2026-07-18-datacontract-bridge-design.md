@@ -61,7 +61,7 @@ exactly the three things those laws guarantee:
 | §4.4 law | Guarantees | Fills, on the ADC side |
 |---|---|---|
 | 1 — facet survival | business fields are in **frontmatter**, not prose | `Domain.summary`, `business_owner`, metric description facets |
-| 3 — anchor presence | every concept has a **`resource` anchor** | provenance for each definition (new to ADC) |
+| 3 — anchor presence | every concept has a **`sources` anchor** | provenance for each definition (new to ADC) |
 | 4 — freshness legibility | every concept has a **freshness stamp** | `Domain.last_reviewed` |
 | 2 — link resolvability | cross-links **resolve** | related-concept context, safe to follow |
 
