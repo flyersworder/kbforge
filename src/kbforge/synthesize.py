@@ -24,7 +24,10 @@ _SCALAR = (str, int, float, bool)
 
 # Frontmatter keys the emitter owns on a rendered concept. A facet must never
 # occupy one: the laws check the projection, the bundle receives the file, and a
-# shadowed key makes those two disagree. `validate` binds the same set.
+# shadowed key makes those two disagree. `validate` checks all six on the rendered
+# file and binds the four with a projection counterpart (type, links, generated.at,
+# sources) back to it; `title`/`description` live only in the file, so they are
+# checked for shape alone.
 OKF_OWNED = frozenset({"type", "title", "description", "generated", "sources", "links"})
 
 # OKF §7 actor for the stub synthesizer. The LLM synthesizer overrides it with
