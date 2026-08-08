@@ -3,9 +3,9 @@ type: design-note
 title: kbforge — Agent-Facing Artifact Contract
 description: The emit-side contract that makes kbforge's "agent-first" claim checkable — four artifact laws, their enforcement in the validate stage, and the ConceptFrontmatter model — without kbforge owning the serving layer.
 tags: [okf, agent-first, artifact-contract, validate, mcp, producer]
-timestamp: 2026-07-18T00:00:00Z
+generated: { by: human:flyersworder, at: 2026-07-18T00:00:00Z }
 status: draft
-okf_version: "0.1"
+okf_version: "0.2"
 ---
 
 # kbforge — Agent-Facing Artifact Contract
