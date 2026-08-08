@@ -145,9 +145,13 @@ class _FixedSynth:
         doc = changed_docs[0]
         path = concept_path(doc.doc_id)
         descriptor = f"{doc.anchor.system}:{doc.anchor.native_id}"
+        # The rendered `at` must equal the projection's generated_at below —
+        # the strict gate binds the two carriers, since law 4 reads one and
+        # whats_stale reads the other.
+        at = doc.anchor.retrieved_at.isoformat()
         fm_file = (
             "---\ntype: concept\ntitle: Injected\ndescription: Injected\n"
-            "generated:\n  by: kbforge/test\n  at: '2026-01-01T00:00:00+00:00'\n"
+            f"generated:\n  by: kbforge/test\n  at: '{at}'\n"
             f"sources:\n- id: {descriptor}\n  resource: {descriptor}\n"
             f"  content_hash: {doc.anchor.content_hash}\n"
             "---\n\n# Injected\n\nInjected body.\n"

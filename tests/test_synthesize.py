@@ -112,6 +112,19 @@ def test_generated_by_is_overridable_for_llm_synthesis():
     assert fm.generated_by == "kbforge/deepseek-v4-flash"
 
 
+def test_llm_actor_is_two_segment_for_a_provider_qualified_model():
+    """§7 fixes `<producer>/<version>`. The default model id is itself
+    provider-qualified, so interpolating it whole would emit a three-segment
+    actor a consumer reads as producer "kbforge/deepseek". Lives here rather
+    than in test_llm_synthesizer.py, which is importorskip-guarded on
+    pydantic_ai — this needs no LLM and must always run."""
+    from kbforge.llm_synthesizer import LLMConfig, actor_for
+
+    assert actor_for("deepseek/deepseek-v4-flash") == "kbforge/deepseek-v4-flash"
+    assert actor_for("gpt-5") == "kbforge/gpt-5"
+    assert actor_for(LLMConfig().model).count("/") == 1  # the shipped default
+
+
 def test_dangling_relations_are_dropped():
     doc = _doc("local_files:apps/x.md", relations=["local_files:apps/ghost.md"])
     change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))

@@ -10,6 +10,7 @@ report — never a construction-time crash.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 
 import yaml
 
@@ -203,6 +204,61 @@ def _parse_frontmatter(content: str) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def _check_generated_shape(
+    path: str, front: dict, concept: ConceptFrontmatter | None
+) -> list[Failure]:
+    """`generated` is a mapping, so the presence loop cannot judge it: `{}` and
+    `{by: ''}` are both non-None and both useless. OKF §5.2 makes `by` REQUIRED
+    within the block, and law 4 is worthless without `at`.
+
+    The last check binds the two carriers. `_check_projection_coherence` binds
+    path *sets*; nothing bound field *values*, so law 4 could pass on a
+    projection carrying `generated_at` while the file it ships alongside carried
+    a different stamp, or none. `whats_stale` reads the file."""
+    generated = front.get("generated")
+    if not isinstance(generated, dict):
+        return [
+            Failure(
+                path,
+                "okf-strict",
+                "rendered 'generated' must be a mapping of 'by' and 'at' (OKF §5.2)",
+            )
+        ]
+    failures: list[Failure] = []
+    by = generated.get("by")
+    if not isinstance(by, str) or not by.strip():
+        failures.append(
+            Failure(
+                path,
+                "okf-strict",
+                "rendered 'generated.by' is empty; OKF §5.2 requires an actor",
+            )
+        )
+    at = generated.get("at")
+    if at is None or (isinstance(at, str) and not at.strip()):
+        failures.append(
+            Failure(
+                path,
+                "okf-strict",
+                "rendered 'generated.at' is missing; whats_stale reads the file, "
+                "not the projection (§4.4 law 4)",
+            )
+        )
+    elif concept is not None and concept.generated_at is not None:
+        rendered = at.isoformat() if isinstance(at, datetime) else str(at)
+        if rendered != concept.generated_at.isoformat():
+            failures.append(
+                Failure(
+                    path,
+                    "okf-strict",
+                    "rendered 'generated.at' disagrees with the concept "
+                    "projection's generated_at; law 4 checks one and "
+                    "whats_stale reads the other",
+                )
+            )
+    return failures
+
+
 def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
     failures: list[Failure] = []
     for path, content in proposal.files.items():
@@ -219,6 +275,18 @@ def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
                         f"rendered concept is missing required OKF field {key!r}",
                     )
                 )
+        if front.get("generated") is not None:
+            failures += _check_generated_shape(path, front, proposal.concepts.get(path))
+        # Law 3 checks the projection; provenance an agent can act on has to
+        # survive into the file that ships.
+        if not front.get("sources"):
+            failures.append(
+                Failure(
+                    path,
+                    "okf-strict",
+                    "rendered concept carries no 'sources' entry (§4.4 law 3)",
+                )
+            )
     return failures
 
 
