@@ -160,6 +160,9 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
   — the roadmap for agentic fetch, the refresh model, and KB bootstrap.
 - [`docs/design/2026-07-18-datacontract-bridge-design.md`](docs/design/2026-07-18-datacontract-bridge-design.md)
   — how kbforge bridges to `agentic-data-contracts` via the OKF bundle (future, cross-project).
+- [`docs/design/2026-08-08-okf-02-deferred-decisions.md`](docs/design/2026-08-08-okf-02-deferred-decisions.md)
+  — the OKF v0.2 families kbforge does not emit yet (`verified`, `status: deprecated`,
+  `stale_after`, footnote attribution) and why each is a decision, not a backlog item.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Related projects
