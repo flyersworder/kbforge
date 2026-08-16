@@ -1,4 +1,6 @@
-"""Canonicalization: stable content hashing and the §4.3 law-1 stability check."""
+"""Canonicalization: stable content hashing, the §4.3 law-1 stability check, the
+§4.2 fetch-side contract law, and the blankness helper both this module and
+`validate` use to judge whether a string carries visible content."""
 
 from __future__ import annotations
 

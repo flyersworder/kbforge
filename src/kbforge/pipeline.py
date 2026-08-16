@@ -105,7 +105,7 @@ def run(
     result = connector.kbforge_fetch(config, _load_cursor(state_path, info.name))
     docs = connector.kbforge_normalize(result.records)
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
-    assert_fetch_contract(docs, complete=result.complete)  # §4.3, fetch side
+    assert_fetch_contract(docs, complete=result.complete)  # §4.2 fetch contract
 
     changeset = diff(mirror_path, docs)
     if changeset.is_noop:

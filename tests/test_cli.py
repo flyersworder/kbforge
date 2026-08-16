@@ -277,14 +277,11 @@ def test_cli_reports_a_fetch_contract_violation_as_a_message(tmp_path, capsys):
                 "local_files",
                 "--set",
                 f"path={src}",
-                "--mirror",
-                str(tmp_path / "mirror"),
-                "--out",
-                str(tmp_path / "out"),
-                "--state",
-                str(tmp_path / "state"),
+                *_plumbing(tmp_path),
             ]
         )
 
     assert code == 2
-    assert "duplicate doc_id in fetch output: sys:a.md" in capsys.readouterr().out
+    out = capsys.readouterr().out
+    assert "Connector contract violation (local_files):" in out
+    assert "duplicate doc_id in fetch output: sys:a.md" in out

@@ -3,7 +3,7 @@ type: design-note
 title: kbforge — MCP as a Source Transport
 description: The selector/reader split that lets a RAG-backed or agentic MCP server satisfy retriever-not-extractor, shipped as a separate kbforge-mcp package; plus the four blockers that must be answered before the connector can be built.
 tags: [okf, mcp, connectors, agentic-fetch, selector, producer]
-timestamp: 2026-08-16T00:00:00Z
+generated: { by: human:flyersworder, at: 2026-08-16T00:00:00Z }
 status: draft — blocked, see §7
 okf_version: "0.2"
 ---
@@ -288,6 +288,11 @@ Two hazards that only become reachable once `native_id`s are server-controlled:
   `native_id` of `../../.github/workflows/x` likewise reaches `safe_join` and dies
   as a `PathError` at publish time — after synthesis, after tokens. A `native_id`
   shape constraint belongs in the reader or the law.
+- **Blank `doc_id` collision.** The same defect from the other end: `doc_id=""`
+  passes `assert_fetch_contract`'s uniqueness check (nothing else is blank) and
+  `concept_path("")` renders to `concepts//overview.md`, which normalizes onto
+  `concepts/overview.md` — silently colliding with a root-level concept that
+  every downstream validator then treats as legitimate.
 
 Also unresolved and smaller: the manifest persists only on the `Published` path
 (`pipeline.py:190`; `NoOp` returns at `:111`, `Aborted` at `:186`), so merge-vs-

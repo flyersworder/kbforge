@@ -198,7 +198,7 @@ def main(argv: list[str] | None = None) -> int:
         # which plugin to report it against. StabilityError is caught here too:
         # it has always escaped as a traceback, and fixing the surfacing only
         # for the newer law would leave the older one worse for no reason.
-        print(f"Connector contract violation: {exc}")
+        print(f"Connector contract violation ({args.connector}): {exc}")
         return 2
     except (PublishError, PathError) as exc:
         # The mirror never advanced, so the next run retries this same change.

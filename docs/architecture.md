@@ -274,7 +274,7 @@ design (agentic retriever, refresh vs. discover, bootstrap):
 
 - `fetch(config, cursor)` where `cursor=None` means full backfill — this is the
   **bootstrap** path that first creates the KB. Refresh is the opposite: it re-runs the
-  scheduled pipeline and lets core's `mirror_and_diff` detect change against the mirror,
+  scheduled pipeline and lets core's `diff` (§7) detect change against the mirror,
   so it **cannot** bootstrap — over an empty mirror there is nothing to diff. Connectors
   stay bundle-blind either way; a feed-less refresh connector expresses its cursor as a
   `(doc_id, content_hash)` manifest so re-polls still reduce to only real change. See
@@ -287,6 +287,13 @@ design (agentic retriever, refresh vs. discover, bootstrap):
   exists so rate-limited partial fetches don't trigger false "removed" diffs. This
   is enforced, not merely intended: `assert_fetch_contract` (§7) rejects a
   tombstone on an incomplete fetch before it ever reaches `diff`.
+- `assert_fetch_contract` (§7) is the fetch-side law a connector's `normalize`
+  output must satisfy, checked once per run, before `diff`:
+  1. **Unique `doc_id`.** Two records sharing an id silently collapse onto one
+     concept, last-write-wins, with nothing visibly broken.
+  2. **Non-blank `native_id`.** A record without one cannot be cited — the
+     fetch-side mirror of the §4.4 anchor-presence law.
+  3. **No tombstone from an incomplete fetch** — the rule above, enforced.
 
 ### 4.3 Canonicalization laws (the load-bearing part)
 

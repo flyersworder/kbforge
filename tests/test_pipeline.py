@@ -401,6 +401,7 @@ def test_pipeline_rejects_a_duplicate_doc_id_before_it_reaches_the_mirror(tmp_pa
             publish_config={},
         )
     assert str(exc.value) == "duplicate doc_id in fetch output: sys:a.md"
+    assert not (tmp_path / "mirror").exists()
 
 
 def test_pipeline_rejects_a_tombstone_from_an_incomplete_fetch(tmp_path):
@@ -420,8 +421,20 @@ def test_pipeline_rejects_a_tombstone_from_an_incomplete_fetch(tmp_path):
 
 
 def test_pipeline_still_accepts_a_tombstone_from_a_complete_fetch(tmp_path):
-    """The guard must not break ordinary deletion propagation."""
+    """The guard must not break ordinary deletion propagation. Sets complete=True
+    explicitly (rather than going through _run_once's default) so this test
+    distinguishes 'complete is allowed' from '_run_once's default is allowed' —
+    without that, this duplicates test_a_tombstone_reaches_the_publisher_as_a_removal
+    exactly."""
     _run_once(tmp_path, [_doc("gone.md", "Gone")])
-    publisher = _run_once(tmp_path, [_doc("gone.md", "Gone", deleted=True)])
-    assert publisher.last_change is not None
+    publisher = _RecordingPublisher()
+    result = run(
+        _FakeConnector([_doc("gone.md", "Gone", deleted=True)], complete=True),
+        publisher,
+        config={},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={},
+    )
+    assert publisher.last_change is not None, f"pipeline did not publish: {result!r}"
     assert publisher.last_change.files_removed == ["concepts/gone/overview.md"]

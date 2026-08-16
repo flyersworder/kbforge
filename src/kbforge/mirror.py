@@ -1,5 +1,5 @@
-"""The canonical mirror and the read-only diff (architecture §7's mirror_and_diff,
-split into a pure `diff` and a success-only `commit`)."""
+"""The canonical mirror and the read-only diff: architecture §7's pipeline
+sequence, split into a pure `diff` and a success-only `commit`."""
 
 from __future__ import annotations
 
