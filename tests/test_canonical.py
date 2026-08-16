@@ -2,7 +2,13 @@ from datetime import UTC, datetime
 
 import pytest
 
-from kbforge.canonical import StabilityError, assert_stability, content_hash
+from kbforge.canonical import (
+    FetchContractError,
+    StabilityError,
+    assert_fetch_contract,
+    assert_stability,
+    content_hash,
+)
 from kbforge.models import CanonicalDocument, RawRecord, ResourceAnchor
 
 
@@ -39,3 +45,65 @@ def test_assert_stability_raises_for_unstable_normalize():
 
     with pytest.raises(StabilityError):
         assert_stability(flaky, [RawRecord(media_type="x", payload=b"")])
+
+
+def _fdoc(doc_id="sys:a.md", native_id="a.md", deleted=False):
+    """A minimal CanonicalDocument for fetch-contract tests."""
+    return CanonicalDocument(
+        anchor=ResourceAnchor(
+            system="sys",
+            native_id=native_id,
+            url=None,
+            retrieved_at=datetime(2024, 1, 1, tzinfo=UTC),
+            content_hash="h",
+        ),
+        doc_id=doc_id,
+        title="A",
+        text="A",
+        deleted=deleted,
+    )
+
+
+def test_fetch_contract_accepts_a_well_formed_complete_fetch():
+    assert_fetch_contract(
+        [_fdoc("sys:a.md", "a.md"), _fdoc("sys:b.md", "b.md")], complete=True
+    )
+
+
+def test_fetch_contract_rejects_a_duplicate_doc_id():
+    """Two records sharing an id both land in ChangeSet.added, then assemble
+    collapses them onto one concept_path with last-write-wins: one document is
+    silently absent from the KB and nothing downstream looks broken."""
+    docs = [_fdoc("sys:a.md", "a.md"), _fdoc("sys:a.md", "a.md")]
+    with pytest.raises(FetchContractError) as exc:
+        assert_fetch_contract(docs, complete=True)
+    assert str(exc.value) == "duplicate doc_id in fetch output: sys:a.md"
+
+
+def test_fetch_contract_rejects_a_blank_native_id():
+    """The fetch-side mirror of the §4.4 anchor-presence law: a record with no
+    native_id cannot be cited, so a reviewer cannot follow it to its source."""
+    with pytest.raises(FetchContractError) as exc:
+        assert_fetch_contract([_fdoc("sys:a.md", "")], complete=True)
+    assert str(exc.value) == "record has no native_id: doc_id=sys:a.md"
+
+
+def test_fetch_contract_rejects_a_zero_width_native_id():
+    """Blankness is judged on visible content, not str.strip(): U+200B is `Cf`,
+    survives strip(), and is no more citable than an empty string."""
+    with pytest.raises(FetchContractError) as exc:
+        assert_fetch_contract([_fdoc("sys:a.md", "​")], complete=True)
+    assert str(exc.value) == "record has no native_id: doc_id=sys:a.md"
+
+
+def test_fetch_contract_rejects_a_tombstone_from_an_incomplete_fetch():
+    """complete=False means the connector saw a partial slice of the source, so
+    absence is not evidence of deletion. This is the check that makes
+    FetchResult.complete load-bearing rather than decorative."""
+    with pytest.raises(FetchContractError) as exc:
+        assert_fetch_contract([_fdoc("sys:a.md", "a.md", deleted=True)], complete=False)
+    assert str(exc.value) == "incomplete fetch cannot emit a tombstone: sys:a.md"
+
+
+def test_fetch_contract_allows_a_tombstone_from_a_complete_fetch():
+    assert_fetch_contract([_fdoc("sys:a.md", "a.md", deleted=True)], complete=True)

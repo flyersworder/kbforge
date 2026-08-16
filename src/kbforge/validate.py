@@ -9,32 +9,18 @@ report — never a construction-time crash.
 
 from __future__ import annotations
 
-import unicodedata
 from dataclasses import dataclass
 from datetime import datetime
 
 import yaml
 
+from kbforge.canonical import is_blank as _blank
 from kbforge.models import ConceptFrontmatter, ProposedChange
 
 _SCALAR = (str, int, float, bool)
 
 # OKF reserved filenames that carry no frontmatter, hence no projection.
 _RESERVED = frozenset({"index.md", "log.md"})
-
-
-def _blank(value: object) -> bool:
-    """True when `value` is not a string, or is a string carrying no content.
-
-    `str.strip()` removes NBSP (it is `Zs`) but not U+200B and friends, which are
-    `Cf` — invisible, zero-width, and routinely present in text pasted out of a
-    browser. A concept whose `type` is a zero-width space is untyped in every way
-    that matters, so blankness has to be judged on visible content."""
-    if not isinstance(value, str):
-        return True
-    return not "".join(
-        ch for ch in value if unicodedata.category(ch) not in ("Cf", "Zs", "Cc")
-    ).strip()
 
 
 def _instant(value: object) -> datetime | None:
