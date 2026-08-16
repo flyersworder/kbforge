@@ -32,10 +32,14 @@ def _doc(doc_id="local_files:apps/x.md", text="X does things.", relations=None):
     )
 
 
-def _agent_returning(concept: SynthesizedConcept) -> Agent:
+def _agent_returning(concept: SynthesizedConcept) -> Agent[object, SynthesizedConcept]:
     # For structured output (tool mode), the model must CALL the output tool with
     # the concept as args — not return free text. `info.output_tools[0].name` is the
     # output tool Pydantic AI registered for SynthesizedConcept.
+    #
+    # Both parameters are spelled out because `Agent`'s type vars carry PEP 696
+    # defaults (`object`, `str`), so a bare `Agent` here would claim this returns a
+    # plain-text agent rather than a SynthesizedConcept one.
     def fn(messages, info: AgentInfo):
         return ModelResponse(
             parts=[ToolCallPart(info.output_tools[0].name, concept.model_dump())]
