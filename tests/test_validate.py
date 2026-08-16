@@ -212,3 +212,25 @@ def test_naive_freshness_is_reported():
     c = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=naive)
     failures = run_artifact_validators(_proposal(c))
     assert any(f.law == "freshness-legibility" for f in failures)
+
+
+def test_a_path_both_written_and_removed_is_a_failure():
+    """A proposal that adds and deletes one path is self-contradictory, and
+    nothing caught it: _check_projection_coherence bound files<->concepts and
+    never inspected files_removed, so it returned [] on this proposal."""
+    path = "apps/x/overview.md"
+    concept = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
+    change = ProposedChange(
+        branch_hint="b",
+        files={path: "# X"},
+        files_removed=[path],
+        concepts={path: concept},
+    )
+    failures = run_artifact_validators(change)
+    coherence = [f for f in failures if f.law == "projection-coherence"]
+    assert len(coherence) == 1
+    assert coherence[0].concept_path == path
+    assert (
+        coherence[0].message
+        == "path is both written and removed in one proposal (§4.4 gate)"
+    )

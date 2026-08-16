@@ -61,7 +61,8 @@ def _check_projection_coherence(proposal: ProposedChange) -> list[Failure]:
     MUST have a projection, and every projection MUST have a rendered file. Without
     this, `run_artifact_validators() == []` does not entail "the artifact is
     conformant" — a producer defeats the gate by omission, not by emitting
-    something wrong."""
+    something wrong. Also bind files and files_removed: no path may appear in
+    both sets."""
     failures: list[Failure] = []
     concept_files = {p for p in proposal.files if _basename(p) not in _RESERVED}
     for path in sorted(concept_files - set(proposal.concepts)):
@@ -79,6 +80,20 @@ def _check_projection_coherence(proposal: ProposedChange) -> list[Failure]:
                 path,
                 "projection-coherence",
                 "concept projection has no rendered file in the proposal (§4.4 gate)",
+            )
+        )
+    # Nothing else inspects files_removed. A path in both sets is a proposal
+    # that adds and deletes the same concept: the publisher's behaviour then
+    # depends on the order it applies them, which is not a decision a proposal
+    # gets to leave open. Reachable from a duplicate doc_id where one copy is
+    # tombstoned -- the fetch-side law now rejects that at source, but this
+    # binds the symptom regardless of cause.
+    for path in sorted(set(proposal.files) & set(proposal.files_removed)):
+        failures.append(
+            Failure(
+                path,
+                "projection-coherence",
+                "path is both written and removed in one proposal (§4.4 gate)",
             )
         )
     return failures
