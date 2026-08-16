@@ -420,15 +420,16 @@ Append to `tests/test_validate.py`:
 def test_a_path_both_written_and_removed_is_a_failure():
     """A proposal that adds and deletes one path is self-contradictory, and
     nothing caught it: _check_projection_coherence bound files<->concepts and
-    never inspected files_removed, so run_validators() returned [] on it."""
-    path = "concepts/x/overview.md"
-    proposal = ProposedChange(
-        branch_hint="sync/sys",
-        files={path: _rendered_concept()},
+    never inspected files_removed, so it returned [] on this proposal."""
+    path = "apps/x/overview.md"
+    concept = ConceptFrontmatter(type="application", sources=[ANCHOR], generated_at=NOW)
+    change = ProposedChange(
+        branch_hint="b",
+        files={path: "# X"},
         files_removed=[path],
-        concepts={path: _projection()},
+        concepts={path: concept},
     )
-    failures = run_validators(proposal)
+    failures = run_artifact_validators(change)
     coherence = [f for f in failures if f.law == "projection-coherence"]
     assert len(coherence) == 1
     assert coherence[0].concept_path == path
@@ -438,11 +439,20 @@ def test_a_path_both_written_and_removed_is_a_failure():
     )
 ```
 
-Build `_rendered_concept()` and `_projection()` with whatever helpers
-`tests/test_validate.py` already uses for a conformant concept — reuse the file's
-existing fixtures rather than inventing new ones, so this test fails only on the
-disjointness check and not on an unrelated strict-OKF violation. Verify that by
-asserting `coherence` has exactly one entry, as above.
+This uses only fixtures `tests/test_validate.py` already defines at module level
+(`ANCHOR` line 7, `NOW` line 6) and needs no new imports.
+
+Two things to get right, both of which a naive version gets wrong:
+
+- Call **`run_artifact_validators`**, not `run_validators`. `_check_projection_coherence`
+  runs inside the former; `run_validators` additionally runs `_check_strict_okf`
+  over the *rendered file text*, and `"# X"` carries no frontmatter, so that
+  route would bury the finding under unrelated strict-OKF failures. Every
+  existing test in this file uses `run_artifact_validators` for the same reason.
+- Assert `len(coherence) == 1`, not `>= 1`. The path appears in `files`, in
+  `concepts`, and in `files_removed`, so the two pre-existing bindings are
+  satisfied and only the new one should fire. If this is 2 or 3, the new check
+  is double-counting against the existing loops.
 
 - [ ] **Step 2: Run the test to verify it fails**
 
