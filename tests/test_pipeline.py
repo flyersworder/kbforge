@@ -1,7 +1,9 @@
 from datetime import UTC, datetime
 from pathlib import Path
 
-from kbforge.canonical import content_hash
+import pytest
+
+from kbforge.canonical import FetchContractError, content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.models import (
     CanonicalDocument,
@@ -216,8 +218,9 @@ class _FakeConnector:
     """Returns a fixed list of CanonicalDocuments, deterministically — satisfies
     assert_stability without a clock or any real I/O."""
 
-    def __init__(self, docs: list[CanonicalDocument]):
+    def __init__(self, docs: list[CanonicalDocument], complete: bool = True):
         self._docs = docs
+        self._complete = complete
 
     def kbforge_connector_info(self) -> ConnectorInfo:
         return ConnectorInfo(name="fake", version="0.1.0", source_system="sys")
@@ -226,7 +229,9 @@ class _FakeConnector:
         return []
 
     def kbforge_fetch(self, config: dict, cursor) -> FetchResult:
-        return FetchResult(records=[], cursor=Cursor(connector="fake"))
+        return FetchResult(
+            records=[], cursor=Cursor(connector="fake"), complete=self._complete
+        )
 
     def kbforge_normalize(self, records) -> list[CanonicalDocument]:
         return self._docs
@@ -379,3 +384,44 @@ def test_a_concept_linking_to_a_deleted_one_is_pulled_into_scope(tmp_path):
     change = publisher.last_change
     assert "concepts/referrer/overview.md" in change.files
     assert change.concepts["concepts/referrer/overview.md"].links == []
+
+
+def test_pipeline_rejects_a_duplicate_doc_id_before_it_reaches_the_mirror(tmp_path):
+    """Without the law this run publishes happily and silently drops a document:
+    diff appends the id to `added` twice, assemble collapses both onto one
+    concept_path, and mirror and bundle agree afterwards."""
+    docs = [_doc("a.md", "First"), _doc("a.md", "Second")]
+    with pytest.raises(FetchContractError) as exc:
+        run(
+            _FakeConnector(docs),
+            _RecordingPublisher(),
+            config={},
+            mirror=str(tmp_path / "mirror"),
+            state_dir=str(tmp_path / "state"),
+            publish_config={},
+        )
+    assert str(exc.value) == "duplicate doc_id in fetch output: sys:a.md"
+
+
+def test_pipeline_rejects_a_tombstone_from_an_incomplete_fetch(tmp_path):
+    """The invariant CLAUDE.md states but nothing enforced: a rate-limited
+    partial fetch must not be able to manufacture a removal."""
+    _run_once(tmp_path, [_doc("gone.md", "Gone")])
+    with pytest.raises(FetchContractError) as exc:
+        run(
+            _FakeConnector([_doc("gone.md", "Gone", deleted=True)], complete=False),
+            _RecordingPublisher(),
+            config={},
+            mirror=str(tmp_path / "mirror"),
+            state_dir=str(tmp_path / "state"),
+            publish_config={},
+        )
+    assert str(exc.value) == "incomplete fetch cannot emit a tombstone: sys:gone.md"
+
+
+def test_pipeline_still_accepts_a_tombstone_from_a_complete_fetch(tmp_path):
+    """The guard must not break ordinary deletion propagation."""
+    _run_once(tmp_path, [_doc("gone.md", "Gone")])
+    publisher = _run_once(tmp_path, [_doc("gone.md", "Gone", deleted=True)])
+    assert publisher.last_change is not None
+    assert publisher.last_change.files_removed == ["concepts/gone/overview.md"]

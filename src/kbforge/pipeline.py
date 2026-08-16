@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Protocol
 
-from kbforge.canonical import assert_stability
+from kbforge.canonical import assert_fetch_contract, assert_stability
 from kbforge.mirror import commit, diff, load_all
 from kbforge.models import (
     CanonicalDocument,
@@ -105,6 +105,7 @@ def run(
     result = connector.kbforge_fetch(config, _load_cursor(state_path, info.name))
     docs = connector.kbforge_normalize(result.records)
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
+    assert_fetch_contract(docs, complete=result.complete)  # §4.3, fetch side
 
     changeset = diff(mirror_path, docs)
     if changeset.is_noop:
