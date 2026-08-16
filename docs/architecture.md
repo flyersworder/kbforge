@@ -284,7 +284,9 @@ design (agentic retriever, refresh vs. discover, bootstrap):
   normalize determinism makes replays harmless).
 - Deletions must be **explicit tombstones** (`CanonicalDocument.deleted=True`).
   Absence from an incremental fetch never implies deletion; `FetchResult.complete`
-  exists so rate-limited partial fetches don't trigger false "removed" diffs.
+  exists so rate-limited partial fetches don't trigger false "removed" diffs. This
+  is enforced, not merely intended: `assert_fetch_contract` (§7) rejects a
+  tombstone on an incomplete fetch before it ever reaches `diff`.
 
 ### 4.3 Canonicalization laws (the load-bearing part)
 
@@ -413,7 +415,12 @@ four, a **projection↔files coherence** check runs first: the laws inspect
 a projection and vice versa — otherwise a file ships unvalidated and
 `run_validators == []` would be a false pass. The strict pass additionally binds
 the OKF-owned keys by value (§7), because coherence binds path *sets* and the two
-carriers are read by different consumers.
+carriers are read by different consumers. A third binding under the same slug
+requires `files` and `files_removed` to be disjoint: nothing else inspects
+`files_removed`, so a path in both — the emit-side symptom of a duplicate
+`doc_id` where one copy was tombstoned (§4.2) — would otherwise reach the
+publisher as both a write and a delete with `run_validators() == []` still
+reading clean.
 
 **Named paths from reduced to full strength** (deferred, not blocking):
 
@@ -686,7 +693,8 @@ def run(connector, publisher, *, config, mirror, state_dir, publish_config,
     result = connector.kbforge_fetch(config, load_cursor(state_dir, name))
     docs = connector.kbforge_normalize(result.records)
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
-    changeset = mirror_and_diff(mirror, docs, result.complete)
+    assert_fetch_contract(docs, complete=result.complete)      # §4.2 fetch contract
+    changeset = diff(mirror, docs)
 
     if changeset.is_noop:
         return NoOp()                                         # no MR. ever.
@@ -702,6 +710,19 @@ def run(connector, publisher, *, config, mirror, state_dir, publish_config,
     save_cursor(state_dir, result.cursor)                     # only on full success
     return Published(url=url)
 ```
+
+`assert_fetch_contract` runs on `normalize` output rather than raw records —
+`doc_id` is what the mirror keys on, and a tombstone only exists post-normalize.
+Two things it deliberately leaves unchecked, so a reader does not credit it with
+more than it does: it cannot confirm a fetched document is verbatim, since core
+has no independent access to the source and so cannot distinguish a returned
+document from an agent's summary of one — it closes the *identity* half of
+retriever-not-extractor (§4.1), leaving the *verbatim* half a contract
+obligation on the connector. And it does not make `normalize` clock-purity
+checkable: `assert_stability` compares `content_hash`, which excludes the
+anchor by design (§4.3 law 2, so `retrieved_at` doesn't make its own hash
+circular), so a `datetime.now()` called inside `normalize` hashes identically
+on both passes and passes that gate.
 
 **One connector per run**, not a registry fan-out: the CLI resolves a single
 connector by name and calls `run` with it, so multi-source assembly is a

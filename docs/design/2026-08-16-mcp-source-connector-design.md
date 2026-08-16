@@ -15,8 +15,8 @@ okf_version: "0.2"
 **Builds on:** [`2026-07-19-agentic-ingest-design.md`](2026-07-19-agentic-ingest-design.md)
 §3 — this note supplies part of the mechanics deferred to that note's §9
 "retriever contract" open item.
-**Depends on:** [`2026-08-16-fetch-side-law-design.md`](2026-08-16-fetch-side-law-design.md)
-— the fetch-side law ships first and independently.
+**Depends on:** [`../architecture.md`](../architecture.md) §4.2, §4.4, §7 — the
+fetch-side law shipped in 0.6.0, first and independently.
 
 ## 1. Problem
 
@@ -298,7 +298,7 @@ is discarded.
 
 | Phase | Contents | Gate |
 |---|---|---|
-| **0.6.0** | [fetch-side law](2026-08-16-fetch-side-law-design.md) | none — independent of MCP |
+| **0.6.0** | [fetch-side law](../architecture.md) (§4.2, §4.4, §7) | none — independent of MCP |
 | **0.7.0** | `kbforge-mcp` package: client, allowlist, reader, `enumerate` + `query`, deepwiki live test | §7.2, §7.3 |
 | **0.8.0** | manifest cursor, tombstones, merge-vs-replace | §7.1, §7.5 |
 | later | `AgenticSelector` | bounds/budget/allowlist from agentic-ingest §9 |
