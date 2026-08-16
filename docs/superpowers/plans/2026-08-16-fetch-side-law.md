@@ -17,6 +17,7 @@
 - **`normalize` stays pure** — no network, no clock, no randomness. Nothing in this plan may introduce one.
 - **The default suite never touches the network.** Every test here is offline.
 - **Verify a gate by breaking what it guards.** Mutate **in place**, restore with `git checkout --`. Never `cp -R` the repo — the copied `.venv` resolves `kbforge` to the original source, so nothing is actually mutated and everything passes spuriously.
+- **Commit before mutating.** `git checkout -- <path>` restores from the index/HEAD, so a mutation check run against *uncommitted* work destroys the implementation instead of restoring it. Tasks 2 and 3 list their mutation check before their commit step: do the commit first, run the check after, and do not amend the commit for it — the mutation is applied and reverted either way, so the check verifies exactly the committed state.
 - **Assert on failure *messages*, not just exception types.** A test asserting only `pytest.raises(FetchContractError)` passes on whichever of three checks fired.
 - **Exact messages** (copied verbatim from spec §2.1):
   - `duplicate doc_id in fetch output: {doc_id}`
