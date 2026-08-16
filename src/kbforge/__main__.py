@@ -13,6 +13,7 @@ from typing import cast
 import pluggy
 import yaml
 
+from kbforge.canonical import FetchContractError, StabilityError
 from kbforge.pipeline import (
     Aborted,
     ConfigError,
@@ -190,6 +191,14 @@ def main(argv: list[str] | None = None) -> int:
         )
     except ConfigError as exc:
         print(str(exc))
+        return 2
+    except (FetchContractError, StabilityError) as exc:
+        # A connector-contract violation, not an operator mistake — but the
+        # operator is who sees it, and a traceback tells them nothing about
+        # which plugin to report it against. StabilityError is caught here too:
+        # it has always escaped as a traceback, and fixing the surfacing only
+        # for the newer law would leave the older one worse for no reason.
+        print(f"Connector contract violation: {exc}")
         return 2
     except (PublishError, PathError) as exc:
         # The mirror never advanced, so the next run retries this same change.

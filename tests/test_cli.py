@@ -1,11 +1,13 @@
 import os
 import subprocess
 from pathlib import Path
+from unittest import mock
 
 import pluggy
 import pytest
 
 from kbforge.__main__ import _parse_settings, main
+from kbforge.canonical import FetchContractError
 from kbforge.hookspecs import CONNECTOR_ENTRYPOINTS, PUBLISHER_ENTRYPOINTS
 from kbforge.registry import build_registry
 
@@ -254,3 +256,35 @@ def test_run_llm_synthesizer_missing_extra_is_clean_cli_error(
     )
     assert code == 2
     assert "install kbforge[llm]" in capsys.readouterr().out
+
+
+def test_cli_reports_a_fetch_contract_violation_as_a_message(tmp_path, capsys):
+    """A third-party connector tripping the new law is the only thing most
+    plugin authors will see of this release; a traceback is the wrong first
+    impression."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.md").write_text("# A\n\nbody\n", "utf-8")
+
+    with mock.patch(
+        "kbforge.pipeline.assert_fetch_contract",
+        side_effect=FetchContractError("duplicate doc_id in fetch output: sys:a.md"),
+    ):
+        code = main(
+            [
+                "run",
+                "--connector",
+                "local_files",
+                "--set",
+                f"path={src}",
+                "--mirror",
+                str(tmp_path / "mirror"),
+                "--out",
+                str(tmp_path / "out"),
+                "--state",
+                str(tmp_path / "state"),
+            ]
+        )
+
+    assert code == 2
+    assert "duplicate doc_id in fetch output: sys:a.md" in capsys.readouterr().out
