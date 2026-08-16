@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.6.0] - 2026-08-16
 
 ### Added
+
 - A fetch-side law (`assert_fetch_contract`) run between `normalize` and `diff`:
   `doc_id` must be unique, `native_id` must be non-blank, and an incomplete fetch
   (`FetchResult.complete=False`) may not carry a tombstone. This makes `complete`
@@ -18,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   held only because nothing derived removals from absence at all.
 
 ### Fixed
+
 - A proposal carrying one path in both `files` and `files_removed` passed
   validation. `_check_projection_coherence` bound `files`↔`concepts` and never
   inspected `files_removed`, so a duplicate `doc_id` where one copy was
@@ -27,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   exit 2 rather than escaping `main()` as a traceback.
 
 ### Changed
+
 - **Breaking for connector plugins:** a connector emitting duplicate `doc_id`s,
   a blank `native_id`, or a tombstone on an incomplete fetch now fails the run.
   Both in-tree connectors are unaffected.
