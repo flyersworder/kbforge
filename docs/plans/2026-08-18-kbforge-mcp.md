@@ -846,7 +846,7 @@ git commit -m "feat(mcp): protocol-first response mapping across the three tiers
 - Consumes: `McpSourceConfig`, `StdioTransport`, `HttpTransport` (Task 2).
 - Produces, in `kbforge_mcp.client`:
   - `ToolNotAllowed(RuntimeError)`, `ToolCallFailed(RuntimeError)`
-  - `McpClient` with `async def prepare() -> None` and
+  - `McpClient`, an async context manager, with
     `async def call(name: str, args: dict) -> CallToolResult`
   - `open_session(cfg: McpSourceConfig)` — an async context manager yielding `McpClient`
 
