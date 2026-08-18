@@ -112,6 +112,26 @@ def test_ids_configured_with_list_named_result_still_maps():
     assert [r.native_id for r in refs] == ["a"]
 
 
+def test_a_configured_ids_mapping_outranks_the_scalar_wrap_heuristic():
+    # Pins the PRECEDENCE -- that `ids is not None` is consulted before
+    # `_is_scalar_wrapped`, not merely that the heuristic is tight enough --
+    # which the test above does not. Its `{"result": [rows]}` fixture is
+    # exempted by the heuristic's own value-type check (the SDK's auto-wrap
+    # never holds a list), so it maps under EITHER ordering and cannot tell
+    # them apart. This fixture can: the key set and the value type are both
+    # exactly the auto-wrap's shape, so the heuristic says True, and only the
+    # `ids` check running first keeps tier 2 in play.
+    #
+    # The two orderings then diverge in the MESSAGE, which is what to assert
+    # on. Precedence to `ids`: tier 2 applies and complains the configured
+    # key is not a list. Heuristic first: tier 2 is skipped entirely and the
+    # tier-3 `static_ids` message comes out instead -- steering an operator
+    # who has a perfectly good `ids` mapping towards hand-enumerating ids.
+    result = CallToolResult(content=[], structured_content={"result": "not a row list"})
+    with pytest.raises(MappingError, match="'result' is not a list"):
+        refs_from_select(result, IdsMapping(list="result", id="url"))
+
+
 def test_an_empty_select_result_is_legal_not_an_error():
     # Deliberate: a zero-hit query is a real state, not a failure. Raising
     # here would turn an ordinary no-op run into an aborted one. This is safe
