@@ -878,12 +878,22 @@ DOCS = {
 }
 
 
+# The return annotation must be PRECISE or the SDK emits no structuredContent at
+# all. A bare `-> dict` yields `structured_content=None` silently (the tier-2
+# selector test would then fail closed into tier 3), and `structured_output=True`
+# on a bare `dict` raises InvalidSignature at registration. A parameterized dict
+# or a Pydantic model works; both were verified against the installed SDK.
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
-def search_docs(query: str) -> dict:
+def search_docs(query: str) -> dict[str, list[dict[str, str]]]:
     """Tier-2 selector: ids in structuredContent."""
     return {"results": [{"path": p, "title": p} for p in sorted(DOCS)]}
 
 
+# NOTE: a `-> str` tool ALSO gets structuredContent, wrapped as {"result": ...},
+# alongside the text block. That is why `records_from_read`'s tier-2 branch is
+# gated on `spec.text_key` being configured rather than on structured_content
+# merely being present -- do not "simplify" that gate away, or every tier-3
+# reader would silently take the tier-2 path.
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
 def read_doc(path: str) -> str:
     """Tier-3 reader: bare markdown. Identity came in as `path`."""
@@ -892,6 +902,9 @@ def read_doc(path: str) -> str:
     return DOCS[path]
 
 
+# `-> str` gives this one structuredContent too ({"result": "..."}), but the
+# tier-2 selector branch also requires `ids` to be configured, and the prose-only
+# source configures none -- so it still lands in tier 3 and fails closed.
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
 def outline(query: str) -> str:
     """Tier-3 selector: prose only. Must fail closed."""
@@ -905,8 +918,11 @@ def delete_doc(path: str) -> str:
     return "deleted"
 ```
 
-If `MCPServer` is not the v2 server class name, use the real one — check with
-`uv run python -c "import mcp.server as s; print(dir(s))"`.
+`MCPServer` is verified. The whole seam was proved end to end against the installed
+SDK before this task: `Client(mcp)` connects in-process, `list_tools()` round-trips
+`read_only_hint` as `True/True/True/False` for these four tools, and a tool that
+raises returns `is_error=True` with `"Error executing tool read_doc: no such
+document: ..."` in a text block.
 
 - [ ] **Step 2: Write the failing client tests**
 
