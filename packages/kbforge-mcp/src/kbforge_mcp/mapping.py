@@ -66,6 +66,29 @@ def _ref_for(raw_id: str, title: str | None) -> DocRef:
     )
 
 
+def _is_scalar_wrapped(structured_content: dict) -> bool:
+    """True when `structuredContent` is the MCP SDK's auto-wrap of a
+    non-object return value (`-> str`, `-> int`, ...) rather than genuine
+    tier-2 data a select tool's author actually intended to be selected from.
+
+    The SDK wraps any non-object return under the single key `"result"`, so
+    that key name is the first signal. The key name alone isn't sufficient,
+    though: `"result"` isn't reserved, and a real search tool could legitimately
+    use it as its `ids.list` name (an operator who configures `ids: {list:
+    "result", ...}` has said so explicitly, and that path never reaches this
+    function -- see `refs_from_select`). What actually distinguishes the
+    auto-wrap is the *value's* shape: the SDK wraps a scalar return, so the
+    value under `"result"` is never itself a list there, whereas a genuine
+    row list -- whatever key it lands under -- is a list by construction. A
+    `"result"` key holding a list is therefore treated as real, only a
+    `"result"` key holding something else (a string, in every case this
+    connector exercises) is treated as the auto-wrap costume.
+    """
+    return set(structured_content) == {"result"} and not isinstance(
+        structured_content["result"], list
+    )
+
+
 def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[DocRef]:
     blocks = _resource_blocks(result)
     if blocks:  # tier 1 -- the protocol already carries the identity
@@ -86,19 +109,44 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
             )
         return refs
 
-    # A `-> str` (or other non-object) select tool still gets structuredContent
-    # from the SDK -- auto-wrapped as the single key `{"result": ...}` -- exactly
-    # like the read side's tools do (see `records_from_read`'s tier-2 comment).
-    # That is not select-able structuredContent; it is a prose tool wearing a
-    # structuredContent-shaped costume, so it must fall through to the tier-3
-    # "configure static_ids" branch below rather than being told to add `ids`
-    # to a key that will never hold a row list.
-    scalar_wrapped = result.structured_content is not None and set(
-        result.structured_content
-    ) == {"result"}
+    if result.structured_content is not None:
+        if ids is not None:
+            # An explicitly configured `ids` mapping is the operator telling us
+            # where the rows live; believe it regardless of the key set's shape.
+            # `ids.list` may legitimately be named `"result"` -- that name isn't
+            # reserved to the SDK's auto-wrap, so gating tier 2 on the key set
+            # here would refuse a valid config with a false "not mappable"
+            # message. The auto-wrap heuristic below is for the *unconfigured*
+            # case only, where there is no operator intent to defer to.
+            rows = result.structured_content.get(ids.list)  # tier 2
+            if rows is None:
+                raise MappingError(
+                    f"select response has no {ids.list!r} key; keys are "
+                    f"{sorted(result.structured_content)}"
+                )
+            if not isinstance(rows, list):
+                raise MappingError(f"select response key {ids.list!r} is not a list")
+            refs = []
+            # An empty `rows` list is legal and returns `[]`, not an error: a
+            # zero-hit query result is a real state, and raising here would turn
+            # an ordinary no-op run into an aborted one. This is safe only
+            # because a query selector always yields `complete=False`, and
+            # `assert_fetch_contract` refuses a tombstone (an implied
+            # corpus-wide deletion) under `complete=False`; the other half of
+            # the hazard -- a static selector configured with zero ids -- is
+            # already closed by `problems_for` rejecting an empty `static_ids`.
+            for row in rows:
+                raw = row.get(ids.id) if isinstance(row, dict) else None
+                if raw is None:
+                    raise MappingError(
+                        f"select result row has no {ids.id!r} key: {row!r}"
+                    )
+                refs.append(
+                    _ref_for(str(raw), row.get(ids.title) if ids.title else None)
+                )
+            return refs
 
-    if result.structured_content is not None and not scalar_wrapped:
-        if ids is None:
+        if not _is_scalar_wrapped(result.structured_content):
             # structuredContent IS present here -- the fix is a configured
             # `ids` mapping, not `static_ids`. Conflating the two messages
             # steers an operator with a real search tool towards the wrong
@@ -108,29 +156,9 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
                 f"{sorted(result.structured_content)} but no 'ids' mapping is "
                 "configured -- add 'ids' to the select spec"
             )
-        rows = result.structured_content.get(ids.list)  # tier 2
-        if rows is None:
-            raise MappingError(
-                f"select response has no {ids.list!r} key; keys are "
-                f"{sorted(result.structured_content)}"
-            )
-        if not isinstance(rows, list):
-            raise MappingError(f"select response key {ids.list!r} is not a list")
-        refs = []
-        # An empty `rows` list is legal and returns `[]`, not an error: a
-        # zero-hit query result is a real state, and raising here would turn
-        # an ordinary no-op run into an aborted one. This is safe only
-        # because a query selector always yields `complete=False`, and
-        # `assert_fetch_contract` refuses a tombstone (an implied
-        # corpus-wide deletion) under `complete=False`; the other half of
-        # the hazard -- a static selector configured with zero ids -- is
-        # already closed by `problems_for` rejecting an empty `static_ids`.
-        for row in rows:
-            raw = row.get(ids.id) if isinstance(row, dict) else None
-            if raw is None:
-                raise MappingError(f"select result row has no {ids.id!r} key: {row!r}")
-            refs.append(_ref_for(str(raw), row.get(ids.title) if ids.title else None))
-        return refs
+        # scalar-wrapped structuredContent with no `ids` configured is exactly
+        # a prose tool wearing a structuredContent-shaped costume -- fall
+        # through to the tier-3 message below, which names the right remedy.
 
     # tier 3 -- fails closed. No "first text block", no regex over an outline.
     raise MappingError(

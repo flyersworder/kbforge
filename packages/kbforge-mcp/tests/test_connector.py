@@ -53,7 +53,11 @@ def test_normalize_is_stable_and_clock_free(cfg, monkeypatch):
     class FrozenElsewhere:
         # normalize must not call now(); it MUST still call fromisoformat, so the
         # shim delegates that one. A shim without it fails on AttributeError and
-        # would pass for the wrong reason.
+        # would pass for the wrong reason. `tz` is accepted, never used, only so
+        # this matches `_fetch`'s real call shape (`datetime.now(tz=UTC)`) --
+        # without it, a regression that copies fetch's clock call into normalize
+        # would raise TypeError on the keyword argument instead of the intended
+        # AssertionError, which would still fail the test but for the wrong reason.
         @staticmethod
         def now(tz=None):
             raise AssertionError("normalize called the clock (architecture 4.3)")

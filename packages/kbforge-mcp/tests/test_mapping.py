@@ -82,6 +82,36 @@ def test_structured_content_without_ids_names_ids_not_static_ids_as_the_remedy()
         refs_from_select(result, None)
 
 
+def test_scalar_wrapped_structured_content_with_no_ids_names_static_ids():
+    # A `-> str` (or other non-object-returning) select tool still gets
+    # structuredContent from the MCP SDK, auto-wrapped as the single key
+    # `{"result": <the return value>}`. With no `ids` configured that is a
+    # prose tool wearing a structuredContent-shaped costume, not real tier-2
+    # data -- it must fail closed with the tier-3 message (`static_ids`), not
+    # the "add ids" message the previous test pins for genuine structuredContent.
+    result = CallToolResult(
+        content=[], structured_content={"result": "- 1 Overview\n- 2 Architecture"}
+    )
+    with pytest.raises(MappingError, match="static_ids"):
+        refs_from_select(result, None)
+
+
+def test_ids_configured_with_list_named_result_still_maps():
+    # `"result"` isn't a reserved key -- a real search tool may legitimately
+    # use it as its row-list key. An explicitly configured `ids` mapping is
+    # the operator telling us where the rows are, and must be honoured
+    # regardless of the key set's shape, even though `{"result": ...}` is
+    # also what the SDK's scalar auto-wrap looks like. What distinguishes
+    # them here is the value's type: this "result" holds a list, the
+    # auto-wrap never does (see `test_scalar_wrapped_...` above).
+    result = CallToolResult(
+        content=[],
+        structured_content={"result": [{"url": "https://docs.example.com/a"}]},
+    )
+    refs = refs_from_select(result, IdsMapping(list="result", id="url"))
+    assert [r.native_id for r in refs] == ["a"]
+
+
 def test_an_empty_select_result_is_legal_not_an_error():
     # Deliberate: a zero-hit query is a real state, not a failure. Raising
     # here would turn an ordinary no-op run into an aborted one. This is safe
