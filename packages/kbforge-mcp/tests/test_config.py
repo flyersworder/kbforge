@@ -1,0 +1,80 @@
+from __future__ import annotations
+
+from kbforge_mcp.config import McpSourceConfig, problems_for
+
+STDIO = {
+    "system": "aws_docs",
+    "transport": {
+        "kind": "stdio",
+        "command": "uvx",
+        "args": ["awslabs.aws-documentation-mcp-server@latest"],
+    },
+    "select": {
+        "tool": "search_documentation",
+        "args": {"search_phrase": "S3 bucket naming", "limit": 20},
+        "ids": {"list": "results", "id": "url", "title": "title"},
+    },
+    "read": {"tool": "read_documentation", "id_arg": "url"},
+}
+
+
+def test_a_valid_stdio_source_has_no_problems():
+    assert problems_for(STDIO) == []
+
+
+def test_a_valid_http_source_has_no_problems():
+    cfg = dict(STDIO)
+    cfg["transport"] = {
+        "kind": "http",
+        "url": "https://api.githubcopilot.com/mcp/x/repos/readonly",
+        "auth_env": "GITHUB_TOKEN",
+    }
+    assert problems_for(cfg) == []
+
+
+def test_the_callable_set_is_exactly_the_two_configured_tools():
+    cfg = McpSourceConfig.model_validate(STDIO)
+    assert cfg.tool_names == frozenset({"search_documentation", "read_documentation"})
+
+
+def test_an_unknown_transport_kind_is_rejected_offline():
+    cfg = dict(STDIO)
+    cfg["transport"] = {"kind": "carrier-pigeon", "url": "https://x"}
+    assert any("transport" in p for p in problems_for(cfg))
+
+
+def test_a_transport_without_a_kind_is_rejected_rather_than_sniffed():
+    # v0.2 carried both transports in one `server:` string with no discriminator.
+    # There is no sniffing: absent `kind` is a config error.
+    cfg = dict(STDIO)
+    cfg["transport"] = {"url": "https://example.com/mcp"}
+    assert any("kind" in p for p in problems_for(cfg))
+
+
+def test_a_static_selector_needs_no_select_tool_but_needs_ids():
+    cfg = {k: v for k, v in STDIO.items() if k != "select"}
+    cfg["static_ids"] = ["docs/a.md", "docs/b.md"]
+    assert problems_for(cfg) == []
+    cfg_bad = {k: v for k, v in STDIO.items() if k != "select"}
+    assert any("static_ids" in p for p in problems_for(cfg_bad))
+
+
+def test_select_and_static_ids_are_mutually_exclusive():
+    cfg = dict(STDIO)
+    cfg["static_ids"] = ["docs/a.md"]
+    assert any("mutually exclusive" in p for p in problems_for(cfg))
+
+
+def test_auth_env_names_a_variable_and_never_carries_a_value():
+    cfg = dict(STDIO)
+    cfg["transport"] = {
+        "kind": "http",
+        "url": "https://example.com/mcp",
+        "auth_env": "ghp_realtokenvalue",
+    }
+    assert any("looks like a value" in p for p in problems_for(cfg))
+
+
+def test_problems_are_returned_not_raised():
+    assert isinstance(problems_for({}), list)
+    assert problems_for({}) != []
