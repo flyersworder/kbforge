@@ -39,6 +39,11 @@ Every task's requirements implicitly include this section.
   stamped in `fetch` into `RawRecord.anchor_hint` (spec §10.3).
 - **Python ≥3.12**, `from __future__ import annotations` at the top of every module,
   ruff lint set `E,F,I,UP`, line length 88 (ruff default).
+- **Import ordering is whatever `ruff check --select I --fix` produces.** Both
+  `kbforge` and `kbforge_mcp` are first-party (root `[tool.ruff] src` lists both
+  package roots), so they group together *after* third-party `mcp`/`pytest`. The
+  import blocks in this plan's code samples are illustrative on this point only —
+  run ruff and take its ordering rather than preserving the sample's.
 - **Run `uv run pytest` before every commit**, not after every edit.
 - Tests must be pristine: no warnings, no stray output.
 

@@ -74,7 +74,9 @@ exclude = [
 testpaths = ["tests", "packages/kbforge-mcp/tests"]
 
 [tool.ruff]
-src = ["src"]
+# Both workspace packages are first-party, so their imports group together and
+# `kbforge_mcp` is not sorted in with third-party dependencies.
+src = ["src", "packages/kbforge-mcp/src"]
 target-version = "py312"
 
 [tool.ruff.lint]
