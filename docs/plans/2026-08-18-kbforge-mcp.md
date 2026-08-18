@@ -533,23 +533,22 @@ git commit -m "feat(mcp): config models with an explicit transport discriminator
 passed (`https://docs.aws.amazon.com/...html`); `native_id` is the slug identity
 is built from. Passing the slug back to the reader is the obvious bug here.
 
-- [ ] **Step 1: Confirm the SDK's content-block class names before writing code**
+- [ ] **Step 1: The SDK symbols, already verified**
 
-The mapping is the one module whose correctness depends on `mcp.types` symbols
-this plan could not verify without the package installed. Establish them first:
+These were checked against the installed `mcp` package; use them as given.
 
-```bash
-uv run python -c "
-import mcp.types as t
-print([n for n in dir(t) if 'Content' in n or 'Resource' in n])
-print(t.CallToolResult.model_fields.keys())
-"
-```
+| Symbol | Fields you need |
+|---|---|
+| `CallToolResult` | `content`, `structured_content`, `is_error` |
+| `TextContent` | `type` (`"text"`), `text` |
+| `EmbeddedResource` | `type` (`"resource"`), `resource` |
+| `ResourceLink` | `type`, `uri`, `name`, `title`, `mime_type` |
+| `TextResourceContents` | `uri`, `text`, `mime_type` |
+| `BlobResourceContents` | `uri`, `blob`, `mime_type` |
 
-Expected: a `CallToolResult` with `content`, `structured_content`, `is_error`, and
-content-block classes including a text block and an embedded-resource block.
-**If the names differ from those used below, use the real ones** and note the
-difference in your report — do not force the plan's spelling.
+**The SDK uses snake_case `mime_type`, not `mimeType`.** Reading `mimeType` returns
+`None` silently and every document falls back to the configured default — a bug no
+test in this task would catch, because the fixture server returns plain text.
 
 - [ ] **Step 2: Write the failing mapping tests**
 
@@ -727,7 +726,10 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
             uri = getattr(b, "uri", None) or getattr(getattr(b, "resource", None), "uri", None)
             if uri is None:
                 raise MappingError("resource block carries no uri")
-            refs.append(_ref_for(str(uri), getattr(b, "name", None)))
+            # ResourceLink carries both; `title` is the human-facing one.
+            refs.append(
+                _ref_for(str(uri), getattr(b, "title", None) or getattr(b, "name", None))
+            )
         return refs
 
     if result.structured_content is not None and ids is not None:  # tier 2
@@ -783,7 +785,7 @@ def records_from_read(
             sub = ref.native_id if uri == ref.raw_id else _ref_for(uri, None).native_id
             records.append(
                 record(payload, sub, uri if "://" in uri else ref.url,
-                       getattr(res, "mimeType", None) or media_type)
+                       getattr(res, "mime_type", None) or media_type)
             )
         if records:
             return records
@@ -981,6 +983,12 @@ import os
 from contextlib import asynccontextmanager
 
 from mcp import Client
+from mcp.client.stdio import StdioServerParameters, stdio_client
+from mcp.client.streamable_http import (
+    StreamableHTTPTransport,
+    create_mcp_http_client,
+    streamable_http_client,
+)
 from mcp.types import CallToolResult
 
 from kbforge_mcp.config import HttpTransport, McpSourceConfig
@@ -1001,16 +1009,17 @@ class ToolCallFailed(RuntimeError):
 
 
 class McpClient:
-    def __init__(self, *, server=None, url=None, headers=None, allowed=frozenset()):
-        self._target = server if server is not None else url
-        self._headers = headers or {}
+    def __init__(self, *, server, allowed=frozenset()):
+        # `server` is anything mcp.Client accepts: an in-process server object or
+        # a Transport. There is no `url` parameter, because a URL with auth has to
+        # become a Transport first (see `_http_transport`).
+        self._target = server
         self._allowed = allowed
         self._client: Client | None = None
         self._read_only: dict[str, bool | None] = {}
 
     async def __aenter__(self) -> McpClient:
-        kwargs = {"headers": self._headers} if self._headers else {}
-        self._client = await Client(self._target, **kwargs).__aenter__()
+        self._client = await Client(self._target).__aenter__()
         listed = await self._client.list_tools()
         self._read_only = {
             t.name: getattr(getattr(t, "annotations", None), "read_only_hint", None)
@@ -1045,6 +1054,16 @@ class McpClient:
 
 
 @asynccontextmanager
+async def _http_transport(url: str, headers: dict[str, str]):
+    """`Client` has no `headers` parameter, so a bearer token rides on the httpx
+    client the streamable-HTTP transport is built from. `Transport` is a Protocol
+    -- an async context manager yielding TransportStreams -- so this qualifies."""
+    async with create_mcp_http_client(headers=headers) as http:
+        async with streamable_http_client(url, http_client=http) as streams:
+            yield streams
+
+
+@asynccontextmanager
 async def open_session(cfg: McpSourceConfig):
     """One session per fetch: select and every read share it."""
     if _server_override is not None:
@@ -1060,25 +1079,31 @@ async def open_session(cfg: McpSourceConfig):
                     f"environment variable {cfg.transport.auth_env} is not set"
                 )
             headers["Authorization"] = f"Bearer {token}"
-        client = McpClient(
-            url=cfg.transport.url, headers=headers, allowed=cfg.tool_names
+        transport = (
+            _http_transport(cfg.transport.url, headers)
+            if headers
+            else StreamableHTTPTransport(cfg.transport.url)
         )
+        client = McpClient(server=transport, allowed=cfg.tool_names)
     else:
-        from mcp.client.stdio import StdioServerParameters, stdio_transport
-
         params = StdioServerParameters(
             command=cfg.transport.command,
             args=cfg.transport.args,
             env={k: os.environ[k] for k in cfg.transport.env if k in os.environ},
         )
-        client = McpClient(server=stdio_transport(params), allowed=cfg.tool_names)
+        # stdio_client is an @asynccontextmanager yielding (read, write) streams,
+        # which satisfies the Transport protocol.
+        client = McpClient(server=stdio_client(params), allowed=cfg.tool_names)
     async with client as c:
         yield c
 ```
 
-The stdio transport constructor is the second SDK detail this plan could not
-verify. Check it with `uv run python -c "import mcp.client.stdio as s; print(dir(s))"`
-and use the real names; report any difference.
+All SDK names above were verified against the installed package:
+`stdio_client(StdioServerParameters(...))` (an async context manager, **not**
+`stdio_transport`), `streamable_http_client(url, http_client=...)`,
+`create_mcp_http_client(headers=...)`, and `StreamableHTTPTransport(url)` for the
+no-auth case. `mcp.Client.__init__` accepts `Server | MCPServer | Transport | str`
+and **no `headers` keyword** — passing one raises `TypeError`.
 
 - [ ] **Step 5: Run to verify the tests pass**
 
@@ -1479,7 +1504,8 @@ def test_a_real_stdio_subprocess_round_trips(tmp_path):
     assert [d.doc_id for d in docs] == ["fixture:docs/retention"]
 ```
 
-If `mcp.run()` is not the v2 entry point for serving over stdio, use the real one.
+`MCPServer.run()` is verified to exist (alongside `run_stdio_async()`), as is the
+`@mcp.tool(annotations=ToolAnnotations(...))` decorator the fixture uses.
 
 - [ ] **Step 2: Run and iterate**
 
