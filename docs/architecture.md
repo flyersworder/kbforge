@@ -10,7 +10,7 @@ okf_version: "0.2"
 
 # kbforge — Library Architecture & Connector Protocol
 
-**Status:** describes kbforge 0.5.0; sections marked **not built** are specification, not shipped code · **Companion to:** [`context/knowledge-base-design.md`](context/knowledge-base-design.md)
+**Status:** describes kbforge 0.7.0; sections marked **not built** are specification, not shipped code · **Companion to:** [`context/knowledge-base-design.md`](context/knowledge-base-design.md)
 **Name:** `kbforge` — *agent-first knowledge bases, forged from your systems of record.*
 **Repo:** `flyersworder/kbforge` · connectors: `kbforge-<system>` · entry points: `kbforge.connectors`
 
@@ -53,6 +53,9 @@ kbforge (core, PyPI)
 │   ├── connectors/        # local_files, git_commits (credential-free references)
 │   ├── publishers/        # dry-run, github, gitlab
 │   └── __main__.py        # the CLI
+│
+kbforge-mcp          (packages/kbforge-mcp/ — any MCP server as a source, §4.1;
+                      developed in this repo, released as its own distribution)
 │
 kbforge-<system>     (separate package per system of record, own release cycle;
                       none published yet — examples/github-issues-connector/ is
@@ -251,12 +254,79 @@ benefit. Note the symmetry — kbforge already assumes MCP on the way *out*
 (serving, §4.4); MCP on the way *in* is just one more transport under `fetch`.
 kbforge can sit between MCP-in and MCP-out without *requiring* either.
 
-*Future convenience (not core):* an optional **MCP-source connector base** — a
-separate package or clearly-optional helper, never the core — so that when a SoR
-already exposes an MCP server, a connector is near-config-only: map which MCP
-resources / read-tools become `RawRecord`s, then `normalize`. One hard constraint:
-such a connector may call only **read/resource** operations — MCP tools can have
-side effects, and the seven-tuple's **R = read-only** (§8) must hold.
+**The MCP source connector, `kbforge-mcp` (shipped, not core).** When a SoR
+already exposes an MCP server, a source is configuration rather than a package:
+`packages/kbforge-mcp/` registers under `kbforge.connectors` like any third-party
+connector and needs no core change. It stays out of core for a mechanical reason
+rather than taste — `kbforge[llm]` gates the synthesizer behind a lazy import in a
+CLI branch, so a missing extra costs nothing, whereas connectors are registered
+*eagerly* and `kbforge list` calls `kbforge_connector_info()` on every one. A
+module-level `import mcp` in a core connector would break `kbforge list` for
+everyone who did not install the extra.
+
+*Fetch is two jobs, and only one of them must be deterministic.* This is the
+general form of retriever-not-extractor, and it is what lets a RAG-backed or
+agentic server be a source at all:
+
+| | Job | May be non-deterministic? | Needs stable identity? |
+|---|---|---|---|
+| **Selector** | *which* documents are worth reading | **yes** | no |
+| **Reader** | fetch those documents verbatim | **no** | **yes** |
+
+A RAG search makes a fine selector even though its chunks are unusable as content:
+they are consumed as a *pointer* and discarded, and the reader then fetches each
+selected document whole, by id. Re-tune the chunker all you like — no identity
+moves. The read-by-id requirement that falls out of this looks like a kbforge
+quirk and is not one: §4.4 law 3 promises a reviewer can follow a concept's
+`sources` entry back to the artifact it came from, and a source you can only
+*search*, never *address*, cannot back that promise. A server lacking read-by-id
+is not an awkward case to work around; it is a source that cannot yet be cited.
+
+*Read-only is a structural tool set, not a config allowlist.* The constraint this
+paragraph used to state — a connector may call only **read/resource** operations,
+so the seven-tuple's **R = read-only** (§8) holds — cannot be enforced as written:
+MCP exposes a tool's name and schema, never whether it has side effects, so
+`delete_all` and `search` are indistinguishable to a client. The enforceable
+substitute is stronger and costs no config at all: **the callable set is exactly
+the two configured tool names**, the selector's and the reader's. There is no tool
+discovery loop and no allowlist key, so there is nothing to widen, misconfigure,
+or forget. A tool's `read_only_hint` annotation is defence in depth layered on
+top — refused when explicitly `false`, permitted when unset, because the SDK's
+sentinel for "never declared" and the spec's default of `false` are different
+states and conflating them would reject nearly every real server. Both layers
+constrain *which* tools are reachable, never whether a reachable one is
+side-effect-free: naming a mutating tool as the reader is a deployment error
+kbforge cannot detect, which is why config should prefer a server-side read-only
+endpoint wherever the server publishes one.
+
+*Mapping is protocol-first, and it does not reach every server.* MCP's own
+content-block types are the mapping vocabulary — resource blocks first, then
+`structuredContent`, then bare text — so the ordinary case needs no configuration
+and no mini-language, and a selector response that is bare prose fails closed
+rather than being guessed at. **The limit, observed against a live server rather
+than hypothesized: a server can be perfectly machine-readable and still be
+unmappable as a selector.** GitHub's `search_code` returns machine-readable JSON
+*inside a text block* and declares no `structuredContent`, so this mapping sees
+bare text and refuses it; kbforge's own live test therefore drives GitHub from a
+configured id list (`static_ids`) rather than from its search tool. "A new
+MCP-backed source is configuration" holds unconditionally for the reader — where
+identity is an *input*, so concatenating text blocks is complete rather than a
+heuristic — and holds for the selector only when the server publishes its ids as
+resource links or as `structuredContent`. Anything else needs a configured id
+list, which means enumerating the corpus by hand. An opt-in flag that parsed a
+text block as JSON before applying the id mapping would close the gap; 0.7.0 did
+not take it. That option, and everything else this connector defers — deletion,
+the manifest, and the cursor collision that blocks it — is in
+[`design/2026-08-16-mcp-source-connector-design.md`](design/2026-08-16-mcp-source-connector-design.md).
+
+*Retriever-not-extractor has an emit-side consequence.* Because the connector
+never edits a source's bytes, the source's own framing arrives intact and reaches
+the rendered concept. Two instances are known and neither is a connector defect:
+AWS's documentation server prefixes every document with `AWS Documentation from
+<url>:`, and a whole markdown document carries its own `#` heading, which
+synthesis then renders *below* its own `# {title}` — a doubled heading. Any fix
+belongs in synthesis, which is the stage allowed to interpret; a connector that
+tidied either would be extracting.
 
 *Agentic fetch is a transport, not a stage.* An agentic `fetch` — one that *decides
 which* sources are worth reading and may follow leads, including via an agentic MCP
@@ -277,7 +347,9 @@ design (agentic retriever, refresh vs. discover, bootstrap):
   scheduled pipeline and lets core's `diff` (§7) detect change against the mirror,
   so it **cannot** bootstrap — over an empty mirror there is nothing to diff. Connectors
   stay bundle-blind either way; a feed-less refresh connector expresses its cursor as a
-  `(doc_id, content_hash)` manifest so re-polls still reduce to only real change. See
+  `(native_id, content_hash)` manifest — keyed on `native_id` because that is the
+  identity a connector *has* at fetch time, whereas `doc_id` only exists once
+  `normalize` has run — so re-polls still reduce to only real change. See
   [`design/2026-07-19-agentic-ingest-design.md`](design/2026-07-19-agentic-ingest-design.md).
 - The connector returns a new `Cursor`; the core persists it **only after** the
   whole pipeline run succeeds (so failed runs re-fetch — at-least-once semantics;
@@ -315,6 +387,16 @@ no-op detection fails and MR economics collapse").
 The core **enforces** law 1 mechanically: the test kit (§9) and an optional
 runtime check normalize twice and compare hashes; a connector that fails is
 rejected at registration in strict mode.
+
+**The one thing that check cannot see.** Law 2 puts `retrieved_at` on the anchor
+and the anchor outside the diff hash — so a `normalize` that called the clock
+itself would produce a *different* document on the second pass and an *identical*
+hash, and `assert_stability` would pass. The blind spot is structural, not a gap
+to close: the hash excludes the anchor for good reasons. A connector with no
+source-side mtime (an MCP source has none) is where the temptation to reach for
+the clock in `normalize` is highest, and the only guard is a test that takes the
+clock away between two `normalize` passes and requires the anchors to agree.
+`kbforge-mcp` ships one.
 
 **Why this cannot be deferred downstream.** Systems that index documents for
 retrieval do deduplicate, but at the storage layer and on **byte identity** — hash

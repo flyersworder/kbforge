@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-08-18
+
+### Added
+
+- `kbforge-mcp`, a separate distribution that turns any MCP server with a select
+  tool and a read-by-id tool into a kbforge source through configuration.
+  Response mapping is protocol-first: MCP's own content-block types are the
+  vocabulary, so the common case needs no config at all.
+- Read-only is structural — the callable tool set *is* the two configured tool
+  names — with a `read_only_hint` refusal as defence in depth.
+
+### Changed
+
+- `pyproject.toml` declares a uv workspace; `testpaths` now covers
+  `packages/kbforge-mcp/tests`.
+
+### Fixed
+
+- `--run-live` plumbing moved from `tests/conftest.py` to a repo-root `conftest.py`.
+  As a sibling rather than an ancestor of `packages/*/tests`, the old location was
+  never loaded when such a path was targeted directly, so live tests ran against the
+  network with no opt-in — breaking the invariant that `uv run pytest` never touches
+  it.
+
+### Known limits
+
+- A server can be perfectly machine-readable and still be unmappable as a
+  **selector**. Protocol-first mapping takes ids from resource links or from
+  `structuredContent`; GitHub's `search_code` returns machine-readable JSON inside a
+  *text* block and declares no `structuredContent`, so it is refused, and kbforge's
+  own live test against GitHub uses a configured `static_ids` list instead. "A new
+  MCP-backed source is configuration" is unqualified for the reader and conditional
+  for the selector. The opt-in flag that would close this is not built (design note
+  §10.3).
+- An MCP source's own framing survives into the rendered concept, because the
+  connector is a retriever and does not edit a source's bytes: AWS's documentation
+  server prefixes every document with `AWS Documentation from <url>:`, and a whole
+  markdown document's own `#` heading renders below synthesis's `# {title}`. Both
+  are emit-side; a fix belongs in synthesis, not in the connector.
+- No deletion support. Like `local_files`, the connector re-selects every run and
+  emits no tombstones, so a document removed at the source leaves a stale concept
+  until the 0.8.0 manifest lands.
+
 ## [0.6.0] - 2026-08-16
 
 ### Added

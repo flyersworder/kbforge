@@ -82,7 +82,7 @@ class McpSourceConfig(_Strict):
     @property
     def tool_names(self) -> frozenset[str]:
         """The entire callable set. There is no third entry and no config key
-        that could add one (design note §2.4)."""
+        that could add one (architecture §4.1)."""
         names = {self.read.tool}
         if self.select is not None:
             names.add(self.select.tool)
