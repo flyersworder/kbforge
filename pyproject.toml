@@ -47,6 +47,7 @@ Changelog = "https://github.com/flyersworder/kbforge/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
+    "kbforge-mcp",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.10",
@@ -70,7 +71,7 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "packages/kbforge-mcp/tests"]
 
 [tool.ruff]
 src = ["src"]
@@ -81,3 +82,10 @@ select = ["E", "F", "I", "UP"]
 
 [tool.ty.environment]
 python-version = "3.12"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+kbforge = { workspace = true }
+kbforge-mcp = { workspace = true }
