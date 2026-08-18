@@ -56,7 +56,17 @@ def test_aws_docs_select_then_read_yields_citable_documents():
         # The slug is path-safe; the full URL survives as provenance.
         assert "://" not in d.anchor.native_id
         assert d.anchor.url and d.anchor.url.startswith("https://")
-        assert d.text.strip()
+        # `d.text.strip()` alone would also be satisfied by a body truncated
+        # to just the preamble line -- `assert_fetch_contract` deliberately
+        # does not check verbatim content (core has no independent access to
+        # the source), so this pair is the only thing standing between a
+        # tier-3 truncation regression and a green test. Assert the known
+        # preamble is present (pinning it as observed behaviour) AND that
+        # real content -- a markdown heading -- follows it; a body cut down
+        # to the preamble line satisfies the first and fails the second.
+        lines = d.text.splitlines()
+        assert lines[0].startswith("AWS Documentation from ")
+        assert any(line.startswith("# ") for line in lines[1:])
 
 
 def test_aws_docs_two_runs_agree_on_content_hashes():
