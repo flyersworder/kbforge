@@ -60,7 +60,9 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev --frozen
-      - run: uv run pytest --cov=kbforge --cov-report=term-missing
+      # Both workspace packages: `--cov=kbforge` alone left kbforge_mcp's
+      # ~840 lines measured by nothing.
+      - run: uv run pytest --cov=kbforge --cov=kbforge_mcp --cov-report=term-missing
 
   security:
     runs-on: ubuntu-latest
@@ -90,3 +92,12 @@ jobs:
       # published as the PyPI requirement, not a workspace path.
       - run: uv build --all-packages --no-sources
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
+        with:
+          # `--all-packages` puts BOTH distributions in dist/, but
+          # kbforge-mcp versions independently of kbforge: the next kbforge
+          # release that does not also bump packages/kbforge-mcp/pyproject.toml
+          # would re-upload an already-published kbforge_mcp sdist/wheel, PyPI
+          # would 400, and the job could fail AFTER kbforge's own files
+          # uploaded -- a half-published release. Skipping an existing file is
+          # the only safe default once one job publishes two distributions.
+          skip-existing: true
