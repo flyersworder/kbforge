@@ -50,6 +50,18 @@ def outline(query: str) -> str:
     return "- 1 Onboarding\n- 2 Retention"
 
 
+# No `annotations=` at all -- what most real servers, including both live test
+# targets, actually send: `read_only_hint` is simply absent, not `False`. This is
+# the case the "unset hint is permitted" client test needs to exercise for real,
+# rather than by poking `McpClient._read_only` by hand.
+@mcp.tool()
+def peek_doc(path: str) -> str:
+    """Tier-3 reader with no annotations declared at all."""
+    if path not in DOCS:
+        raise ValueError(f"no such document: {path}")
+    return DOCS[path]
+
+
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=False))
 def delete_doc(path: str) -> str:
     """Declares itself mutating. Must never be called."""
