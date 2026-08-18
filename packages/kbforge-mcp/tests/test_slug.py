@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import pytest
+
 from kbforge_mcp.slug import SlugError, native_id_for
 
 
