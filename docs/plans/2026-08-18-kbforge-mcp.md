@@ -1658,6 +1658,17 @@ def test_aws_docs_two_runs_agree_on_content_hashes():
     ]
 
 
+# Verified against the live server before this task was written:
+#   * both `search_code` and `get_file_contents` report `read_only_hint = True`.
+#   * `get_file_contents` returns TWO blocks: a text preamble
+#     ("successfully downloaded text file (SHA: ...)") AND an EmbeddedResource
+#     whose `.text` is the file. Tier 1 therefore fires on the resource block and
+#     the preamble is correctly ignored -- assert the preamble is NOT in the body.
+#   * that resource's uri is `repo://owner/repo/sha/<commit-sha>/contents/<path>`.
+#     Assert no commit sha reaches `native_id`: this is the live regression guard
+#     for the one-to-one identity rule.
+#   * `GITHUB_TOKEN` may be supplied from the `gh` CLI (`gh auth token`), which is
+#     this repo's existing convention for live forge tests.
 @pytest.mark.skipif(not os.environ.get("GITHUB_TOKEN"), reason="GITHUB_TOKEN not set")
 def test_github_readonly_endpoint_yields_verbatim_files():
     cfg = {
@@ -1667,11 +1678,12 @@ def test_github_readonly_endpoint_yields_verbatim_files():
             "url": "https://api.githubcopilot.com/mcp/x/repos/readonly",
             "auth_env": "GITHUB_TOKEN",
         },
-        "select": {
-            "tool": "search_code",
-            "args": {"query": "repo:modelcontextprotocol/servers filename:SECURITY.md"},
-            "ids": {"list": "items", "id": "path"},
-        },
+        # VERIFIED against the live server: `search_code` returns its JSON inside
+        # a TEXT block and declares NO structuredContent, so it is a tier-3
+        # selector and unmappable by design -- see the note below. GitHub is here
+        # for its tier-1 READER, which is the thing no other target exercises, so
+        # the selector is the configured id list.
+        "static_ids": ["SECURITY.md"],
         "read": {
             "tool": "get_file_contents",
             "id_arg": "path",
@@ -1683,6 +1695,12 @@ def test_github_readonly_endpoint_yields_verbatim_files():
     assert docs
     assert_fetch_contract(docs, complete=result.complete)
     assert "Security Policy" in docs[0].text
+    # The tier-1 resource block carries the file, so the preamble text block is
+    # not the body.
+    assert "successfully downloaded" not in docs[0].text
+    # The server's own uri embeds a commit sha; identity must not.
+    assert "76d64c82" not in docs[0].anchor.native_id
+    assert docs[0].anchor.native_id == "SECURITY"
 ```
 
 - [ ] **Step 2: Run them**
