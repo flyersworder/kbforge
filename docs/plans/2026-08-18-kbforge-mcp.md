@@ -1767,6 +1767,9 @@ everything passes.
 | Change `complete = False` to `pass` in the read loop | `connector.py` | `test_a_failed_read_degrades_complete_rather_than_dropping_silently` | `assert result.complete is False` |
 | Return `raw` instead of the slug from `native_id_for` | `slug.py` | `test_url_reduces_to_its_path_without_scheme_host_or_extension` | full URL in `native_id` |
 | Make tier-3 select return `[]` instead of raising | `mapping.py` | `test_tier3_select_fails_closed_with_a_message_naming_the_remedy` | no `MappingError` raised |
+| Slug the response uri on a one-to-one read | `mapping.py` | `test_tier1_one_to_one_read_keeps_the_requested_identity` | a commit sha in `native_id` |
+| Forward the whole parent env to the child | `client.py` | `test_transport_env_is_an_allowlist_not_inheritance` | an unlisted var reaches the child |
+| Let `_is_scalar_wrapped` gate tier 2 again | `mapping.py` | `test_ids_configured_with_list_named_result_still_maps` | a valid config refused |
 
 Record the actual output of each in your report. A row you cannot make fail is a
 finding: the gate is not doing what its test claims.
@@ -1799,7 +1802,38 @@ header** — every prior entry has one.
 
 - `pyproject.toml` declares a uv workspace; `testpaths` now covers
   `packages/kbforge-mcp/tests`.
+
+### Fixed
+
+- `--run-live` plumbing moved from `tests/conftest.py` to a repo-root `conftest.py`.
+  As a sibling rather than an ancestor of `packages/*/tests`, the old location was
+  never loaded when such a path was targeted directly, so live tests ran against the
+  network with no opt-in — breaking the invariant that `uv run pytest` never touches
+  it.
 ```
+
+- [ ] **Step 3b: Record what live testing changed about the design**
+
+Execution turned up three things the design note asserts or implies but that real
+servers contradict. Each needs the note updated, not just a changelog line.
+
+1. **The config-only promise has a real gap.** GitHub's `search_code` returns
+   machine-readable JSON inside a `TextContent` block and declares **no**
+   `structuredContent`, so the protocol-first tiers classify it as tier 3 and fail
+   closed. A server can be perfectly machine-readable and still be unmappable as a
+   selector. Update §5.1's tier table and §1's claim to say so plainly. Record the
+   deliberately-untaken option — an opt-in `json_text: true` on the select spec that
+   parses a text block as JSON before applying `ids` — as future work, and say why it
+   was not taken in 0.7.0 (unreviewed scope creep late in the build).
+2. **§8.1's target table is wrong about GitHub.** It is in the set for its **tier-1
+   reader**, which nothing else exercises; its selector is unusable per (1), so the live
+   test drives it with `static_ids`. Correct the table.
+3. **Sources arrive with their own framing.** AWS prefixes every document with
+   `AWS Documentation from <url>:`, and whole markdown documents carry their own `#`
+   heading, which synthesis then renders *below* its own `# {title}` — a doubled
+   heading. Neither is a connector bug: retriever-not-extractor means the connector
+   does not edit a source's bytes. Record both as known emit-side issues whose fix, if
+   wanted, belongs in synthesis.
 
 - [ ] **Step 4: Apply the `architecture.md` amendments from design note §12**
 
