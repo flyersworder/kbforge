@@ -1268,6 +1268,16 @@ def test_a_prose_only_selector_fails_closed(cfg):
         CONNECTOR.kbforge_fetch(cfg, None)
 
 
+def test_a_query_selector_never_reports_complete(cfg):
+    # This is what makes an empty select result safe: `refs_from_select` may
+    # legally return [], and zero documents with complete=True would manufacture
+    # a corpus-wide deletion once the 0.8.0 manifest lands. A query selector saw
+    # only what the server chose to return, so it can never claim completeness --
+    # and `assert_fetch_contract` refuses a tombstone under complete=False.
+    result = CONNECTOR.kbforge_fetch(cfg, None)
+    assert result.complete is False
+
+
 def test_static_ids_need_no_select_call(cfg):
     cfg.pop("select")
     cfg["static_ids"] = ["docs/retention.md"]
