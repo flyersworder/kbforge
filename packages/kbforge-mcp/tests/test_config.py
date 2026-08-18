@@ -134,3 +134,53 @@ def test_a_non_http_transport_url_is_rejected_offline(url):
     cfg = dict(STDIO)
     cfg["transport"] = {"kind": "http", "url": url}
     assert any("http(s) URL" in p for p in problems_for(cfg))
+
+
+def test_a_static_arg_may_not_shadow_the_id_arg():
+    # `_fetch` merges `{id_arg: ref.raw_id, **static_args}`, so a static_args key
+    # equal to id_arg wins and EVERY read returns the same document -- while each
+    # record keeps its own native_id, so the run produces N distinct concepts all
+    # carrying one file's text and nothing raises anywhere. It is a config
+    # mistake, so it is caught here rather than papered over by reordering the
+    # merge.
+    cfg = dict(STDIO)
+    cfg.pop("select")
+    cfg["static_ids"] = ["docs/a.md", "docs/b.md"]
+    cfg["read"] = {
+        "tool": "get_file_contents",
+        "id_arg": "path",
+        "static_args": {"owner": "o", "repo": "r", "path": "README.md"},
+    }
+    problems = problems_for(cfg)
+    assert any("static_args" in p and "'path'" in p for p in problems), problems
+
+
+def test_a_static_id_that_cannot_be_slugged_is_caught_offline():
+    # Without this the id reports no problems and then raises out of
+    # `select_refs` at fetch -- outside `_fetch`'s per-document catch, so one bad
+    # configured id aborts the whole run instead of being reported by
+    # `kbforge validate`.
+    cfg = dict(STDIO)
+    cfg.pop("select")
+    cfg["static_ids"] = ["../../secrets.md"]
+    problems = problems_for(cfg)
+    assert any("static_ids" in p and "escapes the bundle" in p for p in problems), (
+        problems
+    )
+
+
+def test_two_static_ids_that_slug_to_one_native_id_are_caught_offline():
+    # They would become one doc_id and abort the run on "duplicate doc_id". A
+    # configured list is the one selector whose ids are all known offline.
+    cfg = dict(STDIO)
+    cfg.pop("select")
+    cfg["static_ids"] = ["docs/retention.md", "docs/retention"]
+    problems = problems_for(cfg)
+    assert any("same native_id" in p for p in problems), problems
+
+
+def test_a_valid_static_id_list_has_no_problems():
+    cfg = dict(STDIO)
+    cfg.pop("select")
+    cfg["static_ids"] = ["docs/retention.md", "docs/policy.md"]
+    assert problems_for(cfg) == []

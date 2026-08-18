@@ -15,6 +15,8 @@ from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from kbforge_mcp.slug import SlugError, native_id_for
+
 # Enforces the ALL_CAPS environment-variable naming convention, which catches
 # the common mistake of pasting a token where a name belongs -- `ghp_...`,
 # `sk-...`, and most base64/hex secrets contain lowercase letters or
@@ -148,6 +150,42 @@ def problems_for(config: dict) -> list[str]:
             "config 'transport.auth_env' must name an environment variable "
             f"(ALL_CAPS), not hold its value: {auth_env!r}"
         )
+    if cfg.read.id_arg in cfg.read.static_args:
+        # Merged as `{id_arg: ref.raw_id, **static_args}`, so a static_args key
+        # equal to id_arg wins and every read returns the SAME document while
+        # each record keeps its own native_id: N distinct concepts all carrying
+        # one file's text, with nothing raising anywhere. It is a config
+        # mistake, and this offline gate is where a config mistake belongs --
+        # reordering the merge would only bury it.
+        problems.append(
+            f"config 'read.static_args' must not contain {cfg.read.id_arg!r}: it "
+            "is 'read.id_arg', so a constant there would override the document "
+            "id and every read would return the same document"
+        )
+    # The ids are known at config time, so slug them here. Without this,
+    # `static_ids: ['../../secrets.md']` reports no problems and then raises out
+    # of `select_refs` at fetch -- which is OUTSIDE `_fetch`'s per-document
+    # catch, so one bad configured id aborts the whole run instead of being
+    # caught by `kbforge validate`.
+    seen: dict[str, str] = {}
+    for raw in cfg.static_ids or []:
+        try:
+            native = native_id_for(raw)
+        except SlugError as exc:
+            problems.append(f"config 'static_ids' entry is unusable: {exc}")
+            continue
+        # Two ids reducing to one native_id become one doc_id, and
+        # `assert_fetch_contract` then aborts the run on "duplicate doc_id".
+        # A configured list is the one selector whose ids are all known
+        # offline, so say so now rather than mid-run.
+        if native in seen:
+            problems.append(
+                f"config 'static_ids' entries {seen[native]!r} and {raw!r} both "
+                f"reduce to the same native_id {native!r}, which would be one "
+                "doc_id"
+            )
+        else:
+            seen[native] = raw
     if isinstance(cfg.transport, StdioTransport):
         for entry in cfg.transport.env:
             if not _ENV_NAME.match(entry):
