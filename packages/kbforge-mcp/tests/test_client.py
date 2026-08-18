@@ -112,3 +112,54 @@ async def test_a_failure_between_connect_and_ready_does_not_leak_the_session(
     # API to confirm no session state survives the failure.
     assert c._client is None, "the failed session was not cleared"
     assert exited, "the inner Client was never exited -- the session leaked"
+
+
+async def test_every_page_of_tools_list_is_read_not_just_the_first(monkeypatch):
+    # `tools/list` is paginated and the SDK's `list_tools` takes a cursor rather
+    # than looping. Reading page 1 only meant a configured tool listed further
+    # on was ABSENT from `_read_only`, `.get(name)` returned None, and the
+    # `read_only_hint is False` refusal silently never fired -- a defence-in-
+    # depth guard degrading to a no-op invisibly, which is worse than one that
+    # was never claimed. (The structural guard never consults this listing, so
+    # it was unaffected either way, which is why nothing else caught this.)
+    from mcp.types import ListToolsResult, Tool, ToolAnnotations
+
+    mutating = Tool(
+        name="delete_everything",
+        description="page two",
+        inputSchema={"type": "object"},
+        annotations=ToolAnnotations(readOnlyHint=False),
+    )
+    pages = {
+        None: ListToolsResult(tools=[], nextCursor="page2"),
+        "page2": ListToolsResult(tools=[mutating]),
+    }
+    seen: list[str | None] = []
+
+    async def paged_list_tools(self, *, cursor=None, **kwargs):
+        seen.append(cursor)
+        return pages[cursor]
+
+    monkeypatch.setattr(_client_mod.Client, "list_tools", paged_list_tools)
+
+    async with await _client({"delete_everything"}) as c:
+        assert seen == [None, "page2"], "the second page was never requested"
+        with pytest.raises(ToolNotAllowed, match="declares itself mutating"):
+            await c.call("delete_everything", {})
+
+
+async def test_a_repeating_tools_list_cursor_ends_the_walk_instead_of_hanging(
+    monkeypatch,
+):
+    # A server that keeps handing back a cursor it has already served would
+    # otherwise loop forever. This guard is defence in depth and must not be
+    # able to become a hang.
+    from mcp.types import ListToolsResult
+
+    async def looping_list_tools(self, *, cursor=None, **kwargs):
+        return ListToolsResult(tools=[], nextCursor="same")
+
+    monkeypatch.setattr(_client_mod.Client, "list_tools", looping_list_tools)
+
+    async with await _client({"read_doc"}) as c:
+        assert c._read_only == {}

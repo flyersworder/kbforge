@@ -19,7 +19,7 @@ from mcp.client import Transport
 from mcp.client.stdio import StdioServerParameters, stdio_client
 from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.server import MCPServer, Server
-from mcp.types import CallToolResult, TextContent
+from mcp.types import CallToolResult, TextContent, Tool
 
 from kbforge_mcp.config import HttpTransport, McpSourceConfig
 
@@ -55,7 +55,7 @@ class McpClient:
     async def __aenter__(self) -> McpClient:
         self._client = await Client(self._target).__aenter__()
         try:
-            listed = await self._client.list_tools()
+            listed = await self._list_all_tools()
         except BaseException:
             # `async with` only calls our `__aexit__` once `__aenter__` RETURNS.
             # A failure here happens after the inner `Client` has already
@@ -72,9 +72,37 @@ class McpClient:
             raise
         self._read_only = {
             t.name: getattr(getattr(t, "annotations", None), "read_only_hint", None)
-            for t in listed.tools
+            for t in listed
         }
         return self
+
+    async def _list_all_tools(self) -> list[Tool]:
+        """Every page, not the first one.
+
+        `tools/list` is paginated and the SDK's `list_tools` takes a cursor
+        rather than looping, so a single call sees page 1. A configured tool
+        listed past it was simply ABSENT from `self._read_only`, `.get(name)`
+        returned None, and the `read_only_hint is False` refusal never fired --
+        a guard that degrades to a no-op invisibly, which is worse than one that
+        was never claimed, now that architecture.md documents this layer as a
+        real check. (The structural guard is unaffected: the callable set is
+        still the two configured names, and it never consults this listing.)
+
+        A server that returns a cursor it has already served would otherwise
+        loop forever, so a repeat ends the walk: this is defence in depth
+        against honest misconfiguration and must not become a hang.
+        """
+        assert self._client is not None
+        tools: list[Tool] = []
+        seen: set[str] = set()
+        cursor: str | None = None
+        while True:
+            page = await self._client.list_tools(cursor=cursor)
+            tools.extend(page.tools)
+            cursor = page.next_cursor
+            if cursor is None or cursor in seen:
+                return tools
+            seen.add(cursor)
 
     async def __aexit__(self, *exc) -> None:
         if self._client is not None:
