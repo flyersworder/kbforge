@@ -41,3 +41,36 @@ def test_only_a_short_alphanumeric_extension_is_stripped():
         == "reports/2024.annual.summary"
     )
     assert native_id_for("api/v1.2/reference") == "api/v1.2/reference"
+
+
+def test_ids_that_are_only_an_extension_are_refused():
+    # Extension-stripping ".md" leaves nothing. Falling back to the untouched
+    # segment (as an earlier version of this function did) would let it
+    # through as native_id=".md", which collides with the empty-id case on
+    # concepts//overview.md -- the same root-level-concept collision
+    # test_empty_and_content_free_ids_are_refused exists to prevent, arriving
+    # through a different door. Only the final segment is checked, so a
+    # genuine dotfile earlier in the path (`docs/.gitignore/notes.md`) is
+    # unaffected -- see test_dotfile_directory_segments_are_left_alone.
+    for raw in (".md", "/.md", "./.md", "https://x.com/.md", "docs/.md"):
+        with pytest.raises(SlugError, match="no content beyond its extension"):
+            native_id_for(raw)
+
+
+def test_dotfile_directory_segments_are_left_alone():
+    # Only the final segment is extension-stripped; `.gitignore` here is a
+    # directory-like segment, not the document name, so it is untouched.
+    assert native_id_for("docs/.gitignore/notes.md") == "docs/.gitignore/notes"
+
+
+def test_percent_encoded_traversal_is_refused():
+    # Neither git nor the filesystem decodes percent-encoding today, so a
+    # literal "%2e%2e" segment isn't currently exploitable -- it would just
+    # produce an oddly named directory rather than an escape. But this
+    # function is the one thing standing between a server-controlled id and
+    # a path escape, so it refuses the decoded form too. The native_id itself
+    # is never built from the decoded segments (see native_id_for's
+    # docstring/comment): only the literal "%2e%2e" would ever be returned,
+    # and here it's refused before that can happen.
+    with pytest.raises(SlugError, match="escapes the bundle"):
+        native_id_for("%2e%2e/%2e%2e/etc/passwd")
