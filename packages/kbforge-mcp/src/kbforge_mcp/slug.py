@@ -13,8 +13,19 @@ for each: this produces `native_id`, while the untouched original becomes `url`.
 `f"{system}:{native_id}"`, so two source ids that reduce to one slug become one
 doc_id, and `assert_fetch_contract` then aborts the *whole run* with "duplicate
 doc_id" -- on every sync, unrecoverable without changing the source. Distinct
-ids must therefore produce distinct slugs, or be refused outright. Three
-equivalences are deliberate, and each one merges ids that name the *same
+ids must therefore produce distinct slugs, or be refused outright.
+
+The slug is not the level the property ultimately has to hold at, though, and a
+test over slugs alone cannot see the level that matters. Two *distinct*
+native_ids still become one published file if `concept_path` and `safe_join`
+normalize them together downstream -- three distinct doc_ids, three
+`change.files` keys, every core gate green, and then
+`{safe_join(base, rel): body ...}` collapses them onto one key and the last
+write wins. So the property is asserted end to end, over the published path, in
+`test_distinct_ids_never_reduce_to_one_published_file`; everything below exists
+to make that true.
+
+Four equivalences are deliberate, and each one merges ids that name the *same
 document*:
 
 1. **A trailing document extension** on the final path segment (`policy` and
@@ -27,9 +38,12 @@ document*:
    date, so `docs/spec-1.2` and `docs/spec-1.3` both became `docs/spec-1`, and
    `reports/2024.10` and `reports/2024.11` both became `reports/2024`.
 2. **A URL's scheme, and the case of its host** (RFC 3986 §6.2.2): the same
-   host over http and https is one document, and DNS is case-insensitive.
-   Everything else a URL carries -- host, port, path, query, fragment -- is
-   identity.
+   host over http and https is one document, and DNS is case-insensitive. The
+   fold is applied to the host alone and not to the whole authority, because
+   userinfo is not case-insensitive -- lowercasing the netloc whole would have
+   merged `USER:PASS@a.com` with `user:pass@a.com`, an equivalence RFC 3986
+   does not grant and this docstring did not claim. Everything else a URL
+   carries -- host, port, userinfo, path, query, fragment -- is identity.
 3. **POSIX path normalisation**: empty, repeated, leading and `.` segments do
    not name anything, so `/a//b` and `a/b` are the same path.
 4. **Whitespace around the id as a whole**, which is transport noise rather
@@ -80,12 +94,24 @@ _DOCUMENT_EXTENSIONS = frozenset(
 # it is reserved below as the marker for the host segment, so no ordinary
 # segment may begin with one.
 #
+# `/` is escaped for a different reason: structure. `_escape` only ever sees a
+# netloc or an already-split path segment, neither of which can contain a `/`,
+# so the only `/` it can meet is one that arrived inside a query or fragment --
+# and splicing that in raw made the tail *structural* rather than opaque. It
+# injected real path separators into the identity, which (a) collapsed
+# `?x=/y`, `?x=//y` and `?x=/./y` onto one published file at `safe_join`'s
+# `normpath`, invisibly to every gate before it, (b) let `?x=/../../secrets`
+# past the `..` check below -- which runs on segments split from the *path*,
+# before the tail exists -- and back into the publish-time PathError this whole
+# module exists to prevent, and (c) put the trailing-dot rule out of reach of
+# every piece but the last. Escaping it keeps the tail text.
+#
 # Consciously NOT handled: Windows reserved device names (`CON`, `NUL`,
 # `COM1`...) also break a checkout, but they break it as *names*, not as
 # identities, and core's own `concept_path` and `local_files` do not guard them
 # either. Guarding them here only would put the line in a different place for
 # one connector than for the library.
-_ESCAPE = re.compile(r'[\x00-\x1f\x7f%@<>:"|?*\\]')
+_ESCAPE = re.compile(r'[\x00-\x1f\x7f%@/<>:"|?*\\]')
 
 _UNSAFE_TAIL = (".", " ")
 
@@ -137,7 +163,12 @@ def native_id_for(raw: str) -> str:
         # merged them. The `@` prefix keeps URL identities and plain-path
         # identities disjoint -- without it the URL `https://a.com/docs/x` and
         # the plain id `a.com/docs/x` would both slug to `a.com/docs/x`.
-        host: str | None = parts.netloc.lower()
+        # Lowercased on the HOST only. `netloc.lower()` folds userinfo too,
+        # merging `USER:PASS@a.com` with `user:pass@a.com` -- an equivalence
+        # RFC 3986 §6.2.2 does not grant, since only scheme and host are
+        # case-insensitive. The port is digits, so folding it is a no-op.
+        userinfo, at, hostport = parts.netloc.rpartition("@")
+        host: str | None = f"{userinfo}{at}{hostport.lower()}"
         path = parts.path
         # Query and fragment are identity too, carried on the final segment.
         # Dropping them (as this did) merges `page?v=1` with `page?v=2`. The
@@ -190,4 +221,18 @@ def native_id_for(raw: str) -> str:
 
     out = [] if host is None else [f"@{_escape(host)}"]
     out.extend(_escape(s) for s in segments)
-    return "/".join(out)
+    slug = "/".join(out)
+    # `concept_path` runs `native.removesuffix(".md")` on the whole native_id,
+    # so a slug ending in `.md` gets stripped a SECOND time downstream, one
+    # stage after this function's own extension rule and outside its reach.
+    # That is the same silent two-documents-one-file collapse as the tail bug:
+    # `docs/a.md.md` slugs to `docs/a.md` and `docs/a.md` slugs to `docs/a`,
+    # two distinct doc_ids that `concept_path` then publishes to one path. A
+    # query tail can produce the suffix too (`?x=a.md`). Escaping the dot ends
+    # it: identity is settled here, and nothing downstream gets a second bite.
+    # Injective, because no unescaped slug can end in `%2Emd` -- `%` is
+    # escaped, and the only `%2E` this module emits is a segment's final
+    # character.
+    if slug.endswith(".md"):
+        slug = f"{slug[:-3]}%2Emd"
+    return slug

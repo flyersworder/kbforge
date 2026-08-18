@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import pytest
 
+from kbforge.publishers.forge import safe_join
+from kbforge.synthesize import concept_path
 from kbforge_mcp.slug import SlugError, is_url, native_id_for
 
 
@@ -30,6 +32,51 @@ def test_query_and_fragment_are_identity_carried_on_the_final_segment():
     assert native_id_for(raw) == "@example.com/docs/guide%3Fv=2#section"
     assert native_id_for("https://example.com/p?v=1") != native_id_for(
         "https://example.com/p?v=2"
+    )
+
+
+def test_a_slash_inside_a_query_or_fragment_is_text_not_structure():
+    # The tail is spliced onto the final path segment, so `/` has to be escaped
+    # like every other character a segment cannot carry. Spliced in raw it was
+    # STRUCTURE: it injected real path separators into the identity, with three
+    # consequences this pins one by one.
+    #
+    # 1. `?x=/y`, `?x=//y` and `?x=/./y` stayed three distinct native_ids and
+    #    three distinct doc_ids, and then normalized onto ONE published file --
+    #    see test_distinct_ids_never_reduce_to_one_published_file, which is
+    #    where that class is caught. The tail stays inside one segment now.
+    assert native_id_for("https://a.com/p?x=/y") == "@a.com/p%3Fx=%2Fy"
+    assert len(native_id_for("https://a.com/p?x=/y").split("/")) == 2
+    # 2. The `..` refusal runs on segments split from the PATH, before the tail
+    #    exists, so a traversal hidden in a tail walked straight past it and
+    #    reached `safe_join` at publish time -- after synthesis, after tokens,
+    #    which is the exact failure this module's docstring says it prevents.
+    escaped = native_id_for("https://a.com/p?x=/../../secrets")
+    assert ".." not in escaped.split("/")
+    assert len(escaped.split("/")) == 2
+    # 3. `_escape` checks only the FINAL character of a segment, so a tail `/`
+    #    put every earlier piece out of the trailing-dot rule's reach and left a
+    #    `p%3Fx=v.` directory -- a name Windows silently trims.
+    assert native_id_for("https://a.com/p?x=v./y") == "@a.com/p%3Fx=v.%2Fy"
+
+
+def test_a_slug_never_ends_in_md_for_concept_path_to_strip_again():
+    # `concept_path` runs `native.removesuffix(".md")` on the whole native_id,
+    # one stage after this module's own extension rule and outside its reach.
+    # Without this, `docs/a.md.md` -> `docs/a.md` and `docs/a.md` -> `docs/a`
+    # are two distinct doc_ids that publish to one file, silently.
+    assert native_id_for("docs/a.md.md") == "docs/a%2Emd"
+    assert native_id_for("docs/a.md") == "docs/a"
+    # A query tail can produce the suffix too.
+    assert native_id_for("https://a.com/p?x=a.md") == "@a.com/p%3Fx=a%2Emd"
+
+
+def test_only_the_host_is_case_folded_not_the_whole_authority():
+    # RFC 3986 §6.2.2 makes scheme and host case-insensitive. Userinfo is not,
+    # so `netloc.lower()` merged two distinct authorities.
+    assert native_id_for("https://A.COM/p") == native_id_for("https://a.com/p")
+    assert native_id_for("https://USER:PASS@a.com/p") != native_id_for(
+        "https://user:pass@a.com/p"
     )
 
 
@@ -107,15 +154,23 @@ def test_only_a_known_document_extension_is_stripped():
     assert native_id_for("docs/guide.md") == native_id_for("docs/guide")
 
 
-def test_native_id_for_is_injective():
-    # The property, not an example of it. Two source ids that reduce to one slug
-    # become one doc_id, `assert_fetch_contract` raises "duplicate doc_id", and
-    # the whole run aborts on every sync -- unrecoverable without changing the
-    # source. Every id here is distinct from every other by something other than
-    # the three deliberate equivalences in `native_id_for`'s docstring (document
-    # extension, URL scheme and host case, POSIX path normalisation), so every
-    # slug must be distinct too. A future lossy change fails HERE, on the
-    # property, rather than on whichever example someone happened to pick.
+def test_distinct_ids_never_reduce_to_one_published_file():
+    # The property, not an example of it -- and asserted at the level where it
+    # is actually true. Injectivity over slugs alone is not enough: two DISTINCT
+    # native_ids still become one file if `concept_path` and `safe_join`
+    # normalize them together downstream, and every core gate passes on the way
+    # (three doc_ids, three `change.files` keys, `assert_fetch_contract` and
+    # `_check_projection_coherence` both green) before
+    # `{safe_join(base, rel): body ...}` collapses them onto one key and the
+    # last write wins. Running each id through the whole chain subsumes the
+    # slug-level property and catches that class too.
+    #
+    # Every id here is distinct from every other by something other than the
+    # four deliberate equivalences in `native_id_for`'s docstring (document
+    # extension, URL scheme and host case, POSIX path normalisation, surrounding
+    # whitespace), so every published path must be distinct too. A future lossy
+    # change fails HERE, on the property, rather than on whichever example
+    # someone happened to pick.
     ids = [
         # versions and dates in the final segment -- the old regex ate these
         "docs/spec-1.2",
@@ -143,6 +198,25 @@ def test_native_id_for_is_injective():
         "https://a.com/p#one",
         "https://a.com/p#two",
         "https://a.com/p",
+        # a `/` inside a query or fragment is TEXT, not structure. Spliced in
+        # raw it became a real path separator, and these four then normalized
+        # onto one published file at `safe_join` -- with distinct doc_ids, so
+        # nothing upstream could see it. Hash-routed docs and redirect-style
+        # queries make these ordinary rather than exotic.
+        "https://a.com/p?x=/y",
+        "https://a.com/p?x=//y",
+        "https://a.com/p?x=/./y",
+        "https://a.com/p?x=/../y",
+        "https://a.com/p#/guide/intro",
+        # `concept_path` strips `.md` from the whole native_id one stage later,
+        # so a slug that ends in one would be stripped a second time
+        "docs/a.md.md",
+        "docs/a.md",
+        "https://a.com/p?x=a.md",
+        "https://a.com/p?x=a",
+        # userinfo is case-SENSITIVE; only the host is folded
+        "https://USER:PASS@a.com/p",
+        "https://user:pass@a.com/p",
         # port and escape-character handling
         "https://a.com:8080/p",
         "docs/a%3Ab.md",
@@ -154,13 +228,17 @@ def test_native_id_for_is_injective():
         "docs/sub/file",
         "docs/trailing",
     ]
-    slugs = [native_id_for(raw) for raw in ids]
+    # The real chain: slug -> doc_id -> concept_path -> safe_join, which is the
+    # key `forge.py` writes the file under.
+    published = [
+        safe_join("kb", concept_path(f"fixture:{native_id_for(raw)}")) for raw in ids
+    ]
     collisions = {
-        slug: [raw for raw, s in zip(ids, slugs, strict=True) if s == slug]
-        for slug in slugs
-        if slugs.count(slug) > 1
+        path: [raw for raw, p in zip(ids, published, strict=True) if p == path]
+        for path in published
+        if published.count(path) > 1
     }
-    assert not collisions, f"native_id_for is not injective: {collisions}"
+    assert not collisions, f"distinct ids share one published file: {collisions}"
 
 
 def test_ids_that_are_only_an_extension_are_refused():
