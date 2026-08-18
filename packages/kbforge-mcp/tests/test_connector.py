@@ -82,8 +82,12 @@ def test_a_failed_read_degrades_complete_rather_than_dropping_silently(cfg):
     # Skipping a document while still claiming complete=True would, once the
     # 0.8.0 manifest lands, manufacture a deletion out of a transient error.
     # `docs/missing.md` makes the fixture's read_doc raise -> ToolCallFailed.
+    # It goes FIRST on purpose: with the failing id last, `continue` and
+    # `break` are indistinguishable -- both leave `docs/retention` collected
+    # and `complete` False -- so the test would pass against a loop that
+    # abandons every document after the first failure.
     cfg.pop("select")
-    cfg["static_ids"] = ["docs/retention.md", "docs/missing.md"]
+    cfg["static_ids"] = ["docs/missing.md", "docs/retention.md"]
     result = CONNECTOR.kbforge_fetch(cfg, None)
     docs = CONNECTOR.kbforge_normalize(result.records)
     assert [d.doc_id for d in docs] == ["fixture:docs/retention"]

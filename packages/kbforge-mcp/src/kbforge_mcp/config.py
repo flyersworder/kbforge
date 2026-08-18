@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import re
 from typing import Literal
+from urllib.parse import urlsplit
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -23,7 +24,24 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # passes uncaught. No regex can tell the two apart -- they are not different
 # shapes. Only checking `os.environ` at call time could, and `problems_for`
 # deliberately stays offline (see its docstring), so it does not.
-_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
+# `\Z`, not `$`: `$` also matches before a trailing newline, so `"TOKEN\n"`
+# would pass a check whose whole job is to pin an exact shape.
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+
+# `system` is the first operator-supplied free-text value to reach an identity:
+# it is interpolated into `doc_id` (`f"{system}:{native_id}"`) and into the
+# publish branch (`f"sync/{system}"`). `slug.py` exists to stop a *server*-supplied
+# id from becoming a path or ref that only fails at publish time -- after
+# synthesis, after tokens -- and the operator-supplied half deserves the same
+# treatment. `system: ""` currently validates and yields `doc_id=":docs/a"` plus
+# a `sync/` branch git refuses outright.
+#
+# Deliberately narrower than git's own ref rules rather than a transcription of
+# them: this rejects the whole class (no `/`, no `:`, no whitespace, no `.` and
+# so no `..` or `.lock` tail, no leading `-`) with one readable pattern, instead
+# of enumerating git's exclusions and getting one wrong. `:` is excluded on
+# kbforge's own account too -- it is the `doc_id` separator.
+_SYSTEM_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\Z")
 
 
 class _Strict(BaseModel):
@@ -111,6 +129,19 @@ def problems_for(config: dict) -> list[str]:
             "configured id list); a server whose select tool returns only prose "
             "is supported through 'static_ids'"
         )
+    if not _SYSTEM_NAME.match(cfg.system):
+        problems.append(
+            "config 'system' must be a short identifier -- letters, digits, "
+            "'_' and '-', starting with a letter or digit -- because it is "
+            f"interpolated into every doc_id and into the publish branch: "
+            f"{cfg.system!r}"
+        )
+    if isinstance(cfg.transport, HttpTransport):
+        parts = urlsplit(cfg.transport.url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            problems.append(
+                f"config 'transport.url' must be an http(s) URL: {cfg.transport.url!r}"
+            )
     auth_env = getattr(cfg.transport, "auth_env", None)
     if auth_env and not _ENV_NAME.match(auth_env):
         problems.append(

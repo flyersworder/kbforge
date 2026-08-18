@@ -53,11 +53,18 @@ def _text_blocks(result: CallToolResult) -> list[str]:
     return [b.text for b in result.content if isinstance(b, TextContent)]
 
 
-def _ref_for(raw_id: str, title: str | None) -> DocRef:
+def ref_for(raw_id: str, title: str | None) -> DocRef:
+    """The one place a document id becomes a DocRef.
+
+    Public because `selectors` needs it too: a hand-built DocRef there would
+    duplicate the "does this id look like a url" predicate below AND skip this
+    SlugError -> MappingError conversion, leaving a bare RuntimeError where
+    every other unmappable id raises MappingError.
+    """
     try:
         native = native_id_for(raw_id)
     except SlugError as exc:
-        raise MappingError(f"unusable document id from server: {exc}") from exc
+        raise MappingError(f"unusable document id: {exc}") from exc
     return DocRef(
         raw_id=raw_id,
         native_id=native,
@@ -103,9 +110,7 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
                 )
             # ResourceLink carries both; `title` is the human-facing one.
             refs.append(
-                _ref_for(
-                    str(uri), getattr(b, "title", None) or getattr(b, "name", None)
-                )
+                ref_for(str(uri), getattr(b, "title", None) or getattr(b, "name", None))
             )
         return refs
 
@@ -142,7 +147,7 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
                         f"select result row has no {ids.id!r} key: {row!r}"
                     )
                 refs.append(
-                    _ref_for(str(raw), row.get(ids.title) if ids.title else None)
+                    ref_for(str(raw), row.get(ids.title) if ids.title else None)
                 )
             return refs
 
@@ -167,6 +172,33 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
     )
 
 
+def _text_payload(payload: bytes, ref: DocRef, uri: str, res: object) -> bytes:
+    """Refuse a blob whose bytes are not text, here rather than in normalize.
+
+    `BlobResourceContents` is base64, not necessarily text -- GitHub's
+    `get_file_contents` returns one for any binary file. `kbforge_normalize`
+    decodes every payload as utf-8 (architecture §4.3 makes it pure, so it has
+    nowhere to put a failure), and a PNG reaching it raises `UnicodeDecodeError`
+    out of the whole run. Failing here instead makes it a `MappingError`, which
+    `_fetch` already catches per document: that document is skipped and
+    `complete` degrades to False, which is the connector's established posture
+    for a per-document failure and strictly better than aborting a run over one
+    image. This is deliberately not binary support -- a text-concept pipeline
+    has nothing to synthesize from a PNG.
+    """
+    try:
+        payload.decode("utf-8-sig")
+    except UnicodeDecodeError as exc:
+        mime = getattr(res, "mime_type", None)
+        raise MappingError(
+            f"read response for {ref.native_id} carried a non-text resource at "
+            f"{uri} (mime_type={mime!r}): its bytes are not valid UTF-8 "
+            f"({exc.reason} at byte {exc.start}); kbforge synthesizes text "
+            "concepts and cannot ingest binary content"
+        ) from exc
+    return payload
+
+
 def records_from_read(
     result: CallToolResult,
     ref: DocRef,
@@ -174,10 +206,14 @@ def records_from_read(
     media_type: str,
 ) -> list[RawRecord]:
     def record(
-        payload: bytes, native_id: str, url: str | None, mtype: str
+        payload: bytes,
+        native_id: str,
+        url: str | None,
+        mtype: str,
+        title: str | None,
     ) -> RawRecord:
         return RawRecord(
-            anchor_hint={"native_id": native_id, "url": url, "title": ref.title},
+            anchor_hint={"native_id": native_id, "url": url, "title": title},
             media_type=mtype,
             payload=payload,
         )
@@ -192,7 +228,7 @@ def records_from_read(
             if text is not None:
                 payload = text.encode("utf-8")
             elif blob is not None:
-                payload = base64.b64decode(blob)
+                payload = _text_payload(base64.b64decode(blob), ref, uri, res)
             else:
                 continue  # a bare link with no content is not a document
             carried.append((uri, payload, getattr(res, "mime_type", None)))
@@ -206,17 +242,31 @@ def records_from_read(
         # identities, and then the uris are the only source for them.
         if len(carried) == 1:
             uri, payload, mime = carried[0]
-            return [record(payload, ref.native_id, ref.url, mime or media_type)]
+            return [
+                record(payload, ref.native_id, ref.url, mime or media_type, ref.title)
+            ]
         if carried:
             records = []
             for uri, payload, mime in carried:
-                # Bind once: `_ref_for` already computes the same "does this
+                # Bind once: `ref_for` already computes the same "does this
                 # id look like a url" predicate that decides `.url`, and a
                 # second copy of that predicate inline is a second place for
                 # the two to drift.
-                r = _ref_for(uri, None)
+                r = ref_for(uri, None)
+                # Every field comes from the per-document ref, title included.
+                # `EmbeddedResource` carries no title of its own, so `r.title`
+                # is None and `kbforge_normalize` derives a per-document title
+                # from that document's native_id -- whereas reusing `ref.title`
+                # here would stamp the *folder's* title onto all five documents
+                # a "read this folder" call returned.
                 records.append(
-                    record(payload, r.native_id, r.url or ref.url, mime or media_type)
+                    record(
+                        payload,
+                        r.native_id,
+                        r.url or ref.url,
+                        mime or media_type,
+                        r.title,
+                    )
                 )
             return records
 
@@ -231,13 +281,25 @@ def records_from_read(
             raise MappingError(
                 f"read response has no {spec.text_key!r} key for {ref.native_id}"
             )
-        return [record(str(body).encode("utf-8"), ref.native_id, ref.url, media_type)]
+        return [
+            record(
+                str(body).encode("utf-8"),
+                ref.native_id,
+                ref.url,
+                media_type,
+                ref.title,
+            )
+        ]
 
     texts = _text_blocks(result)  # tier 3 -- complete, because identity is an input
     if texts:
         return [
             record(
-                "\n\n".join(texts).encode("utf-8"), ref.native_id, ref.url, media_type
+                "\n\n".join(texts).encode("utf-8"),
+                ref.native_id,
+                ref.url,
+                media_type,
+                ref.title,
             )
         ]
 

@@ -4,8 +4,7 @@ from __future__ import annotations
 
 from kbforge_mcp.client import McpClient
 from kbforge_mcp.config import McpSourceConfig
-from kbforge_mcp.mapping import DocRef, refs_from_select
-from kbforge_mcp.slug import SlugError, native_id_for
+from kbforge_mcp.mapping import DocRef, ref_for, refs_from_select
 
 
 async def select_refs(
@@ -18,22 +17,12 @@ async def select_refs(
     saw whatever the server chose to return.
     """
     if cfg.static_ids is not None:
-        refs = []
-        for raw in cfg.static_ids:
-            try:
-                refs.append(
-                    DocRef(
-                        raw_id=raw,
-                        native_id=native_id_for(raw),
-                        url=raw if "://" in raw else None,
-                        title=None,
-                    )
-                )
-            except SlugError as exc:
-                raise RuntimeError(
-                    f"config 'static_ids' entry unusable: {exc}"
-                ) from exc
-        return refs, True
+        # `ref_for` owns both the slugging and the "does this id look like a
+        # url" predicate that decides `.url`; building a DocRef by hand here
+        # would be a second copy of a predicate mapping.py explicitly warns
+        # against duplicating, and would substitute a bare RuntimeError for
+        # its SlugError -> MappingError conversion.
+        return [ref_for(raw, None) for raw in cfg.static_ids], True
 
     assert cfg.select is not None, "config validation guarantees one selector"
     result = await client.call(cfg.select.tool, cfg.select.args)

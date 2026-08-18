@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from kbforge_mcp.config import McpSourceConfig, problems_for
 
 STDIO = {
@@ -90,3 +92,45 @@ def test_stdio_env_entries_must_be_variable_names_not_values():
 def test_problems_are_returned_not_raised():
     assert isinstance(problems_for({}), list)
     assert problems_for({}) != []
+
+
+@pytest.mark.parametrize(
+    "system",
+    [
+        "",
+        " ",
+        "aws docs",
+        "aws/docs",
+        "aws:docs",
+        "-aws",
+        "../escape",
+        "docs\n",
+    ],
+)
+def test_an_unusable_system_name_is_rejected_offline(system):
+    # `system` is interpolated into every `doc_id` (`f"{system}:{native_id}"`)
+    # and into the publish branch (`f"sync/{system}"`). `system: ""` used to
+    # validate and produce `doc_id=":docs/a"` plus a bare `sync/` branch git
+    # refuses -- discovered at publish time, after synthesis, after tokens.
+    # That is the exact failure class `slug.py` exists to prevent for
+    # server-supplied ids; the operator-supplied half gets the same treatment.
+    cfg = dict(STDIO)
+    cfg["system"] = system
+    assert any("'system'" in p for p in problems_for(cfg))
+
+
+@pytest.mark.parametrize("system", ["aws_docs", "github", "servicenow2", "gh-docs"])
+def test_an_ordinary_system_name_is_accepted(system):
+    cfg = dict(STDIO)
+    cfg["system"] = system
+    assert problems_for(cfg) == []
+
+
+@pytest.mark.parametrize(
+    "url",
+    ["", "example.com/mcp", "ftp://example.com/mcp", "file:///etc/passwd", "https://"],
+)
+def test_a_non_http_transport_url_is_rejected_offline(url):
+    cfg = dict(STDIO)
+    cfg["transport"] = {"kind": "http", "url": url}
+    assert any("http(s) URL" in p for p in problems_for(cfg))

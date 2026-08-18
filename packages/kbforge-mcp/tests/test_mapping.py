@@ -187,6 +187,23 @@ def test_a_tier2_read_with_an_empty_string_text_key_value_is_an_error():
         records_from_read(result, ref, spec, "text/markdown")
 
 
+@pytest.mark.parametrize(
+    ("body", "payload"), [(0, b"0"), (False, b"False"), (0.0, b"0.0")]
+)
+def test_a_tier2_read_with_a_non_str_falsy_body_is_real_content(body, payload):
+    # The other half of the narrowness the test above is named for, and the
+    # half that actually constrains the implementation: with `if not body:`
+    # these are rejected as "no body" identically to `""`, so without this
+    # case the guard's `isinstance(body, str)` can be deleted and the whole
+    # suite still passes. An int `0` stringifies to a one-byte document, and a
+    # one-byte document is content.
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    result = CallToolResult(content=[], structured_content={"body": body})
+    spec = ReadSpec(tool="read", id_arg="path", text_key="body")
+    records = records_from_read(result, ref, spec, "text/markdown")
+    assert [r.payload for r in records] == [payload]
+
+
 def test_an_empty_read_response_is_an_error_not_an_empty_document():
     ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
     with pytest.raises(MappingError, match="no content"):
@@ -287,19 +304,34 @@ def test_tier1_one_to_many_read_derives_identities_from_the_uris():
     )
     assert [r.anchor_hint["native_id"] for r in records] == ["docs/a", "docs/b"]
     assert [r.payload.decode() for r in records] == ["a content", "b content"]
+    # url is law-3 provenance material and must be derived per document too --
+    # without this assertion, dropping it entirely still passes.
+    assert [r.anchor_hint["url"] for r in records] == [
+        "https://docs.aws.amazon.com/docs/a.html",
+        "https://docs.aws.amazon.com/docs/b.html",
+    ]
+    # And title comes from the per-document ref, not the parent: binding it to
+    # `ref.title` would stamp the folder's "Docs" onto every document it
+    # returned. `EmbeddedResource` carries no title, so it is None here and
+    # `kbforge_normalize` derives one per document from its native_id.
+    assert [r.anchor_hint["title"] for r in records] == [None, None]
 
 
 def test_a_base64_blob_resource_decodes_and_its_mime_type_wins():
-    ref = DocRef(raw_id="docs/a.bin", native_id="docs/a", url=None, title="A")
-    raw_bytes = b"\x00\x01binary payload\xff"
+    # A blob is base64 regardless of what it holds; a server may deliver
+    # perfectly ordinary text this way (GitHub does). What is pinned here is
+    # the base64 round-trip and the mime_type precedence -- NOT that arbitrary
+    # bytes survive, which the next test refuses on purpose.
+    ref = DocRef(raw_id="docs/a.txt", native_id="docs/a", url=None, title="A")
+    raw_bytes = "# Retention\n\nKept 90 days. \u00a7 caf\u00e9".encode()
     result = CallToolResult(
         content=[
             EmbeddedResource(
                 type="resource",
                 resource=BlobResourceContents(
-                    uri="https://example.com/docs/a.bin",
+                    uri="https://example.com/docs/a.txt",
                     blob=base64.b64encode(raw_bytes).decode(),
-                    mime_type="application/octet-stream",
+                    mime_type="text/plain",
                 ),
             )
         ]
@@ -309,7 +341,60 @@ def test_a_base64_blob_resource_decodes_and_its_mime_type_wins():
     )
     assert records[0].payload == raw_bytes
     # The resource's own mime_type beats the connector-configured default.
-    assert records[0].media_type == "application/octet-stream"
+    assert records[0].media_type == "text/plain"
+
+
+def test_a_binary_blob_is_a_mapping_error_not_a_crash_in_normalize():
+    # `kbforge_normalize` decodes every payload as utf-8 and, being pure, has
+    # nowhere to put a failure -- so a PNG reaching it aborts the entire run
+    # with a UnicodeDecodeError. Refusing it here makes it a MappingError,
+    # which `_fetch` catches per document: skip the document, degrade
+    # `complete`, keep the run. Reachable from a documented live target:
+    # GitHub's `get_file_contents` returns a blob for any binary file.
+    ref = DocRef(raw_id="docs/logo.png", native_id="docs/logo", url=None, title="Logo")
+    png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\xff\xfe"
+    result = CallToolResult(
+        content=[
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri="https://example.com/docs/logo.png",
+                    blob=base64.b64encode(png).decode(),
+                    mime_type="image/png",
+                ),
+            )
+        ]
+    )
+    with pytest.raises(MappingError, match="docs/logo.*not valid UTF-8"):
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
+
+
+def test_the_binary_refusal_names_the_document_and_the_mime_type():
+    # The message is the operator's only clue about which document vanished
+    # from an otherwise successful run, so pin its content, not just its type.
+    ref = DocRef(raw_id="docs/logo.png", native_id="docs/logo", url=None, title="Logo")
+    result = CallToolResult(
+        content=[
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri="https://example.com/docs/logo.png",
+                    blob=base64.b64encode(b"\xff\xfe\x00binary").decode(),
+                    mime_type="image/png",
+                ),
+            )
+        ]
+    )
+    with pytest.raises(MappingError) as exc:
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
+    message = str(exc.value)
+    assert "docs/logo" in message
+    assert "https://example.com/docs/logo.png" in message
+    assert "image/png" in message
 
 
 def test_a_contentless_link_falls_through_to_the_text_blocks():
