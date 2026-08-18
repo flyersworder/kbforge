@@ -67,6 +67,11 @@ def test_aws_docs_select_then_read_yields_citable_documents():
     for d in docs:
         # The slug is path-safe; the full URL survives as provenance.
         assert "://" not in d.anchor.native_id
+        # The HOST is part of identity, carried on the `@` segment: the same
+        # path served by two hosts is two documents, and a slug built from the
+        # url path alone merged them into one doc_id and aborted the run. Every
+        # id this selector returns is an aws.amazon.com url, so pin that.
+        assert d.anchor.native_id.startswith("@docs.aws.amazon.com/")
         assert d.anchor.url and d.anchor.url.startswith("https://")
         # `d.text.strip()` alone would also be satisfied by a body truncated
         # to just the preamble line -- `assert_fetch_contract` deliberately
@@ -132,4 +137,7 @@ def test_github_readonly_endpoint_yields_verbatim_files():
     assert "successfully downloaded" not in docs[0].text
     # The server's own uri embeds a commit sha; identity must not.
     assert "76d64c82" not in docs[0].anchor.native_id
+    # Unchanged by the host-in-identity fix: `SECURITY.md` is a configured
+    # repo path, not a url -- it has no scheme and no authority, so there is no
+    # host to carry and no `@` segment. Only a real url gains one.
     assert docs[0].anchor.native_id == "SECURITY"

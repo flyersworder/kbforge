@@ -20,7 +20,7 @@ from mcp.types import CallToolResult, EmbeddedResource, ResourceLink, TextConten
 
 from kbforge.models import RawRecord
 from kbforge_mcp.config import IdsMapping, ReadSpec
-from kbforge_mcp.slug import SlugError, native_id_for
+from kbforge_mcp.slug import SlugError, is_url, native_id_for
 
 
 class MappingError(RuntimeError):
@@ -57,7 +57,8 @@ def ref_for(raw_id: str, title: str | None) -> DocRef:
     """The one place a document id becomes a DocRef.
 
     Public because `selectors` needs it too: a hand-built DocRef there would
-    duplicate the "does this id look like a url" predicate below AND skip this
+    duplicate the "does this id look like a url" predicate (`slug.is_url`)
+    AND skip this
     SlugError -> MappingError conversion, leaving a bare RuntimeError where
     every other unmappable id raises MappingError.
     """
@@ -65,10 +66,14 @@ def ref_for(raw_id: str, title: str | None) -> DocRef:
         native = native_id_for(raw_id)
     except SlugError as exc:
         raise MappingError(f"unusable document id: {exc}") from exc
+    # `slug.is_url` and not a local `"://" in raw_id`: the slug builds identity
+    # differently for a URL than for a plain id (a URL keeps its host), so a
+    # second, looser predicate here would call something a URL for provenance
+    # that identity treated as a plain path.
     return DocRef(
         raw_id=raw_id,
         native_id=native,
-        url=raw_id if "://" in raw_id else None,
+        url=raw_id if is_url(raw_id) else None,
         title=title,
     )
 
@@ -233,6 +238,29 @@ def records_from_read(
                 continue  # a bare link with no content is not a document
             carried.append((uri, payload, getattr(res, "mime_type", None)))
 
+        if not carried:
+            # Every resource block was a bare link with no bytes. Falling
+            # through to tier 3 here made a sibling TextContent the document,
+            # and GitHub's `get_file_contents` on a *directory* returns exactly
+            # that shape: one ResourceLink per entry plus a prose preamble, so
+            # the preamble shipped as the document body.
+            #
+            # This reverses the earlier ruling recorded on
+            # `test_a_contentless_link_is_refused_rather_than_falling_through`:
+            # the fallthrough was pinned rather than refused because refusing
+            # might break a server that returns a link alongside its content as
+            # text, and there was no evidence either way. The evidence arrived
+            # with the live GitHub test. GitHub's *file* read returns a resource
+            # block that CARRIES content, so tier 1 fires correctly there and
+            # this refusal cannot reach it; its *directory* read is the harmful
+            # shape. A response that announced resources and then carried none
+            # of their bytes is not a document.
+            raise MappingError(
+                f"read response for {ref.native_id} carried "
+                f"{len(blocks)} resource block(s), none of which had content "
+                "(every one was a bare link); a link is a pointer, not a "
+                "document -- a directory listing cannot be read as one"
+            )
         # One document in, one document out: the identity we ASKED for wins. A
         # server's own uri may encode volatile state -- GitHub returns
         # `repo://owner/repo/sha/<commit-sha>/contents/<path>`, and slugging that
@@ -245,30 +273,29 @@ def records_from_read(
             return [
                 record(payload, ref.native_id, ref.url, mime or media_type, ref.title)
             ]
-        if carried:
-            records = []
-            for uri, payload, mime in carried:
-                # Bind once: `ref_for` already computes the same "does this
-                # id look like a url" predicate that decides `.url`, and a
-                # second copy of that predicate inline is a second place for
-                # the two to drift.
-                r = ref_for(uri, None)
-                # Every field comes from the per-document ref, title included.
-                # `EmbeddedResource` carries no title of its own, so `r.title`
-                # is None and `kbforge_normalize` derives a per-document title
-                # from that document's native_id -- whereas reusing `ref.title`
-                # here would stamp the *folder's* title onto all five documents
-                # a "read this folder" call returned.
-                records.append(
-                    record(
-                        payload,
-                        r.native_id,
-                        r.url or ref.url,
-                        mime or media_type,
-                        r.title,
-                    )
+        records = []
+        for uri, payload, mime in carried:
+            # Bind once: `ref_for` already computes the same "does this
+            # id look like a url" predicate that decides `.url`, and a
+            # second copy of that predicate inline is a second place for
+            # the two to drift.
+            r = ref_for(uri, None)
+            # Every field comes from the per-document ref, title included.
+            # `EmbeddedResource` carries no title of its own, so `r.title`
+            # is None and `kbforge_normalize` derives a per-document title
+            # from that document's native_id -- whereas reusing `ref.title`
+            # here would stamp the *folder's* title onto all five documents
+            # a "read this folder" call returned.
+            records.append(
+                record(
+                    payload,
+                    r.native_id,
+                    r.url or ref.url,
+                    mime or media_type,
+                    r.title,
                 )
-            return records
+            )
+        return records
 
     if spec.text_key and result.structured_content is not None:  # tier 2
         body = result.structured_content.get(spec.text_key)

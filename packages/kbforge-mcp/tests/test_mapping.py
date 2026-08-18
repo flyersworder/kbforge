@@ -42,7 +42,10 @@ def test_tier2_select_extracts_refs_from_structured_content():
         },
     )
     refs = refs_from_select(result, IdsMapping(list="results", id="url", title="title"))
-    assert [r.native_id for r in refs] == ["s3/naming", "s3/limits"]
+    assert [r.native_id for r in refs] == [
+        "@docs.aws.amazon.com/s3/naming",
+        "@docs.aws.amazon.com/s3/limits",
+    ]
     # The reader must receive the ORIGINAL id, never the slug.
     assert refs[0].raw_id == "https://docs.aws.amazon.com/s3/naming.html"
     assert refs[0].url == "https://docs.aws.amazon.com/s3/naming.html"
@@ -109,7 +112,7 @@ def test_ids_configured_with_list_named_result_still_maps():
         structured_content={"result": [{"url": "https://docs.example.com/a"}]},
     )
     refs = refs_from_select(result, IdsMapping(list="result", id="url"))
-    assert [r.native_id for r in refs] == ["a"]
+    assert [r.native_id for r in refs] == ["@docs.example.com/a"]
 
 
 def test_a_configured_ids_mapping_outranks_the_scalar_wrap_heuristic():
@@ -235,7 +238,10 @@ def test_tier1_select_extracts_refs_from_resource_links():
         ]
     )
     refs = refs_from_select(result, None)
-    assert [r.native_id for r in refs] == ["s3/naming", "s3/limits"]
+    assert [r.native_id for r in refs] == [
+        "@docs.aws.amazon.com/s3/naming",
+        "@docs.aws.amazon.com/s3/limits",
+    ]
     # `title` is the human-facing field; it must be preferred over `name`.
     assert [r.title for r in refs] == ["Naming", "Limits"]
     assert refs[0].url == "https://docs.aws.amazon.com/s3/naming.html"
@@ -302,7 +308,10 @@ def test_tier1_one_to_many_read_derives_identities_from_the_uris():
     records = records_from_read(
         result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
     )
-    assert [r.anchor_hint["native_id"] for r in records] == ["docs/a", "docs/b"]
+    assert [r.anchor_hint["native_id"] for r in records] == [
+        "@docs.aws.amazon.com/docs/a",
+        "@docs.aws.amazon.com/docs/b",
+    ]
     assert [r.payload.decode() for r in records] == ["a content", "b content"]
     # url is law-3 provenance material and must be derived per document too --
     # without this assertion, dropping it entirely still passes.
@@ -397,19 +406,22 @@ def test_the_binary_refusal_names_the_document_and_the_mime_type():
     assert "image/png" in message
 
 
-def test_a_contentless_link_falls_through_to_the_text_blocks():
+def test_a_contentless_link_is_refused_rather_than_falling_through():
+    # THE RULING HERE REVERSED, and the reason is evidence rather than taste.
     # A ResourceLink with neither `text` nor `blob` carries no bytes, so tier 1
-    # skips it rather than emitting an empty document -- but that means the
-    # "resource blocks present" check at the top of tier 1 does not, by
-    # itself, guarantee a tier-1 return: this deliberately falls through to
-    # tier 3 and the TextContent block becomes the body. That is intentional
-    # so a server that returns a link alongside the content as plain text
-    # still works, but it does mean a prose preamble sitting next to a bare
-    # link would be captured as the document body. Task 7's live test against
-    # a real GitHub server is what settles which shape GitHub actually
-    # returns -- do not "fix" this fallthrough without that evidence, since a
-    # rule that refuses contentless-link responses would break the
-    # link-plus-text shape if that turns out to be the real one.
+    # skips it -- which means the "resource blocks present" check at the top of
+    # tier 1 does not, by itself, guarantee a tier-1 return. This USED to fall
+    # through to tier 3, making a sibling TextContent the document body. That
+    # was pinned rather than refused because refusing might break a legitimate
+    # server that returns a link alongside its content as plain text, and there
+    # was no evidence either way.
+    #
+    # The evidence arrived with the live GitHub test, and it runs the other way.
+    # GitHub's `get_file_contents` on a FILE returns a resource block that
+    # carries the content, so tier 1 fires on it correctly and this refusal
+    # cannot reach that shape. On a DIRECTORY it returns exactly the harmful
+    # shape: one contentless ResourceLink per entry plus a prose preamble --
+    # under the fallthrough, the preamble shipped as the document body.
     ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
     result = CallToolResult(
         content=[
@@ -421,12 +433,29 @@ def test_a_contentless_link_falls_through_to_the_text_blocks():
             TextContent(type="text", text="the actual content"),
         ]
     )
-    records = records_from_read(
-        result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+    with pytest.raises(MappingError) as exc:
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
+    # Names the document, so an operator knows which id to drop.
+    assert "docs/a" in str(exc.value)
+    assert "none of which had content" in str(exc.value)
+
+
+def test_a_directory_listing_is_refused_not_read_as_its_preamble():
+    # The shape GitHub's `get_file_contents` returns for a directory.
+    ref = DocRef(raw_id="docs/", native_id="docs", url=None, title="Docs")
+    result = CallToolResult(
+        content=[
+            TextContent(type="text", text="successfully listed directory docs/"),
+            ResourceLink(type="resource_link", uri="repo://o/r/docs/a.md", name="a"),
+            ResourceLink(type="resource_link", uri="repo://o/r/docs/b.md", name="b"),
+        ]
     )
-    assert len(records) == 1
-    assert records[0].payload.decode() == "the actual content"
-    assert records[0].anchor_hint["native_id"] == "docs/a"
+    with pytest.raises(MappingError, match="docs"):
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
 
 
 def test_tier1_resource_blocks_win_over_a_configured_tier2_ids_mapping():
@@ -449,4 +478,4 @@ def test_tier1_resource_blocks_win_over_a_configured_tier2_ids_mapping():
         },
     )
     refs = refs_from_select(result, IdsMapping(list="results", id="url"))
-    assert [r.native_id for r in refs] == ["s3/naming"]
+    assert [r.native_id for r in refs] == ["@docs.aws.amazon.com/s3/naming"]
