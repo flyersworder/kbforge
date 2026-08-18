@@ -1,0 +1,196 @@
+"""Config models for an MCP source, and the offline validation the CLI runs
+before any network I/O.
+
+`transport.kind` is an explicit discriminator. v0.2 of the design note carried
+`server: https://...  # or a stdio command` -- two incompatible transports in one
+string that `kbforge_validate_config` was expected to classify offline. There is
+no sniffing here: the kind is declared or the config is invalid.
+"""
+
+from __future__ import annotations
+
+import re
+from typing import Literal
+from urllib.parse import urlsplit
+
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
+
+from kbforge_mcp.slug import SlugError, native_id_for
+
+# Enforces the ALL_CAPS environment-variable naming convention, which catches
+# the common mistake of pasting a token where a name belongs -- `ghp_...`,
+# `sk-...`, and most base64/hex secrets contain lowercase letters or
+# punctuation this rejects. It is not a credential detector: an all-uppercase
+# alphanumeric credential, such as an AWS access key ID
+# (`AKIAIOSFODNN7EXAMPLE`), is a legal variable name under this same rule and
+# passes uncaught. No regex can tell the two apart -- they are not different
+# shapes. Only checking `os.environ` at call time could, and `problems_for`
+# deliberately stays offline (see its docstring), so it does not.
+# `\Z`, not `$`: `$` also matches before a trailing newline, so `"TOKEN\n"`
+# would pass a check whose whole job is to pin an exact shape.
+_ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*\Z")
+
+# `system` is the first operator-supplied free-text value to reach an identity:
+# it is interpolated into `doc_id` (`f"{system}:{native_id}"`) and into the
+# publish branch (`f"sync/{system}"`). `slug.py` exists to stop a *server*-supplied
+# id from becoming a path or ref that only fails at publish time -- after
+# synthesis, after tokens -- and the operator-supplied half deserves the same
+# treatment. `system: ""` currently validates and yields `doc_id=":docs/a"` plus
+# a `sync/` branch git refuses outright.
+#
+# Deliberately narrower than git's own ref rules rather than a transcription of
+# them: this rejects the whole class (no `/`, no `:`, no whitespace, no `.` and
+# so no `..` or `.lock` tail, no leading `-`) with one readable pattern, instead
+# of enumerating git's exclusions and getting one wrong. `:` is excluded on
+# kbforge's own account too -- it is the `doc_id` separator.
+_SYSTEM_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*\Z")
+
+
+class _Strict(BaseModel):
+    # A typo in a source config must be an error, not a silently ignored key.
+    model_config = ConfigDict(extra="forbid")
+
+
+class StdioTransport(_Strict):
+    kind: Literal["stdio"]
+    command: str
+    args: list[str] = Field(default_factory=list)
+    env: list[str] = Field(default_factory=list)
+    """Names of environment variables to pass through. Names, never values."""
+
+
+class HttpTransport(_Strict):
+    kind: Literal["http"]
+    url: str
+    auth_env: str | None = None
+    """Name of the env var holding the bearer token. Never the token itself."""
+
+
+class IdsMapping(_Strict):
+    list: str
+    """Key in `structuredContent` holding the array of result records."""
+    id: str
+    title: str | None = None
+
+
+class SelectSpec(_Strict):
+    tool: str
+    args: dict = Field(default_factory=dict)
+    ids: IdsMapping | None = None
+    """Omitted only when the select tool returns tier-1 resource links."""
+
+
+class ReadSpec(_Strict):
+    tool: str
+    id_arg: str
+    """The argument name the reader takes the id under. It is not `id`: AWS says
+    `url` and GitHub says `path`, which is why no default could be right."""
+    static_args: dict = Field(default_factory=dict)
+    """Constant arguments alongside the id -- GitHub's reader needs owner+repo."""
+    text_key: str | None = None
+    """Tier-2 only: the `structuredContent` key holding the document body."""
+
+
+class McpSourceConfig(_Strict):
+    system: str
+    transport: StdioTransport | HttpTransport = Field(discriminator="kind")
+    read: ReadSpec
+    select: SelectSpec | None = None
+    static_ids: list[str] | None = None
+    media_type: str = "text/markdown"
+
+    @property
+    def tool_names(self) -> frozenset[str]:
+        """The entire callable set. There is no third entry and no config key
+        that could add one (architecture §4.1)."""
+        names = {self.read.tool}
+        if self.select is not None:
+            names.add(self.select.tool)
+        return frozenset(names)
+
+
+def problems_for(config: dict) -> list[str]:
+    """Human-readable problems; `[]` means the config is usable. No network I/O."""
+    try:
+        cfg = McpSourceConfig.model_validate(config)
+    except ValidationError as exc:
+        return [
+            f"config {'.'.join(str(p) for p in e['loc']) or '<root>'}: {e['msg']}"
+            for e in exc.errors()
+        ]
+
+    problems: list[str] = []
+    if cfg.select is not None and cfg.static_ids is not None:
+        problems.append(
+            "config 'select' and 'static_ids' are mutually exclusive: a source "
+            "has one selector"
+        )
+    if cfg.select is None and not cfg.static_ids:
+        problems.append(
+            "config needs either 'select' (a select tool) or 'static_ids' (a "
+            "configured id list); a server whose select tool returns only prose "
+            "is supported through 'static_ids'"
+        )
+    if not _SYSTEM_NAME.match(cfg.system):
+        problems.append(
+            "config 'system' must be a short identifier -- letters, digits, "
+            "'_' and '-', starting with a letter or digit -- because it is "
+            f"interpolated into every doc_id and into the publish branch: "
+            f"{cfg.system!r}"
+        )
+    if isinstance(cfg.transport, HttpTransport):
+        parts = urlsplit(cfg.transport.url)
+        if parts.scheme not in ("http", "https") or not parts.netloc:
+            problems.append(
+                f"config 'transport.url' must be an http(s) URL: {cfg.transport.url!r}"
+            )
+    auth_env = getattr(cfg.transport, "auth_env", None)
+    if auth_env and not _ENV_NAME.match(auth_env):
+        problems.append(
+            "config 'transport.auth_env' must name an environment variable "
+            f"(ALL_CAPS), not hold its value: {auth_env!r}"
+        )
+    if cfg.read.id_arg in cfg.read.static_args:
+        # Merged as `{id_arg: ref.raw_id, **static_args}`, so a static_args key
+        # equal to id_arg wins and every read returns the SAME document while
+        # each record keeps its own native_id: N distinct concepts all carrying
+        # one file's text, with nothing raising anywhere. It is a config
+        # mistake, and this offline gate is where a config mistake belongs --
+        # reordering the merge would only bury it.
+        problems.append(
+            f"config 'read.static_args' must not contain {cfg.read.id_arg!r}: it "
+            "is 'read.id_arg', so a constant there would override the document "
+            "id and every read would return the same document"
+        )
+    # The ids are known at config time, so slug them here. Without this,
+    # `static_ids: ['../../secrets.md']` reports no problems and then raises out
+    # of `select_refs` at fetch -- which is OUTSIDE `_fetch`'s per-document
+    # catch, so one bad configured id aborts the whole run instead of being
+    # caught by `kbforge validate`.
+    seen: dict[str, str] = {}
+    for raw in cfg.static_ids or []:
+        try:
+            native = native_id_for(raw)
+        except SlugError as exc:
+            problems.append(f"config 'static_ids' entry is unusable: {exc}")
+            continue
+        # Two ids reducing to one native_id become one doc_id, and
+        # `assert_fetch_contract` then aborts the run on "duplicate doc_id".
+        # A configured list is the one selector whose ids are all known
+        # offline, so say so now rather than mid-run.
+        if native in seen:
+            problems.append(
+                f"config 'static_ids' entries {seen[native]!r} and {raw!r} both "
+                f"reduce to the same native_id {native!r}, which would be one "
+                "doc_id"
+            )
+        else:
+            seen[native] = raw
+    if isinstance(cfg.transport, StdioTransport):
+        for entry in cfg.transport.env:
+            if not _ENV_NAME.match(entry):
+                problems.append(
+                    "config 'transport.env' entries must name environment "
+                    f"variables (ALL_CAPS), not hold their values: {entry!r}"
+                )
+    return problems
