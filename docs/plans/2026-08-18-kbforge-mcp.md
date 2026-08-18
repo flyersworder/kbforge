@@ -776,7 +776,7 @@ def records_from_read(
 
     blocks = _resource_blocks(result)
     if blocks:  # tier 1 -- one call may legitimately yield many documents
-        records = []
+        carried = []
         for b in blocks:
             res = getattr(b, "resource", b)
             uri = str(getattr(res, "uri", ref.raw_id))
@@ -786,14 +786,25 @@ def records_from_read(
             elif blob is not None:
                 payload = base64.b64decode(blob)
             else:
-                continue
-            sub = ref.native_id if uri == ref.raw_id else _ref_for(uri, None).native_id
-            records.append(
-                record(payload, sub, uri if "://" in uri else ref.url,
-                       getattr(res, "mime_type", None) or media_type)
-            )
-        if records:
-            return records
+                continue  # a bare link with no content is not a document
+            carried.append((uri, payload, getattr(res, "mime_type", None)))
+
+        # One document in, one document out: the identity we ASKED for wins. A
+        # server's own uri may encode volatile state -- GitHub returns
+        # `repo://owner/repo/sha/<commit-sha>/contents/<path>`, and slugging that
+        # would put a commit sha inside every native_id, so identity would churn
+        # on every commit and nothing would ever diff as `modified`.
+        # Only a one-to-many read (a "read this folder" tool) needs new
+        # identities, and then the uris are the only source for them.
+        if len(carried) == 1:
+            uri, payload, mime = carried[0]
+            return [record(payload, ref.native_id, ref.url, mime or media_type)]
+        if carried:
+            return [
+                record(payload, _ref_for(uri, None).native_id,
+                       uri if "://" in uri else ref.url, mime or media_type)
+                for uri, payload, mime in carried
+            ]
 
     if spec.text_key and result.structured_content is not None:  # tier 2
         body = result.structured_content.get(spec.text_key)
@@ -1626,6 +1637,14 @@ def test_github_readonly_endpoint_yields_verbatim_files():
 
 Run: `uv run pytest packages/kbforge-mcp/tests/test_live.py --run-live -v`
 Expected: the two AWS tests pass; the GitHub test passes if `GITHUB_TOKEN` is set.
+
+Check one shape question against real GitHub output before trusting the result:
+`get_file_contents` appears to return a prose preamble text block alongside the
+resource. If the resource block carries no text/blob, tier 1 yields nothing and the
+mapping falls through to tier 3, which would capture the preamble
+(`"successfully downloaded text file (SHA: ...)"`) as the document body. Assert on
+real content (`"Security Policy" in docs[0].text`) so that failure cannot pass, and
+report what the response actually contained.
 
 If the AWS response shape differs from the config above, **fix the config, not the
 mapping** — that is the config-only promise being tested. If the mapping genuinely
