@@ -986,6 +986,12 @@ from mcp.types import CallToolResult
 from kbforge_mcp.config import HttpTransport, McpSourceConfig
 
 
+# Set by tests to point `open_session` at an in-process fixture server. It lives
+# here, not in connector.py: connector imports client, so the reverse import
+# would cycle. Never set in production.
+_server_override = None
+
+
 class ToolNotAllowed(RuntimeError):
     """A tool outside the configured pair, or one declaring itself mutating."""
 
@@ -1041,6 +1047,10 @@ class McpClient:
 @asynccontextmanager
 async def open_session(cfg: McpSourceConfig):
     """One session per fetch: select and every read share it."""
+    if _server_override is not None:
+        async with McpClient(server=_server_override, allowed=cfg.tool_names) as c:
+            yield c
+        return
     if isinstance(cfg.transport, HttpTransport):
         headers = {}
         if cfg.transport.auth_env:
@@ -1130,9 +1140,9 @@ CONFIG = {
 @pytest.fixture
 def cfg(monkeypatch):
     """Point the connector at the in-process fixture server."""
-    from kbforge_mcp import connector as mod
+    from kbforge_mcp import client as mod
 
-    monkeypatch.setattr(mod, "_server_override", fixture_server, raising=False)
+    monkeypatch.setattr(mod, "_server_override", fixture_server)
     return dict(CONFIG)
 
 
@@ -1158,9 +1168,16 @@ def test_normalize_is_stable_and_clock_free(cfg, monkeypatch):
     import kbforge_mcp.connector as mod
 
     class FrozenElsewhere:
+        # normalize must not call now(); it MUST still call fromisoformat, so the
+        # shim delegates that one. A shim without it fails on AttributeError and
+        # would pass for the wrong reason.
         @staticmethod
         def now(tz=None):
-            return datetime(2099, 1, 1, tzinfo=UTC)
+            raise AssertionError("normalize called the clock (architecture 4.3)")
+
+        @staticmethod
+        def fromisoformat(value):
+            return datetime.fromisoformat(value)
 
     monkeypatch.setattr(mod, "datetime", FrozenElsewhere)
     second = CONNECTOR.kbforge_normalize(result.records)
@@ -1177,9 +1194,14 @@ def test_retrieved_at_is_stamped_in_fetch_not_normalize(cfg):
 def test_a_failed_read_degrades_complete_rather_than_dropping_silently(cfg):
     # Skipping a document while still claiming complete=True would, once the
     # 0.8.0 manifest lands, manufacture a deletion out of a transient error.
-    cfg["select"]["ids"] = {"list": "results", "id": "path"}
-    cfg["_inject_missing_id"] = True  # honoured by the fixture selector shim
+    # `docs/missing.md` makes the fixture's read_doc raise -> ToolCallFailed.
+    cfg.pop("select")
+    cfg["static_ids"] = ["docs/retention.md", "docs/missing.md"]
     result = CONNECTOR.kbforge_fetch(cfg, None)
+    docs = CONNECTOR.kbforge_normalize(result.records)
+    assert [d.doc_id for d in docs] == ["fixture:docs/retention"]
+    # static_ids is complete by construction -- the failed read is what
+    # downgrades it, and that downgrade is the whole point.
     assert result.complete is False
 
 
@@ -1292,15 +1314,13 @@ from kbforge_mcp.selectors import select_refs
 
 _NAME = "mcp"
 
-# Set by tests to drive an in-process fixture server. Never set in production.
-_server_override = None
-
-
 async def _fetch(cfg: McpSourceConfig) -> tuple[list[RawRecord], bool]:
     async with open_session(cfg) as client:
         refs, complete = await select_refs(client, cfg)
         records: list[RawRecord] = []
         stamped = datetime.now(tz=UTC).isoformat()
+        # `system` reaches normalize ONLY through anchor_hint: normalize receives
+        # records, never config.
         for ref in refs:
             args = {cfg.read.id_arg: ref.raw_id, **cfg.read.static_args}
             try:
@@ -1313,6 +1333,7 @@ async def _fetch(cfg: McpSourceConfig) -> tuple[list[RawRecord], bool]:
                 continue
             for rec in got:
                 rec.anchor_hint["retrieved_at"] = stamped
+                rec.anchor_hint["system"] = cfg.system
             records.extend(got)
         return records, complete
 
@@ -1374,9 +1395,9 @@ class McpConnector:
 CONNECTOR = McpConnector()
 ```
 
-`system` must reach `normalize` through `anchor_hint` — normalize receives only
-records, never config. Add `"system": cfg.system` to the hint in `_fetch`, next to
-`retrieved_at`.
+`_server_override` is honoured inside `open_session` so the fixture server goes
+through the same code path the real transports use. A parallel path would be a
+path the tests do not test.
 
 - [ ] **Step 5: Run the connector tests and iterate until green**
 
@@ -1415,8 +1436,6 @@ from __future__ import annotations
 import subprocess
 import sys
 
-import pytest
-
 from kbforge.registry import build_registry
 
 
@@ -1435,8 +1454,7 @@ def test_kbforge_list_shows_the_connector():
     assert "mcp" in out
 
 
-@pytest.mark.parametrize("kind", ["stdio"])
-def test_a_real_stdio_subprocess_round_trips(tmp_path, kind):
+def test_a_real_stdio_subprocess_round_trips(tmp_path):
     # The in-process Client skips transport framing entirely. Launch the fixture
     # server as a subprocess so the stdio branch is actually exercised.
     server = tmp_path / "server.py"
