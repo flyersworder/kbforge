@@ -15,10 +15,11 @@ one has no `__init__.py` of its own, and PEP 420 only synthesizes a namespace
 package when no *regular* package by that name is found anywhere on the path --
 a regular package (this file) wins.
 
-Deliberately not a `conftest.py`: the repo-root `tests/conftest.py` already
-registers `--run-live` and the `live` marker, and a second `pytest_addoption`
-for the same flag raises `ValueError: option names {'--run-live'} already
-added`.
+Deliberately not a `conftest.py`: the repo-root `conftest.py` already
+registers `--run-live` and the `live` marker -- and it must live at the repo
+root, not in `tests/`, precisely so it is an ancestor of every collected
+path, this one included. A second `pytest_addoption` for the same flag
+raises `ValueError: option names {'--run-live'} already added`.
 """
 
 from __future__ import annotations
