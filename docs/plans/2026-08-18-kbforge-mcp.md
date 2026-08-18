@@ -1016,11 +1016,7 @@ from contextlib import asynccontextmanager
 
 from mcp import Client
 from mcp.client.stdio import StdioServerParameters, stdio_client
-from mcp.client.streamable_http import (
-    StreamableHTTPTransport,
-    create_mcp_http_client,
-    streamable_http_client,
-)
+from mcp.client.streamable_http import create_mcp_http_client, streamable_http_client
 from mcp.types import CallToolResult
 
 from kbforge_mcp.config import HttpTransport, McpSourceConfig
@@ -1089,7 +1085,13 @@ class McpClient:
 async def _http_transport(url: str, headers: dict[str, str]):
     """`Client` has no `headers` parameter, so a bearer token rides on the httpx
     client the streamable-HTTP transport is built from. `Transport` is a Protocol
-    -- an async context manager yielding TransportStreams -- so this qualifies."""
+    -- an async context manager yielding TransportStreams -- so this qualifies.
+
+    This is used for EVERY http source, authenticated or not. `StreamableHTTPTransport`
+    looks like the natural no-auth shortcut and is not one: it does not implement the
+    async context manager protocol, so `Client(StreamableHTTPTransport(url))` raises
+    `TypeError: ... does not support the asynchronous context manager protocol`.
+    Verified against a live public server."""
     async with create_mcp_http_client(headers=headers) as http:
         async with streamable_http_client(url, http_client=http) as streams:
             yield streams
@@ -1111,12 +1113,11 @@ async def open_session(cfg: McpSourceConfig):
                     f"environment variable {cfg.transport.auth_env} is not set"
                 )
             headers["Authorization"] = f"Bearer {token}"
-        transport = (
-            _http_transport(cfg.transport.url, headers)
-            if headers
-            else StreamableHTTPTransport(cfg.transport.url)
+        # One shape for authenticated and unauthenticated alike -- see the
+        # docstring on `_http_transport` for why there is no no-auth shortcut.
+        client = McpClient(
+            server=_http_transport(cfg.transport.url, headers), allowed=cfg.tool_names
         )
-        client = McpClient(server=transport, allowed=cfg.tool_names)
     else:
         params = StdioServerParameters(
             command=cfg.transport.command,
@@ -1130,12 +1131,18 @@ async def open_session(cfg: McpSourceConfig):
         yield c
 ```
 
-All SDK names above were verified against the installed package:
-`stdio_client(StdioServerParameters(...))` (an async context manager, **not**
-`stdio_transport`), `streamable_http_client(url, http_client=...)`,
-`create_mcp_http_client(headers=...)`, and `StreamableHTTPTransport(url)` for the
-no-auth case. `mcp.Client.__init__` accepts `Server | MCPServer | Transport | str`
-and **no `headers` keyword** — passing one raises `TypeError`.
+Every SDK name and both transports above were verified by running them:
+
+- `Client(stdio_client(StdioServerParameters(...)))` was driven against a real
+  subprocess server — tools listed, a document read, and a raising tool surfaced as
+  `is_error=True`. The helper is `stdio_client`, an `@asynccontextmanager`; there is
+  no `stdio_transport`.
+- `Client(_http_transport(url, headers))` was connected to a live public MCP server
+  over HTTP and listed its tools.
+- `Client(StreamableHTTPTransport(url))` **fails** with `TypeError: ... does not
+  support the asynchronous context manager protocol`. Do not reintroduce it.
+- `mcp.Client.__init__` accepts `Server | MCPServer | Transport | str` and **no
+  `headers` keyword** — passing one raises `TypeError`.
 
 - [ ] **Step 5: Run to verify the tests pass**
 
