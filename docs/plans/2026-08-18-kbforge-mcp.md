@@ -316,7 +316,11 @@ STDIO = {
     "select": {
         "tool": "search_documentation",
         "args": {"search_phrase": "S3 bucket naming", "limit": 20},
-        "ids": {"list": "results", "id": "url", "title": "title"},
+        # VERIFIED against the live server: the key is `search_results`, not
+        # `results`. The full structuredContent keys are
+        # ['facets', 'metadata', 'query_id', 'search_results'], and each row
+        # carries `url` and `title`.
+        "ids": {"list": "search_results", "id": "url", "title": "title"},
     },
     "read": {"tool": "read_documentation", "id_arg": "url"},
 }
@@ -1619,6 +1623,20 @@ AWS = {
 }
 
 
+# Verified against the live server before this task was written:
+#   * all five AWS tools report `read_only_hint = None` (never declared). This is
+#     the case the client's refuse-only-on-explicit-False rule exists for; a
+#     `if not hint: refuse` client could not talk to this server at all.
+#   * `search_documentation` returns real tier-2 structuredContent.
+#   * `read_documentation` returns ONE text block plus a scalar-wrapped
+#     `{'result': ...}` structuredContent. With `text_key` unset the reader
+#     correctly takes tier 3 (the text blocks).
+#   * that text begins with a preamble line, `AWS Documentation from <url>:`,
+#     before the document's own `# Heading`. Report what you observe about it;
+#     do NOT strip it in the connector -- a source's bytes are the source's bytes,
+#     and the fix, if any is wanted, belongs in synthesis.
+
+
 def test_aws_docs_select_then_read_yields_citable_documents():
     result = CONNECTOR.kbforge_fetch(AWS, None)
     docs = CONNECTOR.kbforge_normalize(result.records)
@@ -1714,7 +1732,12 @@ CLAUDE.md: a test over a gate is worth what it catches. For each row, make the
 edit **in place**, run the named test, confirm it fails **with the expected
 message**, then restore with `git checkout -- <path>`.
 
-Never copy the repo to mutate it: a `cp -R` keeps a `.venv` that resolves
+**Commit everything before you mutate anything.** `git checkout -- <path>` restores
+from HEAD, so it discards uncommitted work in that file along with the mutation —
+Task 4's implementer lost a round of fixes this way and had to recover them. A clean
+tree makes the restore exact.
+
+Never copy the repo to mutate it either: a `cp -R` keeps a `.venv` that resolves
 `kbforge_mcp` to the original source, so nothing is actually mutated and
 everything passes.
 
