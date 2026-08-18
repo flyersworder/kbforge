@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- `kbforge-mcp`, a separate distribution that turns any MCP server with a select
-  tool and a read-by-id tool into a kbforge source through configuration.
+- `kbforge-mcp`, a separate distribution that turns a **mappable** MCP server with
+  a select tool and a read-by-id tool into a kbforge source through configuration.
   Response mapping is protocol-first: MCP's own content-block types are the
-  vocabulary, so the common case needs no config at all.
+  vocabulary, so the common case needs no config at all — but "mappable" is a real
+  qualifier on the selector side, not a formality, and the first known-limits entry
+  below says which servers it excludes and what to do instead.
 - Read-only is structural — the callable tool set *is* the two configured tool
   names — with a `read_only_hint` refusal as defence in depth.
 
@@ -309,7 +311,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/flyersworder/kbforge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/flyersworder/kbforge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/flyersworder/kbforge/compare/v0.4.0...v0.5.0
 [0.4.0]: https://github.com/flyersworder/kbforge/compare/v0.3.0...v0.4.0

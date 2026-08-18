@@ -86,6 +86,20 @@ links or as `structuredContent`, and otherwise you enumerate the corpus by hand 
 would close the gap — an opt-in flag to parse a text block as JSON — is not built
 (design note §10.3).
 
+## What a source's own framing does to a concept
+
+This connector is a retriever: it hands kbforge the source's bytes and does not
+tidy them. So a source's own framing survives into the rendered concept, and you
+will see it in the first bundle you produce. Two instances are known — the AWS
+documentation server prefixes every document with `AWS Documentation from <url>:`,
+and a whole markdown document brings its own `#` heading, which ends up *below* the
+`# {title}` synthesis renders, giving you two headings. Neither is something this
+connector will fix; a connector that edited source bytes would no longer be a
+retriever, and provenance is what that buys. The fix, if you want one, belongs in
+synthesis — see
+[`docs/architecture.md`](https://github.com/flyersworder/kbforge/blob/main/docs/architecture.md)
+§4.1.
+
 ## Design
 
 The [design note](https://github.com/flyersworder/kbforge/blob/main/docs/design/2026-08-16-mcp-source-connector-design.md)

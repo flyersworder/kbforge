@@ -293,11 +293,25 @@ discovery loop and no allowlist key, so there is nothing to widen, misconfigure,
 or forget. A tool's `read_only_hint` annotation is defence in depth layered on
 top — refused when explicitly `false`, permitted when unset, because the SDK's
 sentinel for "never declared" and the spec's default of `false` are different
-states and conflating them would reject nearly every real server. Both layers
-constrain *which* tools are reachable, never whether a reachable one is
+states. Conflating them would refuse any server that simply never set the
+annotation, and that is the common case rather than the exotic one: all five tools
+on the AWS Documentation server — one of this release's two live targets — declare
+no hint at all, so the naive rule could not talk to it. Both layers constrain
+*which* tools are reachable, never whether a reachable one is
 side-effect-free: naming a mutating tool as the reader is a deployment error
 kbforge cannot detect, which is why config should prefer a server-side read-only
 endpoint wherever the server publishes one.
+
+*Why the reader is a tool call, not `resources/read`.* MCP resources look like the
+obvious reader — read-only by definition, stable URIs, spec-defined, no mapping
+required — so this was measured rather than assumed before the mapping below was
+designed. Across **eleven** MCP servers surveyed (GitHub, deepwiki, Context7,
+BigQuery, Data Commons, Google Drive, Gmail, Calendar, Playwright, Chrome DevTools,
+Vercel), `resources/list` returned **four** entries in total, all of them GitHub's
+MCP-App UI templates (`ui://…`, `text/html;profile=mcp-app`). Not one content
+resource anywhere. Servers put their content behind tools, so a design requiring
+resources would work against approximately nothing — which is what makes the
+mapping below unavoidable rather than a convenience.
 
 *Mapping is protocol-first, and it does not reach every server.* MCP's own
 content-block types are the mapping vocabulary — resource blocks first, then
@@ -327,6 +341,18 @@ AWS's documentation server prefixes every document with `AWS Documentation from
 synthesis then renders *below* its own `# {title}` — a doubled heading. Any fix
 belongs in synthesis, which is the stage allowed to interpret; a connector that
 tidied either would be extracting.
+
+*Untrusted content, bounded rather than eliminated.* Source content reaches the
+synthesizer as data, and MCP's own ecosystem documentation warns about prompt
+injection and tool poisoning through it. Nothing here is new — every connector
+carries the same exposure — but MCP widens the set of sources that reach the
+synthesizer, which is precisely what this release does, so the bound is worth
+stating. kbforge's existing structural defences are what hold: cross-links are
+resolved by kbforge from declared relations and never taken from model prose
+(§4.4 law 2), and deletion is structure rather than prose — `files_removed` is
+assigned by the pipeline, overwriting whatever a synthesizer sets. Those bound the
+blast radius; they do not eliminate it, and no reading of them makes an untrusted
+source safe to publish unreviewed. The human gate is the control.
 
 *Agentic fetch is a transport, not a stage.* An agentic `fetch` — one that *decides
 which* sources are worth reading and may follow leads, including via an agentic MCP

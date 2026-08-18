@@ -1,7 +1,19 @@
 """Live tests. Skipped unless --run-live.
 
 AWS Documentation needs network but NO credentials, so it is the one live test in
-this repo that can run unattended. GitHub needs GITHUB_TOKEN.
+this repo that can run unattended. GitHub needs GITHUB_TOKEN, and is here for its
+tier-1 resource-block reader, which nothing else exercises.
+
+**deepwiki was the original target and was dropped**, recorded here because a
+rejected target is reasoning that appears nowhere in code. Measured against the
+selector/reader split (architecture §4.1) it fails four ways: it exposes no
+resources; `read_wiki_contents(repoName)` takes no page parameter, so granularity
+is one document per repo rather than per page; `read_wiki_structure` returns a
+prose outline rather than ids; and `ask_question` is an extractor, which
+retriever-not-extractor forbids. Its content is also AI-generated from the
+upstream repo, so kbforge would be synthesizing concepts out of another model's
+synthesis and citing generated prose as provenance. A server can be popular,
+stable, and credential-free and still be the wrong shape.
 """
 
 from __future__ import annotations

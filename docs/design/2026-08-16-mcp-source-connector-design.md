@@ -21,10 +21,12 @@ the reasoning is not recoverable from the code — there is no code.
 | Was | Now |
 |---|---|
 | §1 the config-only bet, and its measured limit | `architecture.md` §4.1 |
-| §2 selector / reader, read-only as a structural tool set | `architecture.md` §4.1 |
+| §2 selector / reader, the eleven-server `resources/list` survey, read-only as a structural tool set | `architecture.md` §4.1 |
 | §3 a separate distribution, and why never core | `architecture.md` §4.1 |
 | §4–§7 shape, response mapping, transport, error handling | the code, and `architecture.md` §4.1 for the parts the code cannot state |
-| §8 targets, three test layers, mutation tests | `packages/kbforge-mcp/tests/`, `CHANGELOG.md` 0.7.0 |
+| §8's targets and three test layers | `packages/kbforge-mcp/tests/` — the layers are `fake_server.py` + `test_client.py` (in-process), `test_stdio.py` (subprocess), `test_live.py` (`--run-live`); why deepwiki was rejected is in `test_live.py`'s docstring |
+| §8's mutation tests | performed against 0.7.0 at build time; they leave no artefact in the repo by design (each gate is broken in place and restored), so the standing rule is CLAUDE.md's "Verifying a gate" |
+| §8's `mcp-server-git` negative fixture | **not built** — still here, §10.4 |
 | the `assert_stability` clock blind spot (was §10.3) | `architecture.md` §4.3 |
 
 One correction the build made to the original note, recorded because the note
@@ -136,6 +138,22 @@ after the plan was fixed, and adding an unreviewed config key late is how mappin
 surfaces grow by accident. Until it exists, such a source is configured with an
 explicit id list, which means enumerating the corpus by hand.
 
+### 10.4 The negative fixture that was planned and not built
+
+`mcp-server-git` was to be carried as a **fixture for the limit, not a passing
+gate**: five of its twelve tools mutate, and it has no read-by-id at all —
+`git_show(revision)` returns a commit's patch, not a document — so it fails the
+reader requirement and `kbforge_validate_config` has nothing valid to accept. The
+test would have asserted the validation refusal only.
+
+What it was there to make concrete is the residue that no layer closes: were
+someone to configure `read.tool: git_commit`, kbforge would call it, and only an
+explicit `read_only_hint: False` on that tool would stop it. Whether the server
+sets that annotation was never checked, so the fixture would have *documented* the
+gap rather than closed it. The residue itself is stated in `architecture.md` §4.1
+and does not depend on this fixture existing; what is missing is a test that makes
+a reader feel it. Cheap to add whenever someone wants it.
+
 ## 11. Phasing
 
 | Phase | Contents | Gate |
@@ -145,6 +163,7 @@ explicit id list, which means enumerating the corpus by hand.
 | **0.8.0** | manifest cursor, tombstones, merge-vs-replace | §10.1, §10.2 |
 | later | an agentic selector | bounds/budget/tool set from agentic-ingest §9 |
 | later | `json_text` selectors | §10.3 |
+| later | the `mcp-server-git` negative fixture | §10.4 |
 
 ## 12. Amendments to `architecture.md` — applied
 
