@@ -560,6 +560,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
+    { name = "anyio" },
     { name = "kbforge-mcp" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -571,6 +572,7 @@ llm = [
 
 [package.metadata]
 requires-dist = [
+    { name = "anyio", marker = "extra == 'dev'", specifier = ">=4" },
     { name = "kbforge-mcp", marker = "extra == 'dev'", editable = "packages/kbforge-mcp" },
     { name = "pluggy", specifier = ">=1.5" },
     { name = "pydantic", specifier = ">=2.0" },

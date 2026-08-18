@@ -47,6 +47,10 @@ Changelog = "https://github.com/flyersworder/kbforge/blob/main/CHANGELOG.md"
 
 [project.optional-dependencies]
 dev = [
+    # Declared explicitly rather than leaned on transitively via `mcp`: the async
+    # tests in packages/kbforge-mcp use anyio's pytest plugin, and a test suite
+    # that depends on someone else's dependency breaks for confusing reasons.
+    "anyio>=4",
     "kbforge-mcp",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",

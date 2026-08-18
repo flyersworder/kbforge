@@ -994,8 +994,9 @@ async def test_is_error_becomes_an_exception_and_never_document_content():
 Run: `uv run pytest packages/kbforge-mcp/tests/test_client.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'kbforge_mcp.client'`
 
-You will also need `anyio` for async tests; add `"anyio>=4"` to the root
-`[project.optional-dependencies].dev` and re-sync.
+`anyio` is already declared in the root dev extras and its pytest plugin is
+registered, so `pytest.mark.anyio` plus the `anyio_backend` fixture works with no
+further setup. **Do not edit the root `pyproject.toml`.**
 
 - [ ] **Step 4: Implement `client.py`**
 
