@@ -86,7 +86,18 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
             )
         return refs
 
-    if result.structured_content is not None:
+    # A `-> str` (or other non-object) select tool still gets structuredContent
+    # from the SDK -- auto-wrapped as the single key `{"result": ...}` -- exactly
+    # like the read side's tools do (see `records_from_read`'s tier-2 comment).
+    # That is not select-able structuredContent; it is a prose tool wearing a
+    # structuredContent-shaped costume, so it must fall through to the tier-3
+    # "configure static_ids" branch below rather than being told to add `ids`
+    # to a key that will never hold a row list.
+    scalar_wrapped = result.structured_content is not None and set(
+        result.structured_content
+    ) == {"result"}
+
+    if result.structured_content is not None and not scalar_wrapped:
         if ids is None:
             # structuredContent IS present here -- the fix is a configured
             # `ids` mapping, not `static_ids`. Conflating the two messages

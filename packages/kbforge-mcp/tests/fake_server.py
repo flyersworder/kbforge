@@ -35,7 +35,17 @@ def search_docs(query: str) -> dict[str, list[dict[str, str]]]:
 # reader would silently take the tier-2 path.
 @mcp.tool(annotations=ToolAnnotations(read_only_hint=True))
 def read_doc(path: str) -> str:
-    """Tier-3 reader: bare markdown. Identity came in as `path`."""
+    """Tier-3 reader: bare markdown. Identity came in as `path`.
+
+    Falls back to a `.md`-suffixed lookup so a caller may pass an id either
+    with or without the extension -- realistic reader behaviour, and what lets
+    `docs/retention.md` and `docs/retention` both resolve to real content for
+    the slug-collision fetch-side-law test (both must succeed, or there is no
+    duplicate `doc_id` to catch). `DOCS` itself keeps only the `.md` keys, so
+    `search_docs`'s `sorted(DOCS)` result is unaffected.
+    """
+    if path not in DOCS and f"{path}.md" in DOCS:
+        path = f"{path}.md"
     if path not in DOCS:
         raise ValueError(f"no such document: {path}")
     return DOCS[path]
