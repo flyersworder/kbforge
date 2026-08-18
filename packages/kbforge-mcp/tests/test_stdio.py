@@ -75,3 +75,68 @@ def test_a_real_stdio_subprocess_round_trips(tmp_path):
     result = CONNECTOR.kbforge_fetch(cfg, None)
     docs = CONNECTOR.kbforge_normalize(result.records)
     assert [d.doc_id for d in docs] == ["fixture:docs/retention"]
+
+
+def test_transport_env_is_an_allowlist_not_inheritance(tmp_path, monkeypatch):
+    """`transport.env` names environment variables to pass through to the
+    spawned subprocess -- client.py:145 builds the child's env as
+    `{k: os.environ[k] for k in cfg.transport.env if k in os.environ}`.
+    Nothing else in the suite exercises that line at runtime: `test_config.py`
+    only checks that a listed *name* is well-formed, never that a listed name
+    actually reaches the child, and never that an unlisted one does not.
+
+    That second direction is the one that matters. `transport.env` is an
+    allowlist, not a request to inherit the operator's shell -- the same
+    posture as the two-tool callable set, applied to environment instead of
+    tools. A test that only proved forwarding works would pass equally well
+    against an implementation that leaked the entire parent environment.
+
+    A standalone server is generated here rather than reusing fake_server.py,
+    so this probe is self-contained and cannot perturb -- or be perturbed
+    by -- the shared fixture. The probe names are deliberately bespoke
+    (`KBFORGE_ENV_PROBE_*`): `get_default_environment()` in
+    `mcp.client.stdio` merges a small fixed set (`HOME`, `LOGNAME`, `PATH`,
+    `SHELL`, `TERM`, `USER` on posix) into every child regardless of
+    `transport.env`, so a probe name has to avoid that set to mean anything.
+    """
+    listed_name = "KBFORGE_ENV_PROBE_LISTED"
+    unlisted_name = "KBFORGE_ENV_PROBE_UNLISTED"
+    monkeypatch.setenv(listed_name, "listed-value")
+    monkeypatch.setenv(unlisted_name, "unlisted-value")
+
+    server = tmp_path / "env_probe_server.py"
+    server.write_text(
+        "import os\n"
+        "from mcp.server import MCPServer\n"
+        "\n"
+        "mcp = MCPServer('kbforge-mcp-env-probe')\n"
+        "\n"
+        "\n"
+        "@mcp.tool()\n"
+        "def read_env(doc_id: str) -> str:\n"
+        f"    listed = os.environ.get({listed_name!r}, '<unset>')\n"
+        f"    unlisted = os.environ.get({unlisted_name!r}, '<unset>')\n"
+        "    return f'listed={listed} unlisted={unlisted}'\n"
+        "\n"
+        "\n"
+        "if __name__ == '__main__':\n"
+        "    mcp.run()\n"
+    )
+    from kbforge_mcp.connector import CONNECTOR
+
+    cfg = {
+        "system": "envprobe",
+        "transport": {
+            "kind": "stdio",
+            "command": sys.executable,
+            "args": [str(server)],
+            "env": [listed_name],
+        },
+        "static_ids": ["probe"],
+        "read": {"tool": "read_env", "id_arg": "doc_id"},
+    }
+    result = CONNECTOR.kbforge_fetch(cfg, None)
+    docs = CONNECTOR.kbforge_normalize(result.records)
+    assert len(docs) == 1
+    assert "listed=listed-value" in docs[0].text
+    assert "unlisted=<unset>" in docs[0].text
