@@ -72,7 +72,19 @@ def test_auth_env_names_a_variable_and_never_carries_a_value():
         "url": "https://example.com/mcp",
         "auth_env": "ghp_realtokenvalue",
     }
-    assert any("looks like a value" in p for p in problems_for(cfg))
+    assert any("must name an environment variable" in p for p in problems_for(cfg))
+
+
+def test_stdio_env_entries_must_be_variable_names_not_values():
+    cfg = dict(STDIO)
+    cfg["transport"] = {
+        "kind": "stdio",
+        "command": "uvx",
+        "args": ["awslabs.aws-documentation-mcp-server@latest"],
+        "env": ["AWS_PROFILE", "ghp_realtokenvalue"],
+    }
+    problems = problems_for(cfg)
+    assert any("transport.env" in p and "ghp_realtokenvalue" in p for p in problems)
 
 
 def test_problems_are_returned_not_raised():

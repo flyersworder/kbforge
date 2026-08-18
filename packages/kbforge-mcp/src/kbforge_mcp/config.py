@@ -14,7 +14,15 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-# A conservative shape for "this is an env var NAME, not a token VALUE".
+# Enforces the ALL_CAPS environment-variable naming convention, which catches
+# the common mistake of pasting a token where a name belongs -- `ghp_...`,
+# `sk-...`, and most base64/hex secrets contain lowercase letters or
+# punctuation this rejects. It is not a credential detector: an all-uppercase
+# alphanumeric credential, such as an AWS access key ID
+# (`AKIAIOSFODNN7EXAMPLE`), is a legal variable name under this same rule and
+# passes uncaught. No regex can tell the two apart -- they are not different
+# shapes. Only checking `os.environ` at call time could, and `problems_for`
+# deliberately stays offline (see its docstring), so it does not.
 _ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 
 
@@ -106,7 +114,14 @@ def problems_for(config: dict) -> list[str]:
     auth_env = getattr(cfg.transport, "auth_env", None)
     if auth_env and not _ENV_NAME.match(auth_env):
         problems.append(
-            f"config 'transport.auth_env' looks like a value, not an environment "
-            f"variable name: {auth_env!r}"
+            "config 'transport.auth_env' must name an environment variable "
+            f"(ALL_CAPS), not hold its value: {auth_env!r}"
         )
+    if isinstance(cfg.transport, StdioTransport):
+        for entry in cfg.transport.env:
+            if not _ENV_NAME.match(entry):
+                problems.append(
+                    "config 'transport.env' entries must name environment "
+                    f"variables (ALL_CAPS), not hold their values: {entry!r}"
+                )
     return problems
