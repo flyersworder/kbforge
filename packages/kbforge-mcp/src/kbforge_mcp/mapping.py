@@ -14,6 +14,7 @@ which makes "concatenate the text blocks" deterministic rather than a heuristic.
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
 
 from mcp.types import CallToolResult, EmbeddedResource, ResourceLink, TextContent
@@ -101,7 +102,46 @@ def _is_scalar_wrapped(structured_content: dict) -> bool:
     )
 
 
+def _refs_from_rows(structured_content: dict, ids: IdsMapping) -> list[DocRef]:
+    """Tier 2: the rows an operator's `ids` mapping points at."""
+    rows = structured_content.get(ids.list)
+    if rows is None:
+        raise MappingError(
+            f"select response has no {ids.list!r} key; keys are "
+            f"{sorted(structured_content)}"
+        )
+    if not isinstance(rows, list):
+        raise MappingError(f"select response key {ids.list!r} is not a list")
+    refs = []
+    # An empty `rows` list is legal and returns `[]`, not an error: a
+    # zero-hit query result is a real state, and raising here would turn
+    # an ordinary no-op run into an aborted one. This is safe only
+    # because a query selector always yields `complete=False`, and
+    # `assert_fetch_contract` refuses a tombstone (an implied
+    # corpus-wide deletion) under `complete=False`; the other half of
+    # the hazard -- a static selector configured with zero ids -- is
+    # already closed by `problems_for` rejecting an empty `static_ids`.
+    for row in rows:
+        raw = row.get(ids.id) if isinstance(row, dict) else None
+        if raw is None:
+            raise MappingError(f"select result row has no {ids.id!r} key: {row!r}")
+        refs.append(ref_for(str(raw), row.get(ids.title) if ids.title else None))
+    return refs
+
+
 def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[DocRef]:
+    if ids is not None and result.structured_content is not None:
+        # A CONFIGURED `ids` mapping is operator intent and outranks inference,
+        # even the protocol's own. Tier 1 used to win unconditionally, so a
+        # response carrying both resource blocks and rows discarded the mapping
+        # with no error and no warning -- the inverse of the rule applied a few
+        # lines down, where a configured `ids` is believed over the auto-wrap
+        # shape heuristic precisely because the operator said so. Both readings
+        # cannot be right; this is the one that keeps a configured mapping
+        # meaningful wherever it can apply. Protocol-first still holds for the
+        # unconfigured case, which is every case the mapping was designed for.
+        return _refs_from_rows(result.structured_content, ids)
+
     blocks = _resource_blocks(result)
     if blocks:  # tier 1 -- the protocol already carries the identity
         refs = []
@@ -120,42 +160,11 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
         return refs
 
     if result.structured_content is not None:
-        if ids is not None:
-            # An explicitly configured `ids` mapping is the operator telling us
-            # where the rows live; believe it regardless of the key set's shape.
-            # `ids.list` may legitimately be named `"result"` -- that name isn't
-            # reserved to the SDK's auto-wrap, so gating tier 2 on the key set
-            # here would refuse a valid config with a false "not mappable"
-            # message. The auto-wrap heuristic below is for the *unconfigured*
-            # case only, where there is no operator intent to defer to.
-            rows = result.structured_content.get(ids.list)  # tier 2
-            if rows is None:
-                raise MappingError(
-                    f"select response has no {ids.list!r} key; keys are "
-                    f"{sorted(result.structured_content)}"
-                )
-            if not isinstance(rows, list):
-                raise MappingError(f"select response key {ids.list!r} is not a list")
-            refs = []
-            # An empty `rows` list is legal and returns `[]`, not an error: a
-            # zero-hit query result is a real state, and raising here would turn
-            # an ordinary no-op run into an aborted one. This is safe only
-            # because a query selector always yields `complete=False`, and
-            # `assert_fetch_contract` refuses a tombstone (an implied
-            # corpus-wide deletion) under `complete=False`; the other half of
-            # the hazard -- a static selector configured with zero ids -- is
-            # already closed by `problems_for` rejecting an empty `static_ids`.
-            for row in rows:
-                raw = row.get(ids.id) if isinstance(row, dict) else None
-                if raw is None:
-                    raise MappingError(
-                        f"select result row has no {ids.id!r} key: {row!r}"
-                    )
-                refs.append(
-                    ref_for(str(raw), row.get(ids.title) if ids.title else None)
-                )
-            return refs
-
+        # `ids` is None here: the branch at the top of this function took every
+        # configured case. `ids.list` may legitimately be named `"result"` --
+        # that name isn't reserved to the SDK's auto-wrap -- which is why the
+        # heuristic below is for the UNCONFIGURED case only, where there is no
+        # operator intent to defer to.
         if not _is_scalar_wrapped(result.structured_content):
             # structuredContent IS present here -- the fix is a configured
             # `ids` mapping, not `static_ids`. Conflating the two messages
@@ -175,6 +184,31 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
         "select response carries neither resource blocks nor structuredContent; "
         "a prose-only select tool is not mappable -- configure 'static_ids' instead"
     )
+
+
+def _decode_blob(blob: str, ref: DocRef, uri: str) -> bytes:
+    """`b64decode` raises `binascii.Error` (a ValueError, NOT a MappingError) on
+    a padding failure, and `_fetch` catches only `(ToolCallFailed, MappingError)`
+    -- so one corrupt blob propagated straight out of `kbforge_fetch` and killed
+    the run, the exact opposite of the per-document degradation `_text_payload`
+    argues for below. Converted here so a corrupt document is skipped and
+    `complete` degrades, like every other per-document failure.
+
+    `validate=True`, because the default silently DROPS every character outside
+    the base64 alphabet: a truncated or corrupted blob decodes to plausible-
+    looking garbage and ships as a document instead of being reported. Whitespace
+    is stripped first rather than rejected -- line-wrapping base64 is an ordinary
+    encoding convention, not corruption, and `validate=True` would otherwise
+    refuse a perfectly good wrapped blob.
+    """
+    try:
+        return base64.b64decode("".join(blob.split()), validate=True)
+    except (binascii.Error, ValueError) as exc:
+        raise MappingError(
+            f"read response for {ref.native_id} carried a resource at {uri} "
+            f"whose blob is not valid base64 ({exc}); the document is skipped "
+            "rather than the run aborted"
+        ) from exc
 
 
 def _text_payload(payload: bytes, ref: DocRef, uri: str, res: object) -> bytes:
@@ -233,9 +267,20 @@ def records_from_read(
             if text is not None:
                 payload = text.encode("utf-8")
             elif blob is not None:
-                payload = _text_payload(base64.b64decode(blob), ref, uri, res)
+                payload = _text_payload(_decode_blob(blob, ref, uri), ref, uri, res)
             else:
                 continue  # a bare link with no content is not a document
+            if not payload.strip():
+                # "An empty read is an error, not an empty document" -- the rule
+                # the tier-2 branch below cites as established. A resource block
+                # that IS present and carries an empty string is the same
+                # nothing as a response with no blocks at all, and it produced a
+                # published concept with an empty body and no error anywhere.
+                raise MappingError(
+                    f"read response for {ref.native_id} carried an empty "
+                    f"resource at {uri}; an empty read is an error, not an "
+                    "empty document"
+                )
             carried.append((uri, payload, getattr(res, "mime_type", None)))
 
         if not carried:
@@ -261,52 +306,68 @@ def records_from_read(
                 "(every one was a bare link); a link is a pointer, not a "
                 "document -- a directory listing cannot be read as one"
             )
-        # One document in, one document out: the identity we ASKED for wins. A
-        # server's own uri may encode volatile state -- GitHub returns
-        # `repo://owner/repo/sha/<commit-sha>/contents/<path>`, and slugging that
-        # would put a commit sha inside every native_id, so identity would churn
-        # on every commit and nothing would ever diff as `modified`.
-        # Only a one-to-many read (a "read this folder" tool) needs new
-        # identities, and then the uris are the only source for them.
-        if len(carried) == 1:
-            uri, payload, mime = carried[0]
-            return [
-                record(payload, ref.native_id, ref.url, mime or media_type, ref.title)
-            ]
-        records = []
-        for uri, payload, mime in carried:
-            # Bind once: `ref_for` already computes the same "does this
-            # id look like a url" predicate that decides `.url`, and a
-            # second copy of that predicate inline is a second place for
-            # the two to drift.
-            r = ref_for(uri, None)
-            # Every field comes from the per-document ref, title included.
-            # `EmbeddedResource` carries no title of its own, so `r.title`
-            # is None and `kbforge_normalize` derives a per-document title
-            # from that document's native_id -- whereas reusing `ref.title`
-            # here would stamp the *folder's* title onto all five documents
-            # a "read this folder" call returned.
-            records.append(
-                record(
-                    payload,
-                    r.native_id,
-                    r.url or ref.url,
-                    mime or media_type,
-                    r.title,
-                )
+        if len(carried) > 1:
+            # ONE DOCUMENT IN, ONE DOCUMENT OUT -- and a count can no longer
+            # decide otherwise. The single-resource branch below exists because
+            # a server's own uri may encode volatile state: GitHub returns
+            # `repo://owner/repo/sha/<commit-sha>/contents/<path>`, and slugging
+            # that puts a commit sha inside `native_id`, so identity churns on
+            # every commit, every document diffs as `added` and never
+            # `modified`, and stale concepts pile up with no tombstone to remove
+            # them. Selecting that branch by `len(carried) == 1` meant a single
+            # extra content-bearing resource silently flipped the REQUESTED
+            # document onto uri-derived identity too -- the precise failure the
+            # branch was written to prevent.
+            #
+            # A response cannot reliably tell "your document, plus extras" from
+            # "the contents of the container you asked for", and only the second
+            # licenses deriving identity from uris. So this fails closed rather
+            # than guessing, which is this design's posture everywhere else
+            # (a prose-only selector, a non-text blob, a bodiless read). No
+            # configured source needs one-to-many today, and the branch that
+            # handled it had never run against a real server -- GitHub's file
+            # read carries exactly one resource, AWS carries none. A source that
+            # genuinely reads containers should say so explicitly rather than be
+            # inferred from a count; nothing here forecloses adding that, and
+            # until a real server demonstrates the shape there is nothing to
+            # design against.
+            raise MappingError(
+                f"read response for {ref.native_id} carried {len(carried)} "
+                "content-bearing resources; a read is one document in, one "
+                "document out, and which of these IS that document cannot be "
+                "told from the response -- deriving identity from the server's "
+                "uris would put volatile state (a commit sha) into every "
+                "native_id. Point 'read.tool' at a single-document reader."
             )
-        return records
+        uri, payload, mime = carried[0]
+        return [record(payload, ref.native_id, ref.url, mime or media_type, ref.title)]
 
     if spec.text_key and result.structured_content is not None:  # tier 2
         body = result.structured_content.get(spec.text_key)
-        # `None` and an empty string are both "no body"; an int `0` or bool
+        # `None` and a blank string are both "no body"; an int `0` or bool
         # `False` are real content that happens to stringify to `"0"` /
-        # `"False"`, so the truthiness check only applies once a str is
-        # already established (the type guard), keeping tier 3's "an empty
-        # read is an error, not an empty document" rule consistent here too.
-        if body is None or (isinstance(body, str) and not body):
+        # `"False"`, so the emptiness check only applies once a str is
+        # already established (the type guard), keeping the "an empty read is
+        # an error, not an empty document" rule consistent across all three
+        # tiers. Whitespace-only counts as blank: `kbforge_normalize` strips
+        # the text, so `"   "` publishes exactly the empty concept this rule
+        # exists to refuse.
+        if body is None or (isinstance(body, str) and not body.strip()):
             raise MappingError(
                 f"read response has no {spec.text_key!r} key for {ref.native_id}"
+            )
+        if not isinstance(body, (str, int, float)):
+            # Anything else -- a dict, a list -- would be published as its
+            # PYTHON REPR by the `str()` below, and nothing downstream can tell
+            # `"{'markdown': '...'}"` from a document. That is an ordinary
+            # misconfiguration (`text_key: content` against
+            # `{"content": {"markdown": "..."}}`), so it gets the MappingError
+            # `_fetch` already degrades on rather than a corrupt concept.
+            # `bool` passes as a subclass of int, deliberately: see above.
+            raise MappingError(
+                f"read response key {spec.text_key!r} for {ref.native_id} holds "
+                f"a {type(body).__name__}, not a document body: {body!r:.80}. "
+                "Point 'text_key' at the key holding the text itself."
             )
         return [
             record(
@@ -319,10 +380,17 @@ def records_from_read(
         ]
 
     texts = _text_blocks(result)  # tier 3 -- complete, because identity is an input
-    if texts:
+    body = "\n\n".join(texts)
+    # `texts` alone is the wrong test: `[TextContent(text="")]` is a TRUTHY list
+    # holding an empty string, so a present-but-empty block passed straight
+    # through as a document with `payload=b""`, which synthesized and published
+    # an empty concept with nothing raising anywhere. The rule the tier-2 branch
+    # above cites as established was enforced only there; it holds in all three
+    # tiers now. Stripped for the same reason tier 2 strips.
+    if body.strip():
         return [
             record(
-                "\n\n".join(texts).encode("utf-8"),
+                body.encode("utf-8"),
                 ref.native_id,
                 ref.url,
                 media_type,
@@ -330,4 +398,7 @@ def records_from_read(
             )
         ]
 
-    raise MappingError(f"read response for {ref.native_id} carried no content")
+    raise MappingError(
+        f"read response for {ref.native_id} carried no content"
+        + (f" ({len(texts)} text block(s), all empty)" if texts else "")
+    )

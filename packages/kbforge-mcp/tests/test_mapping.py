@@ -218,6 +218,150 @@ def test_an_empty_read_response_is_an_error_not_an_empty_document():
         )
 
 
+@pytest.mark.parametrize("text", ["", "   \n  "])
+def test_a_present_but_empty_block_is_an_error_in_every_tier(text):
+    # "An empty read is an error, not an empty document" is the rule tier 2's
+    # comment cites as established -- and only tier 2 enforced it. An ABSENT
+    # block (the test above) was covered; a PRESENT but empty one was not, and
+    # that is the hole a real server actually produces:
+    #
+    #   tier 3, [TextContent(text="")]  ->  `_text_blocks` returns [""], a
+    #       TRUTHY list holding an empty string, so `if texts:` passed and a
+    #       RawRecord with payload=b"" was emitted. It synthesized and published
+    #       an empty concept with nothing raising anywhere.
+    #   tier 1, a resource whose `.text` is ""  ->  `carried`, same result.
+    #
+    # Whitespace-only is the same nothing: `kbforge_normalize` strips the text,
+    # so "   " publishes exactly the empty concept this rule refuses.
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    spec = ReadSpec(tool="r", id_arg="p")
+
+    with pytest.raises(MappingError, match="no content"):  # tier 3
+        records_from_read(
+            CallToolResult(content=[TextContent(type="text", text=text)]),
+            ref,
+            spec,
+            "text/markdown",
+        )
+
+    with pytest.raises(MappingError, match="empty resource"):  # tier 1
+        records_from_read(
+            CallToolResult(
+                content=[
+                    EmbeddedResource(
+                        type="resource",
+                        resource=TextResourceContents(
+                            uri="https://example.com/docs/a.md", text=text
+                        ),
+                    )
+                ]
+            ),
+            ref,
+            spec,
+            "text/markdown",
+        )
+
+    with pytest.raises(MappingError, match="'body'"):  # tier 2
+        records_from_read(
+            CallToolResult(content=[], structured_content={"body": text}),
+            ref,
+            ReadSpec(tool="r", id_arg="p", text_key="body"),
+            "text/markdown",
+        )
+
+
+def test_a_tier2_body_that_is_not_scalar_is_refused_not_repr_published():
+    # `str(body)` on a dict publishes "{'markdown': '...'}" as the document,
+    # and nothing downstream can tell that from a real body. Pointing
+    # `text_key` at a nested object is an ordinary misconfiguration.
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    result = CallToolResult(
+        content=[], structured_content={"content": {"markdown": "# Title"}}
+    )
+    spec = ReadSpec(tool="read", id_arg="path", text_key="content")
+    with pytest.raises(MappingError, match="not a document body") as exc:
+        records_from_read(result, ref, spec, "text/markdown")
+    assert "dict" in str(exc.value)
+
+
+def test_a_malformed_blob_degrades_the_document_not_the_run():
+    # `b64decode` raises binascii.Error, which is a ValueError and NOT a
+    # MappingError, and `_fetch` catches only (ToolCallFailed, MappingError) --
+    # so one corrupt blob propagated out of `kbforge_fetch` and killed the run.
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    result = CallToolResult(
+        content=[
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri="https://example.com/docs/a.md",
+                    blob="!!!not base64!!!",
+                    mime_type="text/markdown",
+                ),
+            )
+        ]
+    )
+    with pytest.raises(MappingError, match="not valid base64"):
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
+
+
+def test_blob_corruption_that_would_be_silently_dropped_is_refused():
+    # The half of `validate=True` that actually constrains the implementation.
+    # `b64decode`'s default DISCARDS characters outside the base64 alphabet, so
+    # a corrupted blob decodes to plausible-looking content and ships as a
+    # document -- no exception, no signal. Here the injected `*` is dropped by
+    # the default and the blob decodes cleanly to the original bytes, so only
+    # `validate=True` can tell this from a good read. (The malformed-padding
+    # case above raises either way, which is why it cannot pin this.)
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    good = base64.b64encode(b"# Title\n\nbody").decode()
+    corrupt = f"{good[:4]}*{good[4:]}"
+    assert base64.b64decode(corrupt) == b"# Title\n\nbody"  # the silent drop
+    result = CallToolResult(
+        content=[
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri="https://example.com/docs/a.md",
+                    blob=corrupt,
+                    mime_type="text/markdown",
+                ),
+            )
+        ]
+    )
+    with pytest.raises(MappingError, match="not valid base64"):
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
+
+
+def test_a_line_wrapped_blob_is_decoded_not_rejected():
+    # `validate=True` is what makes corruption visible instead of silently
+    # dropped -- but line-wrapping base64 is an encoding convention, not
+    # corruption, so whitespace is stripped before validating.
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    wrapped = base64.b64encode(b"# Title\n\nbody" * 20).decode()
+    wrapped = "\n".join(wrapped[i : i + 40] for i in range(0, len(wrapped), 40))
+    result = CallToolResult(
+        content=[
+            EmbeddedResource(
+                type="resource",
+                resource=BlobResourceContents(
+                    uri="https://example.com/docs/a.md",
+                    blob=wrapped,
+                    mime_type="text/markdown",
+                ),
+            )
+        ]
+    )
+    records = records_from_read(
+        result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+    )
+    assert records[0].payload == b"# Title\n\nbody" * 20
+
+
 def test_tier1_select_extracts_refs_from_resource_links():
     # No `ids` config at all: the protocol already carries identity, so tier 1
     # needs none of tier 2's structured_content configuration.
@@ -280,10 +424,29 @@ def test_tier1_one_to_one_read_keeps_the_requested_identity_not_the_uri():
     assert "76d64c822f5125032f89eb71dbdb94e42b434821" not in str(records[0].anchor_hint)
 
 
-def test_tier1_one_to_many_read_derives_identities_from_the_uris():
-    # A one-to-many read (a "read this folder" tool) is the one case where the
-    # ref we asked for cannot supply identity for every document it returns --
-    # the uris on the response are the only source of fresh identities.
+def test_a_read_returning_two_documents_is_refused_not_silently_reidentified():
+    # THE RULING HERE REVERSED. This used to be
+    # `test_tier1_one_to_many_read_derives_identities_from_the_uris`, which
+    # pinned a "read this folder" shape: with two content-bearing resources,
+    # every identity was derived from the response's uris.
+    #
+    # The guard selecting that behaviour was `len(carried) == 1`, i.e. a COUNT,
+    # and the single-resource branch exists for a specific reason -- a server
+    # uri may encode volatile state, and GitHub's really does
+    # (`repo://owner/repo/sha/<commit-sha>/contents/<path>`). So one extra
+    # content-bearing resource silently flipped the REQUESTED document onto
+    # uri-derived identity as well: its doc_id then changed on every upstream
+    # commit, it always diffed as `added` and never `modified`, and stale
+    # concepts accumulated with no tombstone to remove them. That is exactly
+    # what the single-resource branch was written to prevent.
+    #
+    # A response cannot reliably distinguish "your document, plus extras" from
+    # "the contents of the container you asked for", and only the second
+    # licenses uri-derived identity. This connector fails closed everywhere
+    # else it cannot tell (a prose-only selector, a non-text blob, a bodiless
+    # read), so it fails closed here. The one-to-many branch had never run
+    # against a real server: GitHub's file read carries one resource, AWS
+    # carries none.
     ref = DocRef(raw_id="docs/", native_id="docs", url=None, title="Docs")
     result = CallToolResult(
         content=[
@@ -305,25 +468,39 @@ def test_tier1_one_to_many_read_derives_identities_from_the_uris():
             ),
         ]
     )
+    with pytest.raises(MappingError) as exc:
+        records_from_read(
+            result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
+        )
+    # Names the document and the ambiguity, not just a count.
+    assert "docs" in str(exc.value)
+    assert "2 content-bearing resources" in str(exc.value)
+
+
+def test_the_requested_identity_survives_a_sibling_text_block():
+    # The shape GitHub's file read actually returns -- one content-bearing
+    # resource plus a prose preamble -- must still take the identity we asked
+    # for. The refusal above is about two CONTENT-BEARING resources, not about
+    # any second block.
+    ref = DocRef(raw_id="SECURITY.md", native_id="SECURITY", url=None, title="Sec")
+    result = CallToolResult(
+        content=[
+            TextContent(type="text", text="successfully downloaded (SHA: 76d64c82)"),
+            EmbeddedResource(
+                type="resource",
+                resource=TextResourceContents(
+                    uri="repo://o/r/sha/76d64c82/contents/SECURITY.md",
+                    text="# Security Policy",
+                    mime_type="text/markdown",
+                ),
+            ),
+        ]
+    )
     records = records_from_read(
         result, ref, ReadSpec(tool="read", id_arg="path"), "text/markdown"
     )
-    assert [r.anchor_hint["native_id"] for r in records] == [
-        "@docs.aws.amazon.com/docs/a",
-        "@docs.aws.amazon.com/docs/b",
-    ]
-    assert [r.payload.decode() for r in records] == ["a content", "b content"]
-    # url is law-3 provenance material and must be derived per document too --
-    # without this assertion, dropping it entirely still passes.
-    assert [r.anchor_hint["url"] for r in records] == [
-        "https://docs.aws.amazon.com/docs/a.html",
-        "https://docs.aws.amazon.com/docs/b.html",
-    ]
-    # And title comes from the per-document ref, not the parent: binding it to
-    # `ref.title` would stamp the folder's "Docs" onto every document it
-    # returned. `EmbeddedResource` carries no title, so it is None here and
-    # `kbforge_normalize` derives one per document from its native_id.
-    assert [r.anchor_hint["title"] for r in records] == [None, None]
+    assert [r.anchor_hint["native_id"] for r in records] == ["SECURITY"]
+    assert records[0].payload.decode() == "# Security Policy"
 
 
 def test_a_base64_blob_resource_decodes_and_its_mime_type_wins():
@@ -458,12 +635,38 @@ def test_a_directory_listing_is_refused_not_read_as_its_preamble():
         )
 
 
-def test_tier1_resource_blocks_win_over_a_configured_tier2_ids_mapping():
-    # Protocol-first: this is the one place explicit config loses to protocol
-    # inference. A response carrying BOTH resource blocks and structuredContent
-    # with a fully configured `ids` mapping still resolves through tier 1 --
-    # the protocol already carries identity, so there is nothing for the
-    # configured mapping to add, and tier 1 is tried first unconditionally.
+def test_a_configured_ids_mapping_wins_over_tier1_resource_blocks():
+    # THE RULING HERE REVERSED. This used to pin protocol-first as absolute:
+    # a response carrying BOTH resource blocks and structuredContent resolved
+    # through tier 1 and the operator's `ids` mapping was discarded -- with no
+    # error and no warning, so a mapping that looked configured did nothing.
+    #
+    # That is the inverse of the rule a few lines below in the same function,
+    # where a configured `ids` is believed OVER the auto-wrap shape heuristic
+    # precisely because the operator said where the rows live. Both readings
+    # cannot be right. Configured intent wins wherever it can apply; inference,
+    # protocol-level or not, is for the unconfigured case -- which is every
+    # case the protocol-first mapping was designed for.
+    result = CallToolResult(
+        content=[
+            ResourceLink(
+                type="resource_link",
+                uri="https://docs.aws.amazon.com/s3/from-the-link.html",
+                name="s3-naming",
+                title="Naming",
+            ),
+        ],
+        structured_content={
+            "results": [{"url": "https://docs.aws.amazon.com/s3/from-the-mapping.html"}]
+        },
+    )
+    refs = refs_from_select(result, IdsMapping(list="results", id="url"))
+    assert [r.native_id for r in refs] == ["@docs.aws.amazon.com/s3/from-the-mapping"]
+
+
+def test_tier1_still_wins_when_no_ids_mapping_is_configured():
+    # Protocol-first is unchanged for the unconfigured case, which is the case
+    # it was designed for: with no `ids` there is no operator intent to defer to.
     result = CallToolResult(
         content=[
             ResourceLink(
@@ -473,9 +676,24 @@ def test_tier1_resource_blocks_win_over_a_configured_tier2_ids_mapping():
                 title="Naming",
             ),
         ],
-        structured_content={
-            "results": [{"url": "https://docs.aws.amazon.com/s3/ignored.html"}]
-        },
+        structured_content={"results": [{"url": "https://x.com/ignored.html"}]},
+    )
+    refs = refs_from_select(result, None)
+    assert [r.native_id for r in refs] == ["@docs.aws.amazon.com/s3/naming"]
+
+
+def test_a_configured_ids_mapping_falls_back_to_tier1_without_structured_content():
+    # The precedence flip applies only where the mapping CAN apply. A server
+    # that returns resource links and no structuredContent at all still maps,
+    # rather than failing on a missing key.
+    result = CallToolResult(
+        content=[
+            ResourceLink(
+                type="resource_link",
+                uri="https://docs.aws.amazon.com/s3/naming.html",
+                name="s3-naming",
+            ),
+        ],
     )
     refs = refs_from_select(result, IdsMapping(list="results", id="url"))
     assert [r.native_id for r in refs] == ["@docs.aws.amazon.com/s3/naming"]

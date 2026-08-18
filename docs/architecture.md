@@ -317,7 +317,12 @@ mapping below unavoidable rather than a convenience.
 content-block types are the mapping vocabulary — resource blocks first, then
 `structuredContent`, then bare text — so the ordinary case needs no configuration
 and no mini-language, and a selector response that is bare prose fails closed
-rather than being guessed at. **The limit, observed against a live server rather
+rather than being guessed at. Protocol-first orders the *inference*, and an
+explicitly configured `ids` mapping is not inference: it outranks the tiers
+wherever it can apply, because an operator who named the key the ids live under
+has said something the protocol cannot contradict. Tier 1 winning over a
+configured mapping would have discarded it silently, which is the one outcome a
+configuration should never have. **The limit, observed against a live server rather
 than hypothesized: a server can be perfectly machine-readable and still be
 unmappable as a selector.** GitHub's `search_code` returns machine-readable JSON
 *inside a text block* and declares no `structuredContent`, so this mapping sees
@@ -332,6 +337,21 @@ text block as JSON before applying the id mapping would close the gap; 0.7.0 did
 not take it. That option, and everything else this connector defers — deletion,
 the manifest, and the cursor collision that blocks it — is in
 [`design/2026-08-16-mcp-source-connector-design.md`](design/2026-08-16-mcp-source-connector-design.md).
+
+*A read is one document in, one document out.* The reader is called with an id
+kbforge already holds, so the response only has to supply bytes — and the
+identity it supplies them under is the one that was asked for, never one derived
+from the response. This matters because a server's own uri may encode volatile
+state: GitHub returns `repo://owner/repo/sha/<commit-sha>/contents/<path>`, and
+slugging that would put a commit sha inside every `native_id`, so identity would
+churn on every upstream commit, every document would diff as `added` and never
+`modified`, and stale concepts would accumulate with no tombstone to remove them.
+A response carrying more than one content-bearing resource is therefore refused
+rather than re-identified from its uris: nothing in a response reliably
+distinguishes "your document, plus extras" from "the contents of the container
+you asked for", and only the second would license that. A reader that genuinely
+returns containers would need to say so explicitly; no live server surveyed
+returns the shape, so there is nothing yet to design against.
 
 *Retriever-not-extractor has an emit-side consequence.* Because the connector
 never edits a source's bytes, the source's own framing arrives intact and reaches
