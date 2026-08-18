@@ -16,7 +16,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 
-from mcp.types import CallToolResult
+from mcp.types import CallToolResult, EmbeddedResource, ResourceLink, TextContent
 
 from kbforge.models import RawRecord
 from kbforge_mcp.config import IdsMapping, ReadSpec
@@ -43,16 +43,14 @@ class DocRef:
     title: str | None
 
 
-def _resource_blocks(result: CallToolResult) -> list:
+def _resource_blocks(result: CallToolResult) -> list[EmbeddedResource | ResourceLink]:
     return [
-        b
-        for b in result.content
-        if getattr(b, "type", "") in ("resource", "resource_link")
+        b for b in result.content if isinstance(b, (EmbeddedResource, ResourceLink))
     ]
 
 
 def _text_blocks(result: CallToolResult) -> list[str]:
-    return [b.text for b in result.content if getattr(b, "type", "") == "text"]
+    return [b.text for b in result.content if isinstance(b, TextContent)]
 
 
 def _ref_for(raw_id: str, title: str | None) -> DocRef:
@@ -72,12 +70,14 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
     blocks = _resource_blocks(result)
     if blocks:  # tier 1 -- the protocol already carries the identity
         refs = []
-        for b in blocks:
+        for i, b in enumerate(blocks):
             uri = getattr(b, "uri", None) or getattr(
                 getattr(b, "resource", None), "uri", None
             )
             if uri is None:
-                raise MappingError("resource block carries no uri")
+                raise MappingError(
+                    f"resource block {i} (type={b.type!r}) carries no uri"
+                )
             # ResourceLink carries both; `title` is the human-facing one.
             refs.append(
                 _ref_for(
@@ -86,8 +86,18 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
             )
         return refs
 
-    if result.structured_content is not None and ids is not None:  # tier 2
-        rows = result.structured_content.get(ids.list)
+    if result.structured_content is not None:
+        if ids is None:
+            # structuredContent IS present here -- the fix is a configured
+            # `ids` mapping, not `static_ids`. Conflating the two messages
+            # steers an operator with a real search tool towards the wrong
+            # remedy; keep this branch distinct from the tier-3 case below.
+            raise MappingError(
+                "select response carries structuredContent with keys "
+                f"{sorted(result.structured_content)} but no 'ids' mapping is "
+                "configured -- add 'ids' to the select spec"
+            )
+        rows = result.structured_content.get(ids.list)  # tier 2
         if rows is None:
             raise MappingError(
                 f"select response has no {ids.list!r} key; keys are "
@@ -96,6 +106,14 @@ def refs_from_select(result: CallToolResult, ids: IdsMapping | None) -> list[Doc
         if not isinstance(rows, list):
             raise MappingError(f"select response key {ids.list!r} is not a list")
         refs = []
+        # An empty `rows` list is legal and returns `[]`, not an error: a
+        # zero-hit query result is a real state, and raising here would turn
+        # an ordinary no-op run into an aborted one. This is safe only
+        # because a query selector always yields `complete=False`, and
+        # `assert_fetch_contract` refuses a tombstone (an implied
+        # corpus-wide deletion) under `complete=False`; the other half of
+        # the hazard -- a static selector configured with zero ids -- is
+        # already closed by `problems_for` rejecting an empty `static_ids`.
         for row in rows:
             raw = row.get(ids.id) if isinstance(row, dict) else None
             if raw is None:
@@ -151,19 +169,26 @@ def records_from_read(
             uri, payload, mime = carried[0]
             return [record(payload, ref.native_id, ref.url, mime or media_type)]
         if carried:
-            return [
-                record(
-                    payload,
-                    _ref_for(uri, None).native_id,
-                    uri if "://" in uri else ref.url,
-                    mime or media_type,
+            records = []
+            for uri, payload, mime in carried:
+                # Bind once: `_ref_for` already computes the same "does this
+                # id look like a url" predicate that decides `.url`, and a
+                # second copy of that predicate inline is a second place for
+                # the two to drift.
+                r = _ref_for(uri, None)
+                records.append(
+                    record(payload, r.native_id, r.url or ref.url, mime or media_type)
                 )
-                for uri, payload, mime in carried
-            ]
+            return records
 
     if spec.text_key and result.structured_content is not None:  # tier 2
         body = result.structured_content.get(spec.text_key)
-        if body is None:
+        # `None` and an empty string are both "no body"; an int `0` or bool
+        # `False` are real content that happens to stringify to `"0"` /
+        # `"False"`, so the truthiness check only applies once a str is
+        # already established (the type guard), keeping tier 3's "an empty
+        # read is an error, not an empty document" rule consistent here too.
+        if body is None or (isinstance(body, str) and not body):
             raise MappingError(
                 f"read response has no {spec.text_key!r} key for {ref.native_id}"
             )

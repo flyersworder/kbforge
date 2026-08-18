@@ -66,6 +66,32 @@ def test_tier3_select_fails_closed_with_a_message_naming_the_remedy():
         refs_from_select(_text("- 1 Overview\n- 2 Architecture"), None)
 
 
+def test_structured_content_without_ids_names_ids_not_static_ids_as_the_remedy():
+    # This is the most likely real-world misconfiguration: a search tool that
+    # does return structuredContent, but whose `ids` mapping was never
+    # configured. The tier-3 message above is wrong advice here -- the
+    # response does carry structuredContent, and the fix is `ids`, not
+    # `static_ids` -- so this must be a distinct branch with distinct advice.
+    result = CallToolResult(
+        content=[], structured_content={"results": [{"url": "https://x/a"}]}
+    )
+    # `\bids\b` (not just "ids") because "static_ids" also contains "ids" as a
+    # substring -- a bare "ids" match would pass against either message and
+    # not actually pin which remedy got named.
+    with pytest.raises(MappingError, match=r"\bids\b"):
+        refs_from_select(result, None)
+
+
+def test_an_empty_select_result_is_legal_not_an_error():
+    # Deliberate: a zero-hit query is a real state, not a failure. Raising
+    # here would turn an ordinary no-op run into an aborted one. This is safe
+    # because a query selector always yields `complete=False`, under which no
+    # tombstone (corpus-wide deletion) is permitted -- see the comment at the
+    # loop in refs_from_select.
+    result = CallToolResult(content=[], structured_content={"results": []})
+    assert refs_from_select(result, IdsMapping(list="results", id="url")) == []
+
+
 def test_a_missing_list_key_is_an_error_not_an_empty_result():
     result = CallToolResult(content=[], structured_content={"data": []})
     with pytest.raises(MappingError, match="results"):
@@ -97,6 +123,18 @@ def test_tier2_read_takes_the_configured_text_key():
     spec = ReadSpec(tool="read", id_arg="path", text_key="body")
     records = records_from_read(result, ref, spec, "text/markdown")
     assert records[0].payload.decode() == "the content"
+
+
+def test_a_tier2_read_with_an_empty_string_text_key_value_is_an_error():
+    # `""` is "no body", same as `None` -- a zero-byte document is not a
+    # legitimate read result. This must stay narrow: an int `0` or bool
+    # `False` body is real content (it stringifies to a non-empty payload)
+    # and must NOT be rejected by this same check.
+    ref = DocRef(raw_id="docs/a.md", native_id="docs/a", url=None, title="A")
+    result = CallToolResult(content=[], structured_content={"body": ""})
+    spec = ReadSpec(tool="read", id_arg="path", text_key="body")
+    with pytest.raises(MappingError, match="'body'"):
+        records_from_read(result, ref, spec, "text/markdown")
 
 
 def test_an_empty_read_response_is_an_error_not_an_empty_document():
@@ -254,3 +292,26 @@ def test_a_contentless_link_falls_through_to_the_text_blocks():
     assert len(records) == 1
     assert records[0].payload.decode() == "the actual content"
     assert records[0].anchor_hint["native_id"] == "docs/a"
+
+
+def test_tier1_resource_blocks_win_over_a_configured_tier2_ids_mapping():
+    # Protocol-first: this is the one place explicit config loses to protocol
+    # inference. A response carrying BOTH resource blocks and structuredContent
+    # with a fully configured `ids` mapping still resolves through tier 1 --
+    # the protocol already carries identity, so there is nothing for the
+    # configured mapping to add, and tier 1 is tried first unconditionally.
+    result = CallToolResult(
+        content=[
+            ResourceLink(
+                type="resource_link",
+                uri="https://docs.aws.amazon.com/s3/naming.html",
+                name="s3-naming",
+                title="Naming",
+            ),
+        ],
+        structured_content={
+            "results": [{"url": "https://docs.aws.amazon.com/s3/ignored.html"}]
+        },
+    )
+    refs = refs_from_select(result, IdsMapping(list="results", id="url"))
+    assert [r.native_id for r in refs] == ["s3/naming"]
