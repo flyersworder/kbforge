@@ -1,6 +1,6 @@
 [project]
 name = "kbforge"
-version = "0.6.0"
+version = "0.7.0"
 description = "Agent-first knowledge bases, forged from your systems of record"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -51,7 +51,6 @@ dev = [
     # tests in packages/kbforge-mcp use anyio's pytest plugin, and a test suite
     # that depends on someone else's dependency breaks for confusing reasons.
     "anyio>=4",
-    "kbforge-mcp",
     "pytest>=9.0.3",
     "pytest-cov>=7.1.0",
     "ruff>=0.15.10",
@@ -59,6 +58,17 @@ dev = [
 llm = [
     "pydantic-ai-slim[openai]>=2.13.0",
 ]
+
+# `kbforge-mcp` is a workspace sibling, not a dependency of `kbforge` -- it
+# depends on kbforge, so declaring it here in either direction as *published*
+# metadata would be circular. It cannot live in the `dev` extra: extras are
+# published, `[tool.uv.sources]` is not, so the released wheel would carry
+# `Requires-Dist: kbforge-mcp; extra == "dev"` pointing at a distribution
+# resolvers outside this workspace may not find, breaking `pip install
+# kbforge[dev]`. A PEP 735 dependency group is never written into wheel
+# metadata, which is exactly the scope this needs: local development only.
+[dependency-groups]
+dev = ["kbforge-mcp"]
 
 [build-system]
 requires = ["hatchling"]
@@ -68,10 +78,16 @@ build-backend = "hatchling.build"
 packages = ["src/kbforge"]
 
 [tool.hatch.build.targets.sdist]
-# Agent/editor config and process plans are not part of the distributed library.
+# Agent/editor config and process plans are not part of the distributed library,
+# and neither is the workspace sibling: `packages/kbforge-mcp` is its own
+# distribution with its own sdist, so shipping its sources inside kbforge's
+# would publish the same code twice. `conftest.py` is the test harness (it
+# defines --run-live), not library source.
 exclude = [
     ".claude",
     "docs/plans",
+    "packages",
+    "conftest.py",
 ]
 
 [tool.pytest.ini_options]

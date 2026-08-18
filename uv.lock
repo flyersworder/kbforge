@@ -550,7 +550,7 @@ wheels = [
 
 [[package]]
 name = "kbforge"
-version = "0.6.0"
+version = "0.7.0"
 source = { editable = "." }
 dependencies = [
     { name = "pluggy" },
@@ -561,7 +561,6 @@ dependencies = [
 [package.optional-dependencies]
 dev = [
     { name = "anyio" },
-    { name = "kbforge-mcp" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "ruff" },
@@ -570,10 +569,14 @@ llm = [
     { name = "pydantic-ai-slim", extra = ["openai"] },
 ]
 
+[package.dev-dependencies]
+dev = [
+    { name = "kbforge-mcp" },
+]
+
 [package.metadata]
 requires-dist = [
     { name = "anyio", marker = "extra == 'dev'", specifier = ">=4" },
-    { name = "kbforge-mcp", marker = "extra == 'dev'", editable = "packages/kbforge-mcp" },
     { name = "pluggy", specifier = ">=1.5" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pydantic-ai-slim", extras = ["openai"], marker = "extra == 'llm'", specifier = ">=2.13.0" },
@@ -583,6 +586,9 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.15.10" },
 ]
 provides-extras = ["dev", "llm"]
+
+[package.metadata.requires-dev]
+dev = [{ name = "kbforge-mcp", editable = "packages/kbforge-mcp" }]
 
 [[package]]
 name = "kbforge-mcp"
