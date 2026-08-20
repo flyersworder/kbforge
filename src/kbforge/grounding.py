@@ -12,7 +12,7 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from kbforge.models import CanonicalDocument
+from kbforge.models import CanonicalDocument, resource_key
 
 DEFAULT_MAX_GROUNDING_DOCS = 5
 
@@ -65,3 +65,43 @@ def declared_ids(doc: CanonicalDocument, cfg: GroundingConfig) -> list[str]:
     """Both declaration sites, unioned and sorted. Sorted because everything
     downstream -- the cap, the sidecar, the diff -- must be deterministic."""
     return sorted(set(doc.grounded_by) | set(cfg.grounding.get(doc.doc_id, [])))
+
+
+def resolve(
+    owner: CanonicalDocument,
+    ids: list[str],
+    by_id: dict[str, CanonicalDocument],
+    *,
+    max_docs: int,
+) -> tuple[list[CanonicalDocument], list[str]]:
+    """Declared ids -> the documents that will actually be cited, plus notes.
+
+    Nothing here raises: an unresolvable or tombstoned target is a fact about
+    another system's sync state, not an error in this run (§3)."""
+    notes: list[str] = []
+    seen = {resource_key(owner.anchor)}
+    kept: list[CanonicalDocument] = []
+
+    for gid in sorted(set(ids)):
+        if gid == owner.doc_id:
+            continue  # self-reference: silent, not a note
+        doc = by_id.get(gid)
+        if doc is None or doc.deleted:
+            notes.append(
+                f"{owner.doc_id}: grounding {gid} was not found in the mirror or "
+                "this fetch and was dropped"
+            )
+            continue
+        key = resource_key(doc.anchor)
+        if key in seen:
+            continue  # same artifact, cited once
+        seen.add(key)
+        kept.append(doc)
+
+    if len(kept) > max_docs:
+        dropped = ", ".join(d.doc_id for d in kept[max_docs:])
+        notes.append(
+            f"{owner.doc_id}: grounding capped at {max_docs}; dropped {dropped}"
+        )
+        kept = kept[:max_docs]
+    return kept, notes

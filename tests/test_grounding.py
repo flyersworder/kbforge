@@ -8,6 +8,7 @@ from kbforge.grounding import (
     declared_ids,
     load_grounding,
     problems_for,
+    resolve,
 )
 from kbforge.models import CanonicalDocument, ResourceAnchor
 
@@ -79,3 +80,68 @@ def test_declared_ids_unions_both_sites_and_dedupes():
         grounding={"confluence:payments": ["servicenow:SVC0042", "drive:D1"]}
     )
     assert declared_ids(doc, cfg) == ["drive:D1", "mcp-aws:x", "servicenow:SVC0042"]
+
+
+def _by_id(*docs):
+    return {d.doc_id: d for d in docs}
+
+
+def test_resolution_keeps_declared_documents_sorted():
+    owner = _doc("confluence:payments")
+    a, b = _doc("servicenow:SVC0042"), _doc("drive:D1")
+    got, notes = resolve(
+        owner, ["servicenow:SVC0042", "drive:D1"], _by_id(a, b), max_docs=5
+    )
+    assert [d.doc_id for d in got] == ["drive:D1", "servicenow:SVC0042"]
+    assert notes == []
+
+
+def test_self_reference_is_dropped_silently():
+    owner = _doc("confluence:payments")
+    got, notes = resolve(owner, ["confluence:payments"], _by_id(owner), max_docs=5)
+    assert got == [] and notes == []
+
+
+def test_unresolvable_id_is_dropped_with_a_note_not_an_error():
+    """A grounding target may live in a system that has not synced yet. Failing
+    would make one source's sync depend on another's."""
+    owner = _doc("confluence:payments")
+    got, notes = resolve(owner, ["servicenow:SVC0042"], _by_id(owner), max_docs=5)
+    assert got == []
+    assert notes and "servicenow:SVC0042" in notes[0]
+
+
+def test_tombstoned_target_is_dropped():
+    owner = _doc("confluence:payments")
+    dead = _doc("servicenow:SVC0042")
+    dead.deleted = True
+    got, notes = resolve(owner, ["servicenow:SVC0042"], _by_id(owner, dead), max_docs=5)
+    assert got == [] and notes
+
+
+def test_duplicate_resource_collapses_even_across_different_doc_ids():
+    """Dedup keys on the resource, not the doc_id: two systems can carry the same
+    url, and `sources` is compared as a set of resources."""
+    owner = _doc("confluence:payments")
+    a, b = _doc("servicenow:SVC0042"), _doc("drive:D1")
+    a.anchor.url = b.anchor.url = "https://example.test/same"
+    got, _ = resolve(
+        owner, ["servicenow:SVC0042", "drive:D1"], _by_id(a, b), max_docs=5
+    )
+    assert len(got) == 1
+
+
+def test_a_grounding_doc_sharing_the_owners_resource_is_dropped():
+    owner = _doc("confluence:payments")
+    twin = _doc("drive:D1")
+    owner.anchor.url = twin.anchor.url = "https://example.test/same"
+    got, _ = resolve(owner, ["drive:D1"], _by_id(owner, twin), max_docs=5)
+    assert got == []
+
+
+def test_cap_truncates_deterministically_and_notes_what_it_dropped():
+    owner = _doc("confluence:payments")
+    docs = [_doc(f"servicenow:SVC{i}") for i in range(4)]
+    got, notes = resolve(owner, [d.doc_id for d in docs], _by_id(*docs), max_docs=2)
+    assert [d.doc_id for d in got] == ["servicenow:SVC0", "servicenow:SVC1"]
+    assert notes and "servicenow:SVC2" in notes[0] and "servicenow:SVC3" in notes[0]
