@@ -76,6 +76,7 @@ whose documents you cannot edit — the realistic case:
 
 ```yaml
 # grounding.yaml
+max_grounding_docs: 5
 grounding:
   confluence:payments/checkout:
     - servicenow:SVC0042
@@ -85,6 +86,11 @@ grounding:
 Map **values must be fully qualified** — there is no emitting connector here to
 imply a system, so a bare id is a config error, reported by validation rather than
 guessed at. Map **keys** are likewise full `doc_id`s.
+
+The file is parsed and validated **before fetch**, in the `problems_for()` shape
+the connectors already use: malformed YAML, an unqualified id, or a key that
+resolves against neither the mirror nor this run is reported as a message and exits
+2, never discovered halfway through a run that has already spent tokens.
 
 Passed as `kbforge run --grounding PATH`. A **pipeline-level** flag, not `--set`:
 `--set` is connector config, and a connector must not know other systems exist —
@@ -112,12 +118,16 @@ must record. Then:
   prevent. This mirrors law 2's existing dangling-link drop at
   `synthesize.py:162`.
 - **Tombstoned targets are dropped**, same as a removed link target.
-- **Fan-in is capped** at `max_grounding_docs` (default 5). Over the cap, sort by
+- **Fan-in is capped** at `max_grounding_docs` (default 5), a top-level key in the
+  same file as the map — resolution happens in the pipeline (§6), so the cap is
+  pipeline config and does not belong in `LLMConfig` beside `max_source_chars`,
+  which governs prompt size rather than provenance. Over the cap, sort by
   `doc_id` and take the first N, with a grounding note recording what was
   dropped. Deterministic and never the model's choice — an LLM picking which
   sources to cite is an LLM editing provenance.
 - **Deduplicate by resource string** (`anchor.url or f"{system}:{native_id}"`),
-  not by `doc_id`. That is the key `_expected_resources` builds, so two anchors
+  **including against the owning anchor** — dropping self-reference by `doc_id`
+  alone is not enough, since two distinct `doc_id`s can carry the same `url`. That is the key `_expected_resources` builds, so two anchors
   collapsing to one resource would cite the same artifact twice in the rendered
   file while the set-compare stayed happy.
 - Per-document text is truncated by the existing `max_source_chars`.
@@ -138,6 +148,21 @@ pipeline state (§2.2 keeps the map out of `docs`), and `commit(mirror, docs)` t
 only documents. It is written on the `Published` path, immediately after `commit()`,
 under the same slug `mirror._slot` derives — so a failed publish leaves both the
 mirror and the sidecar at the previous run's state, together.
+
+**The sidecar is deleted, not merely skipped, when it should not exist** — for a
+document whose grounding set became empty, and for one this run tombstoned. Not
+writing a file does not remove the one already there, and either omission is a
+live defect rather than untidiness:
+
+- *empty grounding set.* Drift rule 3 compares the current set against the
+  recorded one. A stale sidecar recording `{B}` against a now-empty set fires on
+  **every** run, re-synthesizing the same document forever.
+- *tombstoned owner.* The slug is derived from `doc_id`, so an orphan sidecar is
+  waiting for that `doc_id` to be created again, at which point drift is measured
+  against hashes from a document's previous life.
+
+This mirrors `commit()`, which already unlinks a tombstoned document's slot rather
+than skipping the write.
 
 For each owning document with a non-empty grounding set, write
 `mirror/_grounding/<slug>.json`:
@@ -186,6 +211,12 @@ is keyed on the *source document's* `content_hash`, and re-synthesis never chang
 that — it changes a concept, not a document. So A grounded in B and B grounded in
 A rebuild at most once each, rather than ping-ponging forever.
 
+**Deduplicate `changed_docs` after both expansions.** The drift scan and
+`referrers` can select the same document — `referrers` filters on `d.doc_id not in
+changed`, which does not know about drift. Rendering it twice would put it in
+`items` twice and double its entry in `summary.sources_changed`, though `files` is
+keyed by path and would merely overwrite.
+
 This is `pipeline.py:134-144` — the `referrers` mechanism — generalized. That
 precedent already pulls mirror documents the run never fetched into scope, and
 already appends a `grounding_notes` line explaining why a file appears in the diff
@@ -209,11 +240,19 @@ synthesis for an unchanged concept — still cannot.
 
 **Cost, stated plainly.** `pipeline.py:111` returns before
 `load_all(mirror_path)` at line 127, so a no-op run is cheap today. Detecting
-grounding drift requires mirror state, so the load moves ahead of the gate and
-**every run pays O(mirror), including no-ops.** Accepted for a first cut; a
-`mirror/_grounding/index.json` of `doc_id → content_hash` would make the check two
-small reads, but it is a denormalized cache that can disagree with the slots, so
-it is not built until the cost is measured and real.
+grounding drift needs mirror state, so the load moves ahead of the gate and a
+no-op run stops being free.
+
+Two things bound that. The scan runs only when the synthesizer grounds (§7), and
+only when `mirror/_grounding/` is non-empty — a directory listing, not a mirror
+load. So the cost is proportional to grounding actually being *used*, not to
+having selected the LLM synthesizer: a deployment that declares no grounding
+keeps today's cheap no-op.
+
+Where grounding is in use, every run pays O(mirror). Accepted for a first cut; a
+`mirror/_grounding/index.json` of `doc_id → content_hash` would reduce the check to
+two small reads, but it is a denormalized cache that can disagree with the slots,
+so it is not built until the cost is measured and real.
 
 ## 6. Emission
 
@@ -269,7 +308,25 @@ against today's protocol would raise `AttributeError` on a direct read.
 The pipeline skips the §4 drift scan entirely when `grounds` is False. Without
 this, a stub run would re-synthesize a document to produce a byte-identical file.
 
-## 8. Validators
+## 8. Untrusted content, one system wider
+
+Grounding lets text from system B reach a concept owned by system A. That widens
+an existing surface rather than opening a new one — a source document has always
+been untrusted input to synthesis — but it widens it in a direction a reviewer may
+not expect, since the concept's path and primary citation both say "A".
+
+What bounds it is unchanged and must stay that way: kbforge owns the structural
+frame, the model writes prose *inside* it, and `links`, `sources` and
+`generated` are assigned by kbforge from resolved anchors, never taken from model
+output. A grounding document that contains instructions can therefore influence
+wording; it cannot introduce a citation, a link, or a path. The §4.4 laws check the
+projection, and the projection is built from anchors the pipeline resolved.
+
+The honest residue: prose in a concept owned by A can be shaped by B, and only the
+`sources` list discloses that B was consulted. That is the reason the owning anchor
+is listed first (§6) and the reason grounding is declared rather than inferred.
+
+## 9. Validators
 
 No new law. `_check_sources_shape` and `_check_carriers_agree` already handle a
 multi-entry `sources` — `_expected_resources` (`validate.py:305`) maps every
@@ -277,7 +334,7 @@ anchor, not the first. The work is confirming that under test rather than
 assuming it, including the dual-carrier case where the rendered list and the
 projection must agree as sets.
 
-## 9. Testing
+## 10. Testing
 
 Per CLAUDE.md, a test over a gate is worth what it catches: break each gate in
 place, confirm the failure, restore with `git checkout --`.
@@ -291,10 +348,15 @@ place, confirm the failure, restore with `git checkout --`.
 - the map never reaches `commit()`: edit the map, assert `changeset.modified` stays
   empty **while the affected concept is still re-synthesized** — the two must not
   be conflated, since one is about the source and the other about the concept
+- sidecar lifecycle, both deletions: empty the grounding set and assert the second
+  run is a no-op rather than re-synthesizing forever; tombstone an owner, re-create
+  the same `doc_id`, and assert drift is not measured against its previous life
+- dedup: a document selected by BOTH the drift scan and `referrers` appears once in
+  `summary.sources_changed`
 - scoping: a mirror holding two systems, a run fetching one — assert the other
   system's concepts are never pulled into scope, however much they drifted
 
-## 10. Known limits
+## 11. Known limits
 
 - **One level deep.** A grounding document's own grounding is not followed.
   Transitive grounding is unbounded fan-in wearing a different hat.
@@ -312,10 +374,17 @@ place, confirm the failure, restore with `git checkout --`.
   `retrieved_at` (`synthesize.py:163`), which for an incremental connector may be
   the mirror's older timestamp rather than this run's. Pre-existing behaviour,
   shared with `referrers`; grounding makes it more frequent.
+- **A drift rebuild can open a review request with no visible change.** When the
+  owning document is re-fetched, `generated.at` moves and the diff is never empty.
+  When it comes from the mirror instead — an incremental connector that did not
+  re-fetch it — `retrieved_at` is unchanged, so a rebuild whose prose lands the
+  same produces a byte-identical file. The no-op rule prevents an *unchanged
+  source* from opening a review request; it cannot prevent this one, because the
+  grounding genuinely did change.
 - **Grounding does not create links.** A cited document is provenance, not
   navigation; if you also want a link, declare a relation.
 
-## 11. Phasing
+## 12. Phasing
 
 | Phase | Contents |
 |---|---|
@@ -327,7 +396,7 @@ The deletion manifest was previously slated first. It needs the same cross-run
 state this introduces, so building this first and letting the manifest reuse it
 inverts that order deliberately.
 
-## 12. Amendments to `architecture.md` when this ships
+## 13. Amendments to `architecture.md` when this ships
 
 §4.4 law 3 gains the multi-source case and the owning-anchor-first convention;
 §7's "one connector per run" paragraph gains the sentence that grounding does not
