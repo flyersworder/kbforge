@@ -257,12 +257,31 @@ kbforge can sit between MCP-in and MCP-out without *requiring* either.
 **The MCP source connector, `kbforge-mcp` (shipped, not core).** When a SoR
 already exposes an MCP server, a source is configuration rather than a package:
 `packages/kbforge-mcp/` registers under `kbforge.connectors` like any third-party
-connector and needs no core change. It stays out of core for a mechanical reason
-rather than taste — `kbforge[llm]` gates the synthesizer behind a lazy import in a
-CLI branch, so a missing extra costs nothing, whereas connectors are registered
-*eagerly* and `kbforge list` calls `kbforge_connector_info()` on every one. A
-module-level `import mcp` in a core connector would break `kbforge list` for
-everyone who did not install the extra.
+connector and needs no core change. Where a connector lives follows from what it
+costs to import, not from taste:
+
+| Connector needs | Home |
+|---|---|
+| nothing beyond kbforge's own dependencies | core, registered explicitly |
+| a third-party SDK, credentials, or a release cadence set elsewhere | its own distribution |
+
+Core connectors are registered by direct import, so their dependencies become
+*everyone's*: `local_files` (filesystem) and `git_commits` (subprocess `git`) are
+free, `mcp` is not. An extra would not rescue it. Entry points ship in
+distribution metadata unconditionally while an extra only decides what gets
+*installed*, so a `kbforge[mcp]` would advertise a connector whose module-level
+`import mcp` fails discovery — and discovery is eager, so it would break every
+command, not just `kbforge list`. (`kbforge[llm]` escapes this because the
+synthesizer is reached through a lazy import in a CLI branch, never enumerated.)
+
+Two reasons outlive that mechanic, which a lazy import could otherwise defeat.
+A separate distribution keeps kbforge's version off the MCP SDK's release clock —
+core should not bump for churn in the fastest-moving dependency in the tree. And
+it is the only end-to-end exercise of the drop-in seam: `tests/test_cli.py` proves
+discovery with a spy, so `mcp` appearing in `kbforge list` from another
+distribution's metadata is the sole live evidence that a third-party connector
+installs and is found. Distribution count therefore grows with vendor SDKs, not
+with connectors — one `kbforge-atlassian` would carry Confluence and Jira together.
 
 *Fetch is two jobs, and only one of them must be deterministic.* This is the
 general form of retriever-not-extractor, and it is what lets a RAG-backed or
@@ -726,30 +745,18 @@ class PipelineHooks:
 
 ### 5.4 Registration and dispatch
 
-Multiple connectors coexist; hooks are dispatched **per connector**, not
-broadcast — the registry keeps one `PluginManager` but drives each connector
-through a `subset_hook_caller`, so `fetch` on Confluence never fans out to
-ServiceNow:
+Multiple connectors coexist. `build_registry()` returns one `PluginManager`
+holding the in-tree built-ins, registered explicitly, plus every plugin advertising
+the `kbforge.connectors` or `kbforge.publishers` entry-point group — installing a
+distribution is the whole integration step.
 
-```python
-# kbforge/registry.py (sketch)
-import pluggy
-from kbforge import hookspecs
-
-def build_registry() -> dict[str, "BoundConnector"]:
-    pm = pluggy.PluginManager(hookspecs.PROJECT)
-    pm.add_hookspecs(hookspecs.ConnectorSpec)
-    pm.add_hookspecs(hookspecs.PublisherSpec)
-    pm.add_hookspecs(hookspecs.PipelineHooks)
-    pm.load_setuptools_entrypoints("kbforge.connectors")
-
-    registry = {}
-    for plugin in pm.get_plugins():
-        caller = pm.subset_hook_caller  # bind hooks to this plugin only
-        info = plugin.kbforge_connector_info()
-        registry[info.name] = BoundConnector(info=info, plugin=plugin)
-    return registry
-```
+Dispatch is **not** a fan-out. The CLI resolves a single connector by name and
+`run` drives that one alone (§7), so `fetch` on Confluence never reaches
+ServiceNow — no `subset_hook_caller` binding is needed, because no hook is ever
+broadcast across connectors in the first place. Multi-source assembly is a
+deployment's business: one run per system of record, each with its own mirror,
+cursor, and sync branch. That is what keeps the no-op rule decidable from one
+run's inputs.
 
 ---
 
