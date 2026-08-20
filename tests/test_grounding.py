@@ -4,12 +4,18 @@ from pathlib import Path
 import pytest
 
 from kbforge.grounding import (
+    SIDECAR_DIR,
     GroundingConfig,
     declared_ids,
+    delete_sidecar,
+    has_sidecars,
     load_grounding,
     problems_for,
+    read_sidecar,
     resolve,
+    write_sidecar,
 )
+from kbforge.mirror import load_all
 from kbforge.models import CanonicalDocument, ResourceAnchor
 
 
@@ -147,3 +153,35 @@ def test_cap_truncates_deterministically_and_notes_what_it_dropped():
     got, notes = resolve(owner, [d.doc_id for d in docs], _by_id(*docs), max_docs=2)
     assert [d.doc_id for d in got] == ["servicenow:SVC0", "servicenow:SVC1"]
     assert notes and "servicenow:SVC2" in notes[0] and "servicenow:SVC3" in notes[0]
+
+
+def test_sidecar_round_trips(tmp_path: Path):
+    write_sidecar(tmp_path, "confluence:payments", {"servicenow:SVC0042": "h1"})
+    assert read_sidecar(tmp_path, "confluence:payments") == {"servicenow:SVC0042": "h1"}
+
+
+def test_absent_sidecar_reads_as_none(tmp_path: Path):
+    assert read_sidecar(tmp_path, "confluence:payments") is None
+
+
+def test_delete_is_idempotent(tmp_path: Path):
+    delete_sidecar(tmp_path, "confluence:payments")  # must not raise
+    write_sidecar(tmp_path, "confluence:payments", {"a:b": "h"})
+    delete_sidecar(tmp_path, "confluence:payments")
+    assert read_sidecar(tmp_path, "confluence:payments") is None
+
+
+def test_load_all_never_sees_a_sidecar(tmp_path: Path):
+    """`load_all` globs `mirror/*.json`; the sidecar must stay in a subdirectory
+    or every run would try to parse one as a CanonicalDocument."""
+    write_sidecar(tmp_path, "confluence:payments", {"a:b": "h"})
+    assert load_all(tmp_path) == []
+    assert (tmp_path / SIDECAR_DIR).is_dir()
+
+
+def test_has_sidecars_gates_the_scan(tmp_path: Path):
+    assert has_sidecars(tmp_path) is False
+    write_sidecar(tmp_path, "confluence:payments", {"a:b": "h"})
+    assert has_sidecars(tmp_path) is True
+    delete_sidecar(tmp_path, "confluence:payments")
+    assert has_sidecars(tmp_path) is False

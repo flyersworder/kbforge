@@ -7,11 +7,13 @@ sources would be choosing its own provenance."""
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from kbforge.mirror import slot_key
 from kbforge.models import CanonicalDocument, resource_key
 
 DEFAULT_MAX_GROUNDING_DOCS = 5
@@ -111,3 +113,41 @@ def resolve(
         )
         kept = kept[:max_docs]
     return kept, notes
+
+
+SIDECAR_DIR = "_grounding"
+"""A subdirectory, deliberately: `load_all` globs `mirror/*.json`, so a sidecar
+at the root would be parsed as a CanonicalDocument on every run."""
+
+
+def _sidecar(mirror: Path, doc_id: str) -> Path:
+    return mirror / SIDECAR_DIR / f"{slot_key(doc_id)}.json"
+
+
+def read_sidecar(mirror: Path, doc_id: str) -> dict[str, str] | None:
+    """The grounding hashes recorded when this concept was last published, or
+    None if it has never been grounded."""
+    path = _sidecar(mirror, doc_id)
+    if not path.exists():
+        return None
+    return dict(json.loads(path.read_text("utf-8"))["grounding"])
+
+
+def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
+    path = _sidecar(mirror, doc_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
+    path.write_text(json.dumps(payload, sort_keys=True), "utf-8")
+
+
+def delete_sidecar(mirror: Path, doc_id: str) -> None:
+    """Idempotent. Called when a grounding set empties and when an owner is
+    tombstoned -- NOT writing a file does not remove the one already there, and
+    a stale sidecar re-synthesizes its document on every run forever (§4)."""
+    _sidecar(mirror, doc_id).unlink(missing_ok=True)
+
+
+def has_sidecars(mirror: Path) -> bool:
+    """Cheap gate for the drift scan: a directory listing, not a mirror load."""
+    directory = mirror / SIDECAR_DIR
+    return directory.is_dir() and any(directory.glob("*.json"))
