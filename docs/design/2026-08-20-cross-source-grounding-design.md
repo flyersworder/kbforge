@@ -4,7 +4,7 @@ title: kbforge — cross-source grounding
 description: One concept, one owning document, grounded in and citing related documents from other systems. Concept identity is untouched; the drift that makes a grounded concept stale is derived from the mirror rather than written across connectors.
 tags: [okf, grounding, synthesis, mirror, provenance]
 generated: { by: human:flyersworder, at: 2026-08-20T00:00:00Z }
-status: shipped 0.8.0 — folded into architecture.md §4.4 law 3 and §7.1; this note now holds only what is still deferred
+status: shipped — unreleased; folded into architecture.md §4.4 law 3 and §7.1; this note now holds only what is still deferred
 okf_version: "0.2"
 ---
 
@@ -14,8 +14,8 @@ okf_version: "0.2"
 concepts, each citing one system and blind to the other two. The reviewer reads
 three partial answers and reconciles them by hand.
 
-**What shipped in 0.8.0.** A concept still has exactly one **owning** document,
-which alone determines its path. Synthesis may additionally read **grounding**
+**What shipped (unreleased).** A concept still has exactly one **owning**
+document, which alone determines its path. Synthesis may additionally read **grounding**
 documents from any system, write a body informed by them, and cite them in
 `sources` (§5.1). Attribution becomes honest across systems; concept identity
 does not move. The full design — vocabulary, the two declaration sites,
@@ -35,7 +35,7 @@ identity first.
 
 ## Fold table
 
-Sections 1–9 below described the design that 0.8.0 built. They are no longer
+Sections 1–9 below described the design this branch built. They are no longer
 here — restating them in two places is how a doc drifts (CLAUDE.md's docs
 layout rule) — and each landed as follows:
 
@@ -57,7 +57,7 @@ layout rule) — and each landed as follows:
 
 | Phase | Contents |
 |---|---|
-| **0.8.0** — shipped | `grounded_by`, subject map, resolution, sidecar, drift check, multi-source emission |
+| **shipped, unreleased** | `grounded_by`, subject map, resolution, sidecar, drift check, multi-source emission |
 | **0.8.x** — deferred | the deletion manifest, reusing this note's cross-run state machinery |
 | **later** — deferred | promoting a grounding document to co-owner (many-to-one concept identity) |
 

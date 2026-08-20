@@ -111,8 +111,7 @@ def main(argv: list[str] | None = None) -> int:
         "--grounding",
         default=None,
         metavar="PATH",
-        help="grounding subject map (YAML); see docs/design/2026-08-20-"
-        "cross-source-grounding-design.md",
+        help="grounding subject map (YAML); see docs/architecture.md §7.1",
     )
     args = parser.parse_args(argv)
 

@@ -762,9 +762,19 @@ Dispatch is **not** a fan-out. The CLI resolves a single connector by name and
 `run` drives that one alone (§7), so `fetch` on Confluence never reaches
 ServiceNow — no `subset_hook_caller` binding is needed, because no hook is ever
 broadcast across connectors in the first place. Multi-source assembly is a
-deployment's business: one run per system of record, each with its own mirror,
-cursor, and sync branch. That is what keeps the no-op rule decidable from one
-run's inputs.
+deployment's business: one run per system of record, each with its own cursor
+and sync branch. That is what keeps the no-op rule decidable from one run's
+inputs.
+
+The **mirror is shared** across those runs, and cross-source grounding (§7.1)
+*requires* that it is: drift is derived by reading the mirror whole, so a run
+can only see another system's current hash if both write into the same
+`--mirror`. Concretely, the supported layout is one `--mirror` for the whole
+deployment, one `--state` directory (cursor slots are named
+`cursor-<connector>.json`, so per-connector state directories work too and a
+shared one cannot collide), and a separate sync branch per system, which the
+publisher derives from `branch_hint`. Nothing here fans out: each run still
+fetches one system and publishes one system's concepts.
 
 ---
 
@@ -877,8 +887,10 @@ on both passes and passes that gate.
 **One connector per run**, not a registry fan-out: the CLI resolves a single
 connector by name and calls `run` with it, so multi-source assembly is a
 deployment's business (run kbforge once per system of record, each with its own
-mirror, cursor, and sync branch) rather than the core's. That keeps the no-op
-rule and the branch-per-system model decidable from one run's inputs.
+cursor and sync branch, over one **shared** mirror — see §5.4 for the layout,
+and §7.1 for why grounding requires the sharing) rather than the core's. That
+keeps the no-op rule and the branch-per-system model decidable from one run's
+inputs.
 Cross-source grounding (§7.1) does not weaken this: a run still fetches exactly
 one system and publishes exactly one system's concepts. Grounding only lets
 synthesis *cite* documents another run already put in the mirror — it never
@@ -971,6 +983,16 @@ grounding_ids(D) = D.grounded_by ∪ subject_map.get(D.doc_id, [])
   source. Drift in the map is still detected (below) — just not through the
   mirror's own change detection.
 
+  ```yaml
+  max_grounding_docs: 5        # optional; default 5, must be at least 1
+  grounding:
+    confluence:1234:           # an OWNING doc_id
+      - servicenow:SVC0042     # the doc_ids it is grounded in
+  ```
+
+  Unknown top-level keys are rejected, so a typo is a config error rather than
+  a silently empty map.
+
 Whether a declared id **resolves** is a different question from whether it is
 **shaped** correctly, and only shape is fatal: a key or value naming a system
 that has not synced yet is dropped with a `grounding_notes` note, exactly as an
@@ -983,8 +1005,14 @@ and its hash is what the sidecar records. Then: self-reference is dropped
 silently; an unresolvable id is dropped with a note (the target may live in a
 system that has not synced yet, and failing the run would make one source's
 sync depend on another's — exactly what one-connector-per-run exists to
-prevent); a tombstoned target is dropped, same as a removed link target; fan-in
-is capped at `max_grounding_docs` (default 5, a pipeline-level config key
+prevent); a tombstoned target is dropped, same as a removed link target — though
+**from the following run**, not this one, since `load_all` never returns a
+tombstone and the pipeline filters this run's own tombstones out of the
+resolution index, so a target deleted in this run still resolves against its
+still-live mirror copy and is cited one last time, and is simply *not found*
+once the mirror advances (the tombstone branch in `grounding.resolve` is
+unreachable from the pipeline and kept as a contract for direct callers);
+fan-in is capped at `max_grounding_docs` (default 5, a pipeline-level config key
 because resolution happens in the pipeline, not in `LLMConfig` beside
 `max_source_chars`, which governs prompt size rather than provenance) —
 **deterministic**, sorted by `doc_id` and never the model's choice, since an
@@ -1082,9 +1110,12 @@ measured and real.
 
 **Emission.** `sources=[doc.anchor, *(g.anchor for g in grounding)]` is the
 only change to `assemble()`; the owning-anchor-first convention is documented
-under law 3 above. `ChangeSummary.sources_changed` keeps its existing meaning —
-what this run *fetched* — so a grounding anchor does not appear there merely
-for being cited.
+under law 3 above. `ChangeSummary.sources_changed` is unchanged by grounding: it
+carries the owning anchor of every document this run synthesized, so a grounding
+anchor never appears there merely for being cited. Note that this is *not* the
+same as "what this run fetched" — it never was. `assemble` appends one anchor
+per rendered item, and items include documents pulled from the mirror by the
+drift scan and by `referrers`, whose own sources this run did not fetch.
 
 **The stub does not ground.** `StubSynthesizer` renders the canonical text
 verbatim; citing a grounding document whose content never reached the body

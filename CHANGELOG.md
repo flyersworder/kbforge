@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cross-source grounding end to end, folded in from
   `docs/design/2026-08-20-cross-source-grounding-design.md`, which now holds
   only the deferred phases and a fold table.
+- `docs/architecture.md` §5.4 and §7 now state the deployment layout grounding
+  requires, which the per-system claim previously left implicit: one **shared**
+  `--mirror` across the per-system runs (drift is derived by reading it whole),
+  cursor slots keyed by connector name, and a sync branch per system.
 
 ### Known limits
 
@@ -39,7 +43,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The subject map is keyed by `doc_id`,** so a renamed `native_id` silently
   stops matching. `problems_for()`-style config validation should report map
   keys that resolve against neither the mirror nor this run.
-- **Every run pays O(mirror)** once `grounds` is True (architecture.md §7.1).
+- **A run pays O(mirror) whenever the drift scan runs** — that is, when the
+  synthesizer grounds *and* something is declared now or a sidecar exists from
+  before (architecture.md §7.1). A deployment that declares no grounding keeps
+  the cheap no-op, which returns before the mirror is ever loaded.
 - **Changing the synthesizer is undetected drift.** Switching stub → LLM, or
   changing the model or prompt, changes what every concept was built from, and
   nothing re-synthesizes for it — `generated.by` records the change without
