@@ -18,6 +18,7 @@ from kbforge.models import (
     ConceptFrontmatter,
     ProposedChange,
     ResourceAnchor,
+    resource_key,
 )
 
 _SCALAR = (str, int, float, bool)
@@ -106,10 +107,13 @@ def _source_entry(anchor: ResourceAnchor) -> dict:
     permission down into an entry is reasonable rather than certain. It is what
     makes a published concept auditable back to the canonical form it was
     synthesized from."""
-    descriptor = f"{anchor.system}:{anchor.native_id}"
     return {
-        "id": descriptor,
-        "resource": anchor.url or descriptor,
+        "id": f"{anchor.system}:{anchor.native_id}",
+        # `resource_key`, not the same expression written out again: this is the
+        # rendering side of the dual carrier and `validate._expected_resources`
+        # is the gate side. Two copies of the rule can drift, and the value they
+        # disagree about is exactly what binds file to projection.
+        "resource": resource_key(anchor),
         "content_hash": anchor.content_hash,
     }
 

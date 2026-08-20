@@ -280,6 +280,45 @@ def test_a_malformed_grounding_map_exits_2_before_fetching(tmp_path: Path, capsy
     assert "qualified doc_id" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("missing.yaml", None),  # FileNotFoundError
+        ("bad.yaml", "grounding: [unclosed\n"),  # yaml.YAMLError
+        ("wrong.yaml", "groundings: {}\n"),  # pydantic ValidationError (extra=forbid)
+        ("typed.yaml", "max_grounding_docs: not-a-number\n"),  # ValidationError
+    ],
+)
+def test_an_unreadable_grounding_file_exits_2_with_a_message(
+    tmp_path: Path, capsys, name: str, body: str | None
+):
+    """`load_grounding` was the one unguarded call left in the CLI: a typo in a
+    --grounding path, or a stray tab in the YAML, reached the terminal as a
+    traceback while every other operator mistake exits 2 with a sentence."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text("---\ntitle: X\n---\nbody\n", "utf-8")
+    g = tmp_path / name
+    if body is not None:
+        g.write_text(body, "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--grounding",
+            str(g),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    out = capsys.readouterr().out
+    assert str(g) in out  # which file, not just "something went wrong"
+    assert "grounding config" in out
+
+
 def test_cli_reports_a_fetch_contract_violation_as_a_message(tmp_path, capsys):
     """A third-party connector tripping the new law is the only thing most
     plugin authors will see of this release; a traceback is the wrong first

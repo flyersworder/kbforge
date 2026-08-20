@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from kbforge import pipeline
 from kbforge.canonical import FetchContractError, content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.grounding import GroundingConfig, has_sidecars
@@ -744,3 +745,93 @@ def test_a_grounded_by_edit_rebuilds_the_concept(tmp_path: Path):
         grounding_config=GroundingConfig(),
     )
     assert isinstance(settled, NoOp)
+
+
+def test_a_link_is_not_rescued_by_another_systems_document(tmp_path: Path):
+    """Grounding requires ONE shared mirror, so `existing` now sees every
+    system's documents -- and `concept_path` drops the system prefix, so
+    `sys:ghost` and `other:ghost` occupy one bundle path. Unscoped, a link to a
+    document that does not exist in THIS system publishes as surviving because
+    another system happens to hold one with the same native_id, and §4.4 law 2
+    never sees a dangling link. `existing` is scoped the same way the drift scan
+    scopes its candidates, and for the same reason."""
+    _run_once(tmp_path, [_doc("ghost", "Ghost", system="other")])
+    pub = _run_once(tmp_path, [_doc("ref", "Ref", relations=["sys:ghost"])])
+    assert pub.last_change is not None
+    fm = pub.last_change.concepts[concept_path("sys:ref")]
+    assert fm.links == []
+
+
+def test_a_rebuild_under_a_non_grounding_synthesizer_clears_the_sidecar(tmp_path: Path):
+    """Sidecar maintenance must not sit inside `if grounds:`. A rebuild under the
+    stub republishes the concept with single-source `sources` while the sidecar
+    still records grounding -- so switching back returns NoOp and the concept
+    stays ungrounded permanently."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    ticket = _doc("SVC1", "Ticket", system="other")
+    _run_once(
+        tmp_path,
+        [_doc("a", "A"), ticket],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+    )
+    assert has_sidecars(tmp_path / "mirror") is True
+
+    # Switch to the stub and change the source.
+    later = [_doc("a", "A2"), ticket]
+    stub = _run_once(tmp_path, later)
+    assert stub.last_change is not None
+    assert len(stub.last_change.concepts[concept_path("sys:a")].sources) == 1
+    assert has_sidecars(tmp_path / "mirror") is False
+
+    # Switching back must rebuild, not NoOp.
+    result, pub = _run_result(
+        tmp_path, later, synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert isinstance(result, Published)
+    assert pub.last_change is not None
+    fm = pub.last_change.concepts[concept_path("sys:a")]
+    assert [x.system for x in fm.sources] == ["sys", "other"]
+
+
+class _DroppingGroundingSynth(_GroundingSynth):
+    """Grounds, but fails one document -- what an LLM synthesizer does when a
+    call errors or the model returns something unusable."""
+
+    def synthesize(
+        self, changed_docs, changeset, existing_paths=frozenset(), grounding=None
+    ):
+        self.seen = grounding or {}
+        kept = [d for d in changed_docs if d.doc_id != "sys:a"]
+        items = [(d, d.title, d.title, d.text) for d in kept]
+        return assemble(items, changeset, existing_paths, grounding=grounding)
+
+
+def test_a_document_the_synthesizer_dropped_records_no_sidecar(tmp_path: Path):
+    """The sidecar says "this is what the published concept was built from". A
+    document the synthesizer dropped has no published concept from this run, so
+    recording it as freshly grounded makes it never drift again."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    pub = _run_once(
+        tmp_path, docs, synthesizer=_DroppingGroundingSynth(), grounding_config=cfg
+    )
+    assert pub.last_change is not None
+    assert concept_path("sys:a") not in pub.last_change.files
+    assert has_sidecars(tmp_path / "mirror") is False
+
+
+def test_no_declared_grounding_keeps_the_cheap_noop(tmp_path: Path, monkeypatch):
+    """The three-way scan gate is what keeps a deployment that declares no
+    grounding off the O(mirror) path. Collapsing it to `bool(grounds)` must not
+    pass: on an unchanged run with nothing declared and no sidecars, the mirror
+    is never loaded at all."""
+    docs = [_doc("a", "A")]
+    _run_once(tmp_path, docs, synthesizer=_GroundingSynth())
+
+    def _never(mirror):
+        raise AssertionError("load_all ran: the drift-scan gate is not holding")
+
+    monkeypatch.setattr(pipeline, "load_all", _never)
+    result, _ = _run_result(tmp_path, docs, synthesizer=_GroundingSynth())
+    assert isinstance(result, NoOp)

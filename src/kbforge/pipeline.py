@@ -254,10 +254,17 @@ def run(
     # pulled into scope above. `docs` is unioned in because this run's additions
     # are not in the mirror yet. Tombstones are subtracted from both: a concept
     # this run deletes must not count as a resolvable link target.
+    # Scoped to `systems` for the same reason the drift scan is: cross-source
+    # grounding requires ONE shared mirror, so `mirror_docs` now carries every
+    # system's documents, and `concept_path` drops the system prefix — so
+    # `wiki:readme.md` and `notes:readme.md` occupy one bundle path. Unscoped, a
+    # link to a document that does not exist in this system publishes as
+    # *surviving* because another system happens to hold one with the same
+    # native_id, and law 2 never sees the dangling link.
     tombstoned = {concept_path(doc_id) for doc_id in changeset.removed}
     existing = (
         frozenset(
-            {concept_path(d.doc_id) for d in mirror_docs}
+            {concept_path(d.doc_id) for d in mirror_docs if d.anchor.system in systems}
             | {concept_path(d.doc_id) for d in docs if not d.deleted}
         )
         - tombstoned
@@ -321,18 +328,29 @@ def run(
 
     url = publisher.kbforge_publish(proposal, publish_config)
     commit(mirror_path, docs)  # advance mirror ONLY after success
-    if grounds:
-        for doc in changed_docs:
-            docs_for = grounding_map.get(doc.doc_id)
-            if docs_for:
-                write_sidecar(
-                    mirror_path,
-                    doc.doc_id,
-                    {g.doc_id: g.anchor.content_hash for g in docs_for},
-                )
-            else:
-                # A delete, not a skip: a stale sidecar fires rule 3 forever.
-                delete_sidecar(mirror_path, doc.doc_id)
+    for doc in changed_docs:
+        if concept_path(doc.doc_id) not in proposal.files:
+            # The synthesizer dropped this document, exactly as the two note
+            # loops above guard for. Nothing was published from it this run, so
+            # neither recording nor clearing its sidecar would describe the
+            # bundle: leave whatever the last successful build recorded.
+            continue
+        docs_for = grounding_map.get(doc.doc_id) if grounds else None
+        if docs_for:
+            write_sidecar(
+                mirror_path,
+                doc.doc_id,
+                {g.doc_id: g.anchor.content_hash for g in docs_for},
+            )
+        else:
+            # A delete, not a skip: a stale sidecar fires rule 3 forever. Run
+            # OUTSIDE the `grounds` guard, matching the tombstone loop below: a
+            # rebuild under a non-grounding synthesizer republishes the concept
+            # with single-source `sources`, so a sidecar left behind claims
+            # grounding the shipped file does not have — and the next run under
+            # a grounding synthesizer finds it unchanged and returns NoOp,
+            # stranding the concept ungrounded permanently.
+            delete_sidecar(mirror_path, doc.doc_id)
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
     _save_cursor(state_path, result.cursor)

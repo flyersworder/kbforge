@@ -13,6 +13,7 @@ from typing import cast
 
 import pluggy
 import yaml
+from pydantic import ValidationError
 
 from kbforge.canonical import FetchContractError, StabilityError
 from kbforge.grounding import load_grounding, problems_for
@@ -188,7 +189,18 @@ def main(argv: list[str] | None = None) -> int:
     else:
         synthesizer = None  # run() defaults to StubSynthesizer
 
-    grounding_config = load_grounding(Path(args.grounding) if args.grounding else None)
+    try:
+        grounding_config = load_grounding(
+            Path(args.grounding) if args.grounding else None
+        )
+    except (OSError, yaml.YAMLError, ValidationError) as exc:
+        # A missing file, unparseable YAML and a rejected shape are all operator
+        # mistakes about one named path, so they get the surrounding style — a
+        # sentence naming the file and exit 2 — rather than a traceback. The
+        # shape problems `problems_for` reports below are already handled that
+        # way; these three reached the terminal raw.
+        print(f"grounding config {args.grounding}: {exc}")
+        return 2
     problems = problems_for(grounding_config)
     if problems:
         print(f"grounding config: {'; '.join(problems)}")
