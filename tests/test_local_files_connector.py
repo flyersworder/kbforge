@@ -169,3 +169,37 @@ def test_validate_config_rejects_non_list_ignore_globs(tmp_path: Path):
         {"path": str(tmp_path), "ignore_globs": ".venv"}  # str, not list
     )
     assert problems and "ignore_globs" in problems[0]
+
+
+def _grounded(tmp_path: Path, frontmatter: str) -> list:
+    """The file's established pattern: write a doc, fetch, normalize."""
+    _write(tmp_path, "a.md", f"---\n{frontmatter}---\nbody\n")
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    return conn.kbforge_normalize(result.records)
+
+
+def test_grounded_by_is_read_verbatim_and_never_prefixed(tmp_path: Path):
+    """Qualified-only: the connector must not prefix its own system, or a
+    cross-system id becomes `local_files:servicenow:SVC0042`."""
+    docs = _grounded(
+        tmp_path, "grounded_by:\n  - servicenow:SVC0042\n  - local_files:b.md\n"
+    )
+    assert docs[0].grounded_by == ["local_files:b.md", "servicenow:SVC0042"]
+
+
+def test_grounded_by_never_becomes_a_facet(tmp_path: Path):
+    """Unreserved keys land in `structured` and then in rendered frontmatter."""
+    docs = _grounded(tmp_path, "grounded_by:\n  - servicenow:SVC0042\n")
+    assert "grounded_by" not in docs[0].structured
+
+
+def test_a_bare_grounded_by_id_is_dropped_with_no_prefixing(tmp_path: Path):
+    """Spec §2.1 accepts no bare form. Dropping is safer than guessing a system."""
+    assert _grounded(tmp_path, "grounded_by:\n  - b.md\n")[0].grounded_by == []
+
+
+def test_a_half_qualified_grounded_by_id_is_dropped(tmp_path: Path):
+    """Both halves must be non-empty: ':x' and 'x:' name no document."""
+    docs = _grounded(tmp_path, "grounded_by:\n  - ':x'\n  - 'x:'\n")
+    assert docs[0].grounded_by == []

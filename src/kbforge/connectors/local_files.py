@@ -34,6 +34,7 @@ _RESERVED_KEYS = frozenset(
         "type",
         "title",
         "relations",
+        "grounded_by",
         "description",
         "generated",
         "sources",
@@ -166,6 +167,13 @@ class LocalFilesConnector:
                 for r in front.get("relations", [])
                 if isinstance(r, str)
             )
+            # No `_SYSTEM` prefix: §2.1 ids are qualified already. An entry with
+            # no system is dropped rather than guessed at.
+            grounded_by = sorted(
+                r
+                for r in front.get("grounded_by", [])
+                if isinstance(r, str) and ":" in r and all(r.partition(":")[::2])
+            )
             structured = {k: v for k, v in front.items() if k not in _RESERVED_KEYS}
             anchor = ResourceAnchor(
                 system=_SYSTEM,
@@ -181,6 +189,7 @@ class LocalFilesConnector:
                 text=body.strip(),
                 structured=structured,
                 relations=relations,
+                grounded_by=grounded_by,
             )
             doc.anchor.content_hash = content_hash(doc)
             docs.append(doc)

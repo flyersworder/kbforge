@@ -122,6 +122,10 @@ class CanonicalDocument(BaseModel):
     text: str
     structured: dict = Field(default_factory=dict)
     relations: list[str] = Field(default_factory=list)
+    grounded_by: list[str] = Field(default_factory=list)
+    """Fully qualified doc_ids this document should be grounded in (§2.1).
+    Qualified-only: a bare id would have to be told from a qualified one by
+    looking for a colon, and a native_id may contain one."""
     deleted: bool = False
 
 
