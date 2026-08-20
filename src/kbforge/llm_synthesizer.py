@@ -142,6 +142,9 @@ class LLMSynthesizer:
             ),
         )
 
+    grounds = True
+    """Reads grounding documents and writes a body informed by them (§7)."""
+
     def _prompt(self, doc: CanonicalDocument, text: str) -> str:
         facets = "\n".join(f"{k}: {v}" for k, v in doc.structured.items())
         return (
@@ -151,14 +154,40 @@ class LLMSynthesizer:
             f"Source text:\n{text}"
         )
 
+    def _grounding_block(
+        self, docs: list[CanonicalDocument], notes: list[str], owner_id: str
+    ) -> str:
+        """Related documents from other systems, each labelled with its doc_id so
+        the model can attribute a claim to the system it came from."""
+        if not docs:
+            return ""
+        parts = []
+        for g in docs:
+            text = g.text
+            if len(text) > self.config.max_source_chars:
+                text = text[: self.config.max_source_chars]
+                notes.append(
+                    f"{concept_path(owner_id)}: grounding {g.doc_id} truncated to "
+                    f"{self.config.max_source_chars} chars before synthesis"
+                )
+            parts.append(f"--- {g.doc_id} ---\n{text}")
+        joined = "\n\n".join(parts)
+        return (
+            "\n\nRelated documents from other systems. Use them for context and "
+            "corroboration. Do not treat them as this concept's subject:\n\n"
+            f"{joined}"
+        )
+
     def synthesize(
         self,
         changed_docs: list[CanonicalDocument],
         changeset: ChangeSet,
         existing_paths: frozenset[str] = frozenset(),
+        grounding: dict[str, list[CanonicalDocument]] | None = None,
     ) -> ProposedChange:
         items: list[tuple[CanonicalDocument, str, str, str]] = []
         notes: list[str] = []
+        grounding = grounding or {}
         for doc in changed_docs:
             text = doc.text
             if len(text) > self.config.max_source_chars:
@@ -167,12 +196,19 @@ class LLMSynthesizer:
                     f"{concept_path(doc.doc_id)}: source truncated to "
                     f"{self.config.max_source_chars} chars before synthesis"
                 )
-            result = self.agent.run_sync(self._prompt(doc, text))
+            block = self._grounding_block(
+                grounding.get(doc.doc_id, []), notes, doc.doc_id
+            )
+            result = self.agent.run_sync(self._prompt(doc, text) + block)
             c = result.output
             body = _strip_title_heading(c.body, c.title)
             items.append((doc, c.title, c.description, body))
         proposal = assemble(
-            items, changeset, existing_paths, generated_by=actor_for(self.config.model)
+            items,
+            changeset,
+            existing_paths,
+            generated_by=actor_for(self.config.model),
+            grounding=grounding,
         )
         proposal.summary.grounding_notes.extend(notes)
         return proposal
