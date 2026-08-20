@@ -86,10 +86,16 @@ def resolve(
         if gid == owner.doc_id:
             continue  # self-reference: silent, not a note
         doc = by_id.get(gid)
-        if doc is None or doc.deleted:
+        if doc is None:
             notes.append(
                 f"{owner.doc_id}: grounding {gid} was not found in the mirror or "
                 "this fetch and was dropped"
+            )
+            continue
+        if doc.deleted:
+            notes.append(
+                f"{owner.doc_id}: grounding {gid} is tombstoned upstream and "
+                "was dropped"
             )
             continue
         key = resource_key(doc.anchor)

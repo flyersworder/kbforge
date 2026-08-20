@@ -109,6 +109,7 @@ def test_unresolvable_id_is_dropped_with_a_note_not_an_error():
     got, notes = resolve(owner, ["servicenow:SVC0042"], _by_id(owner), max_docs=5)
     assert got == []
     assert notes and "servicenow:SVC0042" in notes[0]
+    assert "not found" in notes[0] and "tombstoned" not in notes[0]
 
 
 def test_tombstoned_target_is_dropped():
@@ -117,6 +118,7 @@ def test_tombstoned_target_is_dropped():
     dead.deleted = True
     got, notes = resolve(owner, ["servicenow:SVC0042"], _by_id(owner, dead), max_docs=5)
     assert got == [] and notes
+    assert "servicenow:SVC0042" in notes[0] and "tombstoned" in notes[0]
 
 
 def test_duplicate_resource_collapses_even_across_different_doc_ids():
