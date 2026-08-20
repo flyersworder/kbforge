@@ -8,6 +8,7 @@ from kbforge.grounding import (
     GroundingConfig,
     declared_ids,
     delete_sidecar,
+    drifted,
     has_sidecars,
     load_grounding,
     problems_for,
@@ -185,3 +186,65 @@ def test_has_sidecars_gates_the_scan(tmp_path: Path):
     assert has_sidecars(tmp_path) is True
     delete_sidecar(tmp_path, "confluence:payments")
     assert has_sidecars(tmp_path) is False
+
+
+def test_unchanged_grounding_does_not_drift(tmp_path: Path):
+    owner = _doc("confluence:payments")
+    write_sidecar(tmp_path, owner.doc_id, {"servicenow:SVC0042": "h1"})
+    assert (
+        drifted(
+            tmp_path,
+            [owner],
+            {"confluence:payments": ["servicenow:SVC0042"]},
+            {"servicenow:SVC0042": "h1"},
+        )
+        == []
+    )
+
+
+def test_a_changed_grounding_hash_drifts(tmp_path: Path):
+    owner = _doc("confluence:payments")
+    write_sidecar(tmp_path, owner.doc_id, {"servicenow:SVC0042": "h1"})
+    assert drifted(
+        tmp_path,
+        [owner],
+        {"confluence:payments": ["servicenow:SVC0042"]},
+        {"servicenow:SVC0042": "h2"},  # the other system's run moved it
+    ) == ["confluence:payments"]
+
+
+def test_a_vanished_grounding_document_drifts(tmp_path: Path):
+    owner = _doc("confluence:payments")
+    write_sidecar(tmp_path, owner.doc_id, {"servicenow:SVC0042": "h1"})
+    assert drifted(tmp_path, [owner], {"confluence:payments": []}, {}) == [
+        "confluence:payments"
+    ]
+
+
+def test_an_edited_map_drifts_via_the_set_comparison(tmp_path: Path):
+    owner = _doc("confluence:payments")
+    write_sidecar(tmp_path, owner.doc_id, {"servicenow:SVC0042": "h1"})
+    assert drifted(
+        tmp_path,
+        [owner],
+        {"confluence:payments": ["servicenow:SVC0042", "drive:D1"]},
+        {"servicenow:SVC0042": "h1", "drive:D1": "h9"},
+    ) == ["confluence:payments"]
+
+
+def test_a_document_that_never_grounded_does_not_drift(tmp_path: Path):
+    assert drifted(tmp_path, [_doc("confluence:payments")], {}, {}) == []
+
+
+def test_an_unresolvable_id_does_not_drift_forever(tmp_path: Path):
+    """`resolved` is POST-resolution, so an id that never resolves is absent from
+    both sides. Comparing DECLARED ids would leave it permanently present on one
+    side and absent on the other -- re-synthesizing every run, forever."""
+    owner = _doc("confluence:payments", grounded_by=["servicenow:NEVER"])
+    write_sidecar(tmp_path, owner.doc_id, {"drive:D1": "h1"})
+    assert (
+        drifted(
+            tmp_path, [owner], {"confluence:payments": ["drive:D1"]}, {"drive:D1": "h1"}
+        )
+        == []
+    )

@@ -151,3 +151,28 @@ def has_sidecars(mirror: Path) -> bool:
     """Cheap gate for the drift scan: a directory listing, not a mirror load."""
     directory = mirror / SIDECAR_DIR
     return directory.is_dir() and any(directory.glob("*.json"))
+
+
+def drifted(
+    mirror: Path,
+    candidates: list[CanonicalDocument],
+    resolved: dict[str, list[str]],
+    hashes: dict[str, str],
+) -> list[str]:
+    """Owning doc_ids whose grounding moved since they were last published.
+
+    `resolved` must be POST-resolution, matching what `write_sidecar` recorded.
+    Comparing declared ids instead leaves an unresolvable id permanently present
+    on one side and absent on the other, re-synthesizing forever (§4)."""
+    out: list[str] = []
+    for doc in candidates:
+        recorded = read_sidecar(mirror, doc.doc_id)
+        if recorded is None:
+            continue  # never grounded: nothing to drift from
+        current = set(resolved.get(doc.doc_id, []))
+        if current != set(recorded):  # rule 3, and rule 2 by construction
+            out.append(doc.doc_id)
+            continue
+        if any(hashes.get(gid) != h for gid, h in recorded.items()):  # rule 1
+            out.append(doc.doc_id)
+    return sorted(out)
