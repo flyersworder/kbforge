@@ -144,6 +144,7 @@ def assemble(
     existing_paths: frozenset[str] = frozenset(),
     *,
     generated_by: str = _DEFAULT_ACTOR,
+    grounding: dict[str, list[CanonicalDocument]] | None = None,
 ) -> ProposedChange:
     """Build the ProposedChange frame from per-doc prose (doc, title, description,
     body). Both synthesizers produce `items` differently and share this assembly, so
@@ -158,7 +159,13 @@ def assemble(
         fm = ConceptFrontmatter(
             type=str(doc.structured.get("type") or "concept"),
             facets=_facets(doc.structured),
-            sources=[doc.anchor],
+            # Owning anchor first (§6): the validator compares resources as sets,
+            # so this ordering is convention, and it is what tells a reader which
+            # system owns the concept without a new OKF field.
+            sources=[
+                doc.anchor,
+                *(g.anchor for g in (grounding or {}).get(doc.doc_id, [])),
+            ],
             links=sorted(p for p in links if p in known),  # drop dangling (law 2)
             generated_at=doc.anchor.retrieved_at,
             generated_by=generated_by,
@@ -202,9 +209,37 @@ class Synthesizer(Protocol):
     ) -> ProposedChange: ...
 
 
+class GroundingSynthesizer(Protocol):
+    """A synthesizer that reads grounding documents and cites them in `sources`.
+
+    A separate protocol rather than a widening of `Synthesizer`: adding either
+    `grounds` or the `grounding=` parameter there makes it a required structural
+    member, so every synthesizer written before 0.8.0 stops being assignable --
+    the exact population this design keeps working. A protocol cannot express
+    "a method that may or may not accept this keyword".
+
+    Nothing declares conformance; an implementation satisfies this structurally
+    by having the attribute and the parameter.
+    """
+
+    grounds: bool
+
+    def synthesize(
+        self,
+        changed_docs: list[CanonicalDocument],
+        changeset: ChangeSet,
+        existing_paths: frozenset[str] = frozenset(),
+        grounding: dict[str, list[CanonicalDocument]] | None = None,
+    ) -> ProposedChange: ...
+
+
 class StubSynthesizer:
     """Deterministic, no LLM: title and description mirror the source; body is the
     canonical text verbatim. The default synthesizer and the test baseline."""
+
+    grounds = False
+    """The body is the source verbatim, so citing a grounding document would claim
+    a provenance the artifact does not have (§7)."""
 
     def synthesize(
         self,
