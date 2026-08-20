@@ -166,9 +166,15 @@ def drifted(
     on one side and absent on the other, re-synthesizing forever (§4)."""
     out: list[str] = []
     for doc in candidates:
-        recorded = read_sidecar(mirror, doc.doc_id)
-        if recorded is None:
-            continue  # never grounded: nothing to drift from
+        # A missing sidecar is an EMPTY recorded set, not "exempt from drift".
+        # Declared grounding that was unresolvable at first publish resolves to
+        # nothing, so the pipeline deletes rather than writes the sidecar --
+        # and on any fresh multi-system deployment the first system to run has
+        # none of the others in the mirror. Skipping here would strand every
+        # concept it published, ungrounded forever, once the others synced.
+        # This cannot loop: a document declaring nothing has
+        # `current == set() == recorded`, and `any(...)` over `{}` is False.
+        recorded = read_sidecar(mirror, doc.doc_id) or {}
         current = set(resolved.get(doc.doc_id, []))
         if current != set(recorded):  # rule 3, and rule 2 by construction
             out.append(doc.doc_id)

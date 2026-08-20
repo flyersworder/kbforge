@@ -96,6 +96,37 @@ def _save_cursor(state_dir: Path, cursor: Cursor) -> None:
     slot.write_text(cursor.model_dump_json(), "utf-8")
 
 
+def _drift_candidates(
+    mirror_docs: list[CanonicalDocument],
+    by_id: dict[str, CanonicalDocument],
+    systems: set[str],
+    changed: set[str],
+    removed_ids: set[str],
+) -> list[CanonicalDocument]:
+    """The documents the drift scan evaluates, **as this run sees them**.
+
+    Scope is this run's own output. Connector identity will not do:
+    `kbforge_connector_info()` is static while a generic connector's `system` is
+    per-instance (§7.1).
+
+    `by_id.get(d.doc_id, d)` is the load-bearing part, and the reason this is a
+    function rather than a comprehension inline in `run`. The candidate list is
+    built from the mirror, but `grounded_by` is deliberately outside
+    `content_hash` (§7.1), so a document whose only change is a `grounded_by`
+    edit is `unchanged` in the diff and arrives here carrying its **pre-edit**
+    declaration. Evaluating the mirror's copy compares the edit against itself,
+    yields `NoOp` forever, and discards the fresh copy — a no-op run never
+    commits. The fresh copy is also the one that must be re-synthesized.
+    """
+    return [
+        by_id.get(d.doc_id, d)
+        for d in mirror_docs
+        if d.anchor.system in systems
+        and d.doc_id not in changed
+        and d.doc_id not in removed_ids
+    ]
+
+
 def run(
     connector: ConnectorProtocol,
     publisher: PublisherProtocol,
@@ -165,19 +196,16 @@ def run(
             max_docs=grounding_cfg.max_grounding_docs,
         )
 
+    # This run's systems. Used twice: to scope the drift scan, and to scope
+    # `existing` below — grounding requires one shared mirror, so both now see
+    # every system's documents and both must filter to this run's own.
+    systems = {d.anchor.system for d in docs}
+
     drift: list[str] = []
     if scan:
-        # Scope by this run's own output. Connector identity will not do:
-        # `kbforge_connector_info()` is static while a generic connector's
-        # `system` is per-instance (design note §4).
-        systems = {d.anchor.system for d in docs}
-        candidates = [
-            d
-            for d in mirror_docs
-            if d.anchor.system in systems
-            and d.doc_id not in changed
-            and d.doc_id not in removed_ids
-        ]
+        candidates = _drift_candidates(
+            mirror_docs, by_id, systems, changed, removed_ids
+        )
         drift = drifted(
             mirror_path,
             candidates,

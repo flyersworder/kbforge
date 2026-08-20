@@ -673,3 +673,74 @@ def test_a_document_selected_by_both_drift_and_referrers_renders_once(tmp_path: 
     assert pub.last_change is not None
     anchors = [a.native_id for a in pub.last_change.summary.sources_changed]
     assert anchors.count("a") == 1
+
+
+def test_grounding_declared_before_the_other_system_synced_is_picked_up(tmp_path: Path):
+    """The declaration resolved to nothing at first publish, so no sidecar was
+    written. Reading a missing sidecar as "never grounded" strands it forever:
+    on any fresh multi-system deployment the first system to run has none of
+    the others in the mirror, so every concept it publishes would permanently
+    lose all of its grounding."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    a = _doc("a", "A")
+    first = _run_once(
+        tmp_path, [a], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert first.last_change is not None
+    assert len(first.last_change.concepts[concept_path("sys:a")].sources) == 1
+
+    # The other system syncs later, on its own run and its own branch.
+    _run_once(
+        tmp_path,
+        [_doc("SVC1", "Ticket", system="other")],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+    )
+
+    result, pub = _run_result(
+        tmp_path, [a], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert isinstance(result, Published)  # the grounding is finally available
+    assert pub.last_change is not None
+    fm = pub.last_change.concepts[concept_path("sys:a")]
+    assert [x.system for x in fm.sources] == ["sys", "other"]
+
+    settled, _ = _run_result(
+        tmp_path, [a], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert isinstance(settled, NoOp)  # one rebuild, then quiet
+
+
+def test_a_grounded_by_edit_rebuilds_the_concept(tmp_path: Path):
+    """`grounded_by` is deliberately outside `content_hash`, so a document whose
+    only change is a grounding declaration is `unchanged` in the diff and rule 3
+    is the only thing that can catch it. It catches nothing unless the candidate
+    evaluated is THIS RUN's copy: the mirror's copy still carries the pre-edit
+    declaration, so the edit is compared against itself and the fresh copy is
+    discarded with the no-op."""
+    ticket = _doc("SVC1", "Ticket", system="other")
+    a_plain = _doc("a", "A")
+    _run_once(tmp_path, [a_plain, ticket], synthesizer=_GroundingSynth())
+
+    a_grounded = _doc("a", "A", grounded_by=["other:SVC1"])
+    # The premise: the edit is invisible to the diff.
+    assert a_grounded.anchor.content_hash == a_plain.anchor.content_hash
+
+    result, pub = _run_result(
+        tmp_path,
+        [a_grounded],
+        synthesizer=_GroundingSynth(),
+        grounding_config=GroundingConfig(),
+    )
+    assert isinstance(result, Published)
+    assert pub.last_change is not None
+    fm = pub.last_change.concepts[concept_path("sys:a")]
+    assert [x.system for x in fm.sources] == ["sys", "other"]
+
+    settled, _ = _run_result(
+        tmp_path,
+        [a_grounded],
+        synthesizer=_GroundingSynth(),
+        grounding_config=GroundingConfig(),
+    )
+    assert isinstance(settled, NoOp)
