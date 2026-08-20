@@ -58,11 +58,21 @@ One emitter change, one validator surface, two ways to feed it.
 `CanonicalDocument` gains `grounded_by: list[str] = Field(default_factory=list)`.
 A default keeps every existing connector valid.
 
-Ids are `doc_id`s. A **bare** id is prefixed with the emitting connector's own
-system; a **qualified** one (`system:native_id`) passes through. Because this key
-is new there is no ambiguity to inherit: `relations` cannot be widened the same
-way, since `local_files.py:164` already coerces every entry to its own system and
-an existing relation containing a colon would silently change meaning.
+Ids are **fully qualified `doc_id`s**, always — the same rule as the map (§2.2),
+so there is exactly one rule to know. No bare form is accepted, even for
+same-system grounding.
+
+A bare form would have to be told from a qualified one by looking for a colon, and
+a `native_id` may contain one: `notes:draft.md` is either the document `draft.md`
+in system `notes` or a local file literally named `notes:draft.md`. Guessing
+between them is the kind of inference the protocol-first mapping in `kbforge-mcp`
+already refuses. The cost is verbosity — a same-system entry reads
+`local_files:apps/y.md` — and the benefit is that no id is ever silently
+reinterpreted.
+
+This is also why `relations` cannot simply be widened: `local_files.py:164` already
+coerces every entry to its own system, so an existing relation containing a colon
+would change meaning under any new rule.
 
 `local_files` reads a `grounded_by:` frontmatter list and must add the key to
 `_RESERVED_KEYS`, or it sweeps into `structured` and then into facets.
@@ -87,10 +97,16 @@ Map **values must be fully qualified** — there is no emitting connector here t
 imply a system, so a bare id is a config error, reported by validation rather than
 guessed at. Map **keys** are likewise full `doc_id`s.
 
-The file is parsed and validated **before fetch**, in the `problems_for()` shape
-the connectors already use: malformed YAML, an unqualified id, or a key that
-resolves against neither the mirror nor this run is reported as a message and exits
-2, never discovered halfway through a run that has already spent tokens.
+The file's **shape** is validated before fetch, in the `problems_for()` form the
+connectors already use: malformed YAML, an unqualified key or value, or a
+non-positive cap is reported as a message and exits 2, never discovered halfway
+through a run.
+
+Whether a key **resolves** is a different question and is not fatal. A key naming a
+system that has not synced yet is dropped with a grounding note, exactly as an
+unresolvable value is (§3). Making keys fatal while values are tolerated would
+punish the same condition twice over depending on which side of the map it fell
+on.
 
 Passed as `kbforge run --grounding PATH`. A **pipeline-level** flag, not `--set`:
 `--set` is connector config, and a connector must not know other systems exist —
@@ -206,6 +222,13 @@ in `systems` and which is not already in `changed`, re-synthesize when any holds
    catches an edited subject map, and a `grounded_by` edit that a connector's
    `content_hash` does not cover)
 
+Rule 3 compares sets **after resolution**, not as declared. A declared id that
+never resolves — a system that is not synced, a typo — would otherwise be
+permanently absent from the recorded set and permanently present in the declared
+one, re-synthesizing the document on every run forever. That is the same failure
+the sidecar deletions below prevent, arriving from the other direction: what is
+recorded and what is compared must be built by the same rules.
+
 **Mutual grounding converges**, which is not obvious and is worth stating: drift
 is keyed on the *source document's* `content_hash`, and re-synthesis never changes
 that — it changes a concept, not a document. So A grounded in B and B grounded in
@@ -300,6 +323,13 @@ class Synthesizer(Protocol):
     grounds: bool = False        # LLMSynthesizer sets True
 ```
 
+The same flag decides whether the pipeline passes `grounding=` at all. That is
+what actually keeps existing synthesizers working: a Protocol default helps a class
+that declares conformance, but the test doubles in `tests/test_pipeline.py` are
+plain duck-typed classes with no `grounding` parameter, and passing the keyword
+unconditionally would raise `TypeError`. One flag, two jobs — skip the scan, and
+call the old signature.
+
 The pipeline reads it as `getattr(synthesizer, "grounds", False)`, not as an
 attribute access. A default in a Protocol body documents the expected value; it
 does not supply one to an implementer, so a third-party synthesizer written
@@ -351,6 +381,8 @@ place, confirm the failure, restore with `git checkout --`.
 - sidecar lifecycle, both deletions: empty the grounding set and assert the second
   run is a no-op rather than re-synthesizing forever; tombstone an owner, re-create
   the same `doc_id`, and assert drift is not measured against its previous life
+- an id that never resolves does not loop: declare grounding on a system that is
+  not in the mirror, run twice, assert the second run is a no-op
 - dedup: a document selected by BOTH the drift scan and `referrers` appears once in
   `summary.sources_changed`
 - scoping: a mirror holding two systems, a run fetching one — assert the other
