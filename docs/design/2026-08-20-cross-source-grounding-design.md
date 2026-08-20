@@ -99,7 +99,9 @@ grounding *set*, not only the recorded hashes.
 
 ## 3. Resolution
 
-Resolve each id against `mirror_docs ∪ docs`, then:
+Resolve each id against `mirror_docs ∪ docs`, **preferring `docs`** when both
+carry it — this run's copy is the fresher one, and its hash is what the sidecar
+must record. Then:
 
 - **Self-reference is dropped.** A document does not ground itself; `sources` is
   a set-compare in `_check_sources_shape` (`validate.py:343`), so a duplicate
@@ -108,12 +110,16 @@ Resolve each id against `mirror_docs ∪ docs`, then:
   target may live in a system that has not synced yet. Failing the run would make
   one source's sync depend on another's, which one-connector-per-run exists to
   prevent. This mirrors law 2's existing dangling-link drop at
-  `synthesize.py:163`.
+  `synthesize.py:162`.
 - **Tombstoned targets are dropped**, same as a removed link target.
 - **Fan-in is capped** at `max_grounding_docs` (default 5). Over the cap, sort by
   `doc_id` and take the first N, with a grounding note recording what was
   dropped. Deterministic and never the model's choice — an LLM picking which
   sources to cite is an LLM editing provenance.
+- **Deduplicate by resource string** (`anchor.url or f"{system}:{native_id}"`),
+  not by `doc_id`. That is the key `_expected_resources` builds, so two anchors
+  collapsing to one resource would cite the same artifact twice in the rendered
+  file while the set-compare stayed happy.
 - Per-document text is truncated by the existing `max_source_chars`.
 
 ## 4. Staleness: drift is derived, never written across connectors
@@ -146,8 +152,28 @@ it. The sidecar lives in the mirror rather than beside cursors because it
 describes *what was published last time*, which is the mirror's whole job — and
 because the same `rm -rf` that resets a mirror must reset this, or the two drift.
 
-**Drift check.** On a later run, for each of this connector's documents not
-already in `changed`, re-synthesize when any holds:
+**Scoping the scan.** "This connector's documents" is *not* derivable from the
+connector: `kbforge_connector_info()` returns a static name, while a generic
+connector's `system` is per-instance — `kbforge-mcp` is named `mcp` and carries a
+configured `system`. This is the same identity gap the MCP note recorded as §10.1
+(cursor slot keyed by connector name, `system` keyed per instance), surfacing
+again, and here it matters more: an unscoped scan would re-synthesize *other*
+systems' concepts and break the branch-per-system model this whole design exists
+to preserve.
+
+Scope by the run's own output instead, which needs no connector identity at all:
+
+```python
+systems = {d.anchor.system for d in docs}
+```
+
+If `docs` is empty the scan does not run. That is a real gap — a grounded concept
+whose owner was not fetched cannot be found — but an empty fetch publishes
+nothing anyway, and inventing a system name from config would put connector
+knowledge back into core.
+
+**Drift check.** On a later run, for each mirror document whose `anchor.system` is
+in `systems` and which is not already in `changed`, re-synthesize when any holds:
 
 1. a recorded grounding hash differs from that document's current hash in the mirror
 2. a recorded id is now absent or tombstoned
@@ -155,7 +181,12 @@ already in `changed`, re-synthesize when any holds:
    catches an edited subject map, and a `grounded_by` edit that a connector's
    `content_hash` does not cover)
 
-This is `pipeline.py:133-144` — the `referrers` mechanism — generalized. That
+**Mutual grounding converges**, which is not obvious and is worth stating: drift
+is keyed on the *source document's* `content_hash`, and re-synthesis never changes
+that — it changes a concept, not a document. So A grounded in B and B grounded in
+A rebuild at most once each, rather than ping-ponging forever.
+
+This is `pipeline.py:134-144` — the `referrers` mechanism — generalized. That
 precedent already pulls mirror documents the run never fetched into scope, and
 already appends a `grounding_notes` line explaining why a file appears in the diff
 whose own source did not change. Grounding drift gets its own note in the same
@@ -186,7 +217,7 @@ it is not built until the cost is measured and real.
 
 ## 6. Emission
 
-`synthesize.py:162` — `sources=[doc.anchor]` — is the only 1:1 assumption in the
+`synthesize.py:161` — `sources=[doc.anchor]` — is the only 1:1 assumption in the
 emitter:
 
 ```python
@@ -230,6 +261,11 @@ class Synthesizer(Protocol):
     grounds: bool = False        # LLMSynthesizer sets True
 ```
 
+The pipeline reads it as `getattr(synthesizer, "grounds", False)`, not as an
+attribute access. A default in a Protocol body documents the expected value; it
+does not supply one to an implementer, so a third-party synthesizer written
+against today's protocol would raise `AttributeError` on a direct read.
+
 The pipeline skips the §4 drift scan entirely when `grounds` is False. Without
 this, a stub run would re-synthesize a document to produce a byte-identical file.
 
@@ -252,7 +288,11 @@ place, confirm the failure, restore with `git checkout --`.
 - no-op interaction, both directions: no source change + no drift → `NoOp()`; no source change + drift → not a no-op
 - emission: owning anchor first; `run_validators() == []` on a multi-source proposal
 - stub does not ground, and skips the scan
-- the map never reaches `commit()`: edit the map, assert no document is marked modified
+- the map never reaches `commit()`: edit the map, assert `changeset.modified` stays
+  empty **while the affected concept is still re-synthesized** — the two must not
+  be conflated, since one is about the source and the other about the concept
+- scoping: a mirror holding two systems, a run fetching one — assert the other
+  system's concepts are never pulled into scope, however much they drifted
 
 ## 10. Known limits
 
@@ -262,6 +302,16 @@ place, confirm the failure, restore with `git checkout --`.
   stops matching. `problems_for()`-style config validation should report map keys
   that resolve against neither the mirror nor this run.
 - **Every run pays O(mirror)** once `grounds` is True (§5).
+- **Changing the synthesizer is undetected drift.** Switching stub → LLM, or
+  changing the model or prompt, changes what every concept was built from, and
+  nothing re-synthesizes for it — `generated.by` records the change without
+  forcing one. Pre-existing, but grounding makes the omission more visible,
+  because sidecars written under a non-grounding synthesizer record hashes for
+  grounding that never happened.
+- **`generated.at` on a drift-triggered rebuild** comes from the owning document's
+  `retrieved_at` (`synthesize.py:163`), which for an incremental connector may be
+  the mirror's older timestamp rather than this run's. Pre-existing behaviour,
+  shared with `referrers`; grounding makes it more frequent.
 - **Grounding does not create links.** A cited document is provenance, not
   navigation; if you also want a link, declare a relation.
 
