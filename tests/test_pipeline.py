@@ -5,6 +5,7 @@ import pytest
 
 from kbforge.canonical import FetchContractError, content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
+from kbforge.grounding import GroundingConfig, has_sidecars
 from kbforge.models import (
     CanonicalDocument,
     ConceptFrontmatter,
@@ -16,7 +17,7 @@ from kbforge.models import (
 )
 from kbforge.pipeline import NoOp, Published, run
 from kbforge.publishers.dry_run import DryRunPublisher
-from kbforge.synthesize import StubSynthesizer, concept_path
+from kbforge.synthesize import StubSynthesizer, assemble, concept_path
 
 DOC = """---
 type: application
@@ -190,24 +191,29 @@ def _doc(
     native_id: str,
     title: str,
     *,
+    system: str = "sys",
     deleted: bool = False,
     relations: list[str] | None = None,
+    grounded_by: list[str] | None = None,
+    text: str | None = None,
 ) -> CanonicalDocument:
-    """A fixed, clock-free CanonicalDocument keyed under system "sys" — deletions
-    and referrer-relations require a fake source, since LocalFilesConnector
-    derives docs from files that exist and can never emit a tombstone."""
+    """A fixed, clock-free CanonicalDocument keyed under `system` (default "sys")
+    — deletions and referrer-relations require a fake source, since
+    LocalFilesConnector derives docs from files that exist and can never emit a
+    tombstone."""
     doc = CanonicalDocument(
         anchor=ResourceAnchor(
-            system="sys",
+            system=system,
             native_id=native_id,
             url=None,
             retrieved_at=datetime(2024, 1, 1, tzinfo=UTC),
             content_hash="",
         ),
-        doc_id=f"sys:{native_id}",
+        doc_id=f"{system}:{native_id}",
         title=title,
-        text=title,
+        text=text or title,
         relations=relations or [],
+        grounded_by=grounded_by or [],
         deleted=deleted,
     )
     doc.anchor.content_hash = content_hash(doc)
@@ -252,7 +258,10 @@ class _RecordingPublisher:
 
 
 def _run_once(
-    tmp_path: Path, docs: list[CanonicalDocument], synthesizer=None
+    tmp_path: Path,
+    docs: list[CanonicalDocument],
+    synthesizer=None,
+    grounding_config=None,
 ) -> _RecordingPublisher:
     """Runs the pipeline against a fake connector returning `docs`, publishing via
     a recording publisher. Reuses tmp_path's mirror/state across calls in a test,
@@ -266,12 +275,30 @@ def _run_once(
         state_dir=str(tmp_path / "state"),
         publish_config={},
         synthesizer=synthesizer,
+        grounding_config=grounding_config,
     )
     # Narrows last_change from `ProposedChange | None` for callers, and fails
     # loudly (rather than with a bare AttributeError) if a run unexpectedly
     # didn't publish.
     assert publisher.last_change is not None, f"pipeline did not publish: {result!r}"
     return publisher
+
+
+def _run_result(tmp_path, docs, synthesizer=None, grounding_config=None):
+    """The raw result, so a test can assert NoOp. `_run_once` asserts a publish
+    happened and cannot express "nothing should have happened"."""
+    publisher = _RecordingPublisher()
+    result = run(
+        _FakeConnector(docs),
+        publisher,
+        config={},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={},
+        synthesizer=synthesizer,
+        grounding_config=grounding_config,
+    )
+    return result, publisher
 
 
 def test_a_tombstone_reaches_the_publisher_as_a_removal(tmp_path):
@@ -438,3 +465,194 @@ def test_pipeline_still_accepts_a_tombstone_from_a_complete_fetch(tmp_path):
     )
     assert publisher.last_change is not None, f"pipeline did not publish: {result!r}"
     assert publisher.last_change.files_removed == ["concepts/gone/overview.md"]
+
+
+class _GroundingSynth:
+    """Records what grounding it was handed. `grounds = True`, so the pipeline
+    both scans for drift and passes the keyword."""
+
+    grounds = True
+
+    def __init__(self):
+        self.seen: dict = {}
+
+    def synthesize(
+        self, changed_docs, changeset, existing_paths=frozenset(), grounding=None
+    ):
+        self.seen = grounding or {}
+        items = [(d, d.title, d.title, d.text) for d in changed_docs]
+        return assemble(items, changeset, existing_paths, grounding=grounding)
+
+
+def _cfg(**mapping):
+    return GroundingConfig(grounding=dict(mapping))
+
+
+def test_a_legacy_synthesizer_is_never_passed_grounding(tmp_path: Path):
+    """`_FixedSynth` is duck-typed with no `grounding` parameter. Passing the
+    keyword unconditionally raises TypeError for every synthesizer written
+    before this change -- including both test doubles in this file."""
+    pub = _run_once(tmp_path, [_doc("a", "A")], synthesizer=_FixedSynth())
+    assert pub.last_change is not None
+
+
+def test_grounding_reaches_the_synthesizer(tmp_path: Path):
+    synth = _GroundingSynth()
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    _run_once(
+        tmp_path,
+        docs,
+        synthesizer=synth,
+        grounding_config=_cfg(**{"sys:a": ["other:SVC1"]}),
+    )
+    assert [d.doc_id for d in synth.seen["sys:a"]] == ["other:SVC1"]
+
+
+def test_a_grounded_concept_cites_the_owning_system_first(tmp_path: Path):
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    pub = _run_once(
+        tmp_path,
+        docs,
+        synthesizer=_GroundingSynth(),
+        grounding_config=_cfg(**{"sys:a": ["other:SVC1"]}),
+    )
+    assert pub.last_change is not None
+    fm = pub.last_change.concepts[concept_path("sys:a")]
+    assert [a.system for a in fm.sources] == ["sys", "other"]
+
+
+def test_drift_in_another_system_reopens_the_owner_on_its_next_run(tmp_path: Path):
+    """The whole point. System B's run must not touch A's concepts, and A's next
+    run must rebuild what B moved."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    a = _doc("a", "A")
+    ticket_v1 = _doc("SVC1", "Ticket", system="other")
+    _run_once(
+        tmp_path, [a, ticket_v1], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+
+    # B's run alone, with B's document changed.
+    ticket_v2 = _doc("SVC1", "Ticket reassigned", system="other")
+    pub_b = _run_once(
+        tmp_path, [ticket_v2], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert pub_b.last_change is not None
+    assert concept_path("sys:a") not in pub_b.last_change.files  # branch-per-system
+
+    # A's next run, A's own source unchanged.
+    pub_a = _run_once(
+        tmp_path, [a], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert pub_a.last_change is not None
+    assert concept_path("sys:a") in pub_a.last_change.files
+    assert any("another system" in n for n in pub_a.last_change.summary.grounding_notes)
+
+
+def test_an_unchanged_grounded_run_is_still_a_noop(tmp_path: Path):
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    _run_once(tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg)
+    result, _ = _run_result(
+        tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_emptying_the_grounding_set_settles_after_one_rebuild(tmp_path: Path):
+    """The sidecar must be DELETED, not skipped. Skipping leaves rule 3 firing on
+    every later run: three would rebuild, and four, and five."""
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    _run_once(
+        tmp_path,
+        docs,
+        synthesizer=_GroundingSynth(),
+        grounding_config=_cfg(**{"sys:a": ["other:SVC1"]}),
+    )
+
+    rebuild, _ = _run_result(
+        tmp_path,
+        docs,
+        synthesizer=_GroundingSynth(),
+        grounding_config=GroundingConfig(),
+    )
+    assert isinstance(rebuild, Published)  # the map went away: rebuild once
+
+    settled, _ = _run_result(
+        tmp_path,
+        docs,
+        synthesizer=_GroundingSynth(),
+        grounding_config=GroundingConfig(),
+    )
+    assert isinstance(settled, NoOp)  # and then stop
+
+
+def test_an_unresolvable_grounding_id_does_not_loop(tmp_path: Path):
+    """Declared but never resolvable: rule 3 compares post-resolution sets, so
+    this must settle rather than rebuild forever."""
+    cfg = _cfg(**{"sys:a": ["nowhere:X"]})
+    docs = [_doc("a", "A")]
+    _run_once(tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg)
+    result, _ = _run_result(
+        tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_a_tombstoned_owner_leaves_no_sidecar(tmp_path: Path):
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    _run_once(tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg)
+    assert has_sidecars(tmp_path / "mirror") is True
+
+    _run_once(
+        tmp_path,
+        [_doc("a", "A", deleted=True)],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+    )
+    assert has_sidecars(tmp_path / "mirror") is False
+
+
+def test_another_systems_drift_is_never_pulled_into_scope(tmp_path: Path):
+    """Scoping is by {d.anchor.system for d in docs}, not connector name --
+    kbforge-mcp is named `mcp` and carries a configured `system`, so a
+    name-based scope would be wrong for exactly the connector that needs this."""
+    cfg = _cfg(**{"other:SVC1": ["sys:a"]})  # the OTHER system is grounded
+    a_v1 = _doc("a", "A")
+    ticket = _doc("SVC1", "Ticket", system="other")
+    _run_once(
+        tmp_path, [a_v1, ticket], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+
+    a_v2 = _doc("a", "A rewritten")
+    pub = _run_once(
+        tmp_path, [a_v2], synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert pub.last_change is not None
+    assert concept_path("other:SVC1") not in pub.last_change.files
+
+
+def test_a_document_selected_by_both_drift_and_referrers_renders_once(tmp_path: Path):
+    """`referrers` filters on `d.doc_id not in changed`, which knows nothing about
+    drift, so the same document can arrive twice."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    a = _doc("a", "A", relations=["sys:gone"])
+    gone = _doc("gone", "Gone")
+    ticket_v1 = _doc("SVC1", "Ticket", system="other")
+    _run_once(
+        tmp_path,
+        [a, gone, ticket_v1],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+    )
+
+    ticket_v2 = _doc("SVC1", "Ticket reassigned", system="other")
+    pub = _run_once(
+        tmp_path,
+        [_doc("gone", "Gone", deleted=True), ticket_v2],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+    )
+    assert pub.last_change is not None
+    anchors = [a.native_id for a in pub.last_change.summary.sources_changed]
+    assert anchors.count("a") == 1

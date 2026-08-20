@@ -6,9 +6,18 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Protocol
+from typing import Protocol, cast
 
 from kbforge.canonical import assert_fetch_contract, assert_stability
+from kbforge.grounding import (
+    GroundingConfig,
+    declared_ids,
+    delete_sidecar,
+    drifted,
+    has_sidecars,
+    resolve,
+    write_sidecar,
+)
 from kbforge.mirror import commit, diff, load_all
 from kbforge.models import (
     CanonicalDocument,
@@ -18,7 +27,12 @@ from kbforge.models import (
     ProposedChange,
     RawRecord,
 )
-from kbforge.synthesize import StubSynthesizer, Synthesizer, concept_path
+from kbforge.synthesize import (
+    GroundingSynthesizer,
+    StubSynthesizer,
+    Synthesizer,
+    concept_path,
+)
 from kbforge.validate import Failure, run_validators
 
 
@@ -91,6 +105,7 @@ def run(
     state_dir: str,
     publish_config: dict,
     synthesizer: Synthesizer | None = None,
+    grounding_config: GroundingConfig | None = None,
 ) -> NoOp | Aborted | Published:
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
@@ -107,31 +122,78 @@ def run(
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
     assert_fetch_contract(docs, complete=result.complete)  # §4.2 fetch contract
 
+    grounds = getattr(synthesizer, "grounds", False)
+    grounding_cfg = grounding_config or GroundingConfig()
+
     changeset = diff(mirror_path, docs)
-    if changeset.is_noop:
+
+    # The scan is gated three ways so a deployment that declares no grounding
+    # keeps today's cheap no-op: the synthesizer must ground, and there must be
+    # either something declared now or a sidecar from before (§5).
+    scan = grounds and bool(
+        grounding_cfg.grounding
+        or any(d.grounded_by for d in docs)
+        or has_sidecars(mirror_path)
+    )
+    if changeset.is_noop and not scan:
         return NoOp()
 
-    changed = set(changeset.added) | set(changeset.modified)
-    changed_docs = [d for d in docs if d.doc_id in changed]  # "scope"
-
-    # Read once per run, and only past the no-op gate. The mirror is still the
-    # pre-run published state here: commit() below is the only thing that
-    # mutates it, and it runs only after a successful publish.
+    # Read once per run, and only past the first no-op gate. The mirror is
+    # still the pre-run published state here: commit() below is the only thing
+    # that mutates it, and it runs only after a successful publish.
     #
     # This parses every JSON slot in the mirror, not just the ones this run
     # touches, so a run that used to cost O(changed) now costs O(mirror size)
-    # whenever anything changed at all. Accepted: the defect this closes
-    # (dangling links after a deletion) is not tombstone-specific — any
-    # removal can leave an unchanged referrer with a stale link — so there is
-    # no cheaper subset of the mirror that is still correct.
+    # whenever anything changed, or whenever the drift scan runs at all.
+    # Accepted: the defect this closes (dangling links after a deletion, and
+    # grounding drift) is not tombstone-specific — there is no cheaper subset
+    # of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
+    by_id = {d.doc_id: d for d in mirror_docs}
+    by_id.update({d.doc_id: d for d in docs if not d.deleted})
+    hashes = {k: v.anchor.content_hash for k, v in by_id.items()}
+
+    changed = set(changeset.added) | set(changeset.modified)
+    removed_ids = set(changeset.removed)
+    changed_docs = [d for d in docs if d.doc_id in changed]
+
+    def _resolved(doc: CanonicalDocument) -> tuple[list[CanonicalDocument], list[str]]:
+        return resolve(
+            doc,
+            declared_ids(doc, grounding_cfg),
+            by_id,
+            max_docs=grounding_cfg.max_grounding_docs,
+        )
+
+    drift: list[str] = []
+    if scan:
+        # Scope by this run's own output. Connector identity will not do:
+        # `kbforge_connector_info()` is static while a generic connector's
+        # `system` is per-instance (design note §4).
+        systems = {d.anchor.system for d in docs}
+        candidates = [
+            d
+            for d in mirror_docs
+            if d.anchor.system in systems
+            and d.doc_id not in changed
+            and d.doc_id not in removed_ids
+        ]
+        drift = drifted(
+            mirror_path,
+            candidates,
+            {d.doc_id: [g.doc_id for g in _resolved(d)[0]] for d in candidates},
+            hashes,
+        )
+        changed_docs += [d for d in candidates if d.doc_id in set(drift)]
+
+    if changeset.is_noop and not drift:
+        return NoOp()
 
     # A concept linking to a deleted one must be re-synthesized, or its link
     # survives as a dangling reference (§4.4 law 2) that nothing checks: the
     # validators only inspect concepts carried by this proposal. The mirror, not
     # `docs`, is the source — an incremental connector's fetch need not contain
     # the referrer.
-    removed_ids = set(changeset.removed)
     referrers: list[CanonicalDocument] = []
     if removed_ids:
         referrers = [
@@ -142,6 +204,18 @@ def run(
             and removed_ids.intersection(d.relations)
         ]
         changed_docs += referrers
+
+    # The drift scan and `referrers` can both select the same document — drift
+    # knows nothing about `referrers`' filter and vice versa. Deduped once,
+    # here, before either feeds the synthesizer or `summary.sources_changed`.
+    seen_ids: set[str] = set()
+    deduped: list[CanonicalDocument] = []
+    for d in changed_docs:
+        if d.doc_id in seen_ids:
+            continue  # drift and referrers can select the same document
+        seen_ids.add(d.doc_id)
+        deduped.append(d)
+    changed_docs = deduped
 
     # Existing bundle paths feed §4.4 law 2: assemble() drops any link that is
     # not in here, so a link to an unchanged-but-still-published concept would
@@ -160,7 +234,30 @@ def run(
         )
         - tombstoned
     )
-    proposal = synthesizer.synthesize(changed_docs, changeset, existing)
+
+    grounding_map: dict[str, list[CanonicalDocument]] = {}
+    grounding_notes: list[str] = []
+    if grounds:
+        for doc in changed_docs:
+            docs_for, notes_for = _resolved(doc)
+            if docs_for:
+                grounding_map[doc.doc_id] = docs_for
+            grounding_notes += notes_for
+
+    if grounds:
+        # `Synthesizer` deliberately keeps its 0.7.0 shape, so the type checker
+        # cannot narrow `synthesizer` to something accepting `grounding=` from
+        # the `grounds` flag alone — that flag is a runtime capability check,
+        # not a type-level one. The cast documents the mismatch rather than
+        # papering over it: this branch is reached only when `synthesizer`
+        # really does implement `GroundingSynthesizer` (every shipped
+        # implementation sets `grounds = True` exactly when it does).
+        proposal = cast(GroundingSynthesizer, synthesizer).synthesize(
+            changed_docs, changeset, existing, grounding=grounding_map
+        )
+    else:
+        proposal = synthesizer.synthesize(changed_docs, changeset, existing)
+    proposal.summary.grounding_notes.extend(grounding_notes)
 
     # Assigned here, never taken from the synthesizer: deletion is structure,
     # not prose, so an LLM synthesizer cannot delete a file it dislikes.
@@ -182,11 +279,33 @@ def run(
             "concepts removed in this run; its own source is unchanged"
         )
 
+    for doc_id in drift:
+        path = concept_path(doc_id)
+        if path in proposal.files:
+            proposal.summary.grounding_notes.append(
+                f"{path}: re-synthesized because a document it is grounded in "
+                "changed in another system; its own source is unchanged"
+            )
+
     failures = run_validators(proposal, existing)
     if failures:
         return Aborted(failures=failures)
 
     url = publisher.kbforge_publish(proposal, publish_config)
     commit(mirror_path, docs)  # advance mirror ONLY after success
+    if grounds:
+        for doc in changed_docs:
+            docs_for = grounding_map.get(doc.doc_id)
+            if docs_for:
+                write_sidecar(
+                    mirror_path,
+                    doc.doc_id,
+                    {g.doc_id: g.anchor.content_hash for g in docs_for},
+                )
+            else:
+                # A delete, not a skip: a stale sidecar fires rule 3 forever.
+                delete_sidecar(mirror_path, doc.doc_id)
+    for doc_id in changeset.removed:
+        delete_sidecar(mirror_path, doc_id)
     _save_cursor(state_path, result.cursor)
     return Published(url=url)

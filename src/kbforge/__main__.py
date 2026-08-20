@@ -8,12 +8,14 @@ shape, so a third-party plugin is usable with no change to this file."""
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import cast
 
 import pluggy
 import yaml
 
 from kbforge.canonical import FetchContractError, StabilityError
+from kbforge.grounding import load_grounding, problems_for
 from kbforge.pipeline import (
     Aborted,
     ConfigError,
@@ -104,6 +106,13 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--mirror", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--state", required=True)
+    r.add_argument(
+        "--grounding",
+        default=None,
+        metavar="PATH",
+        help="grounding subject map (YAML); see docs/design/2026-08-20-"
+        "cross-source-grounding-design.md",
+    )
     args = parser.parse_args(argv)
 
     pm = build_registry()
@@ -179,6 +188,12 @@ def main(argv: list[str] | None = None) -> int:
     else:
         synthesizer = None  # run() defaults to StubSynthesizer
 
+    grounding_config = load_grounding(Path(args.grounding) if args.grounding else None)
+    problems = problems_for(grounding_config)
+    if problems:
+        print(f"grounding config: {'; '.join(problems)}")
+        return 2
+
     try:
         result = run(
             connectors[args.connector],
@@ -188,6 +203,7 @@ def main(argv: list[str] | None = None) -> int:
             state_dir=args.state,
             publish_config=publish_config,
             synthesizer=synthesizer,
+            grounding_config=grounding_config,
         )
     except ConfigError as exc:
         print(str(exc))

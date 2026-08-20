@@ -258,6 +258,28 @@ def test_run_llm_synthesizer_missing_extra_is_clean_cli_error(
     assert "install kbforge[llm]" in capsys.readouterr().out
 
 
+def test_a_malformed_grounding_map_exits_2_before_fetching(tmp_path: Path, capsys):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text("---\ntitle: X\n---\nbody\n", "utf-8")
+    g = tmp_path / "g.yaml"
+    g.write_text("grounding:\n  payments:\n    - servicenow:SVC0042\n", "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--grounding",
+            str(g),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    assert "qualified doc_id" in capsys.readouterr().out
+
+
 def test_cli_reports_a_fetch_contract_violation_as_a_message(tmp_path, capsys):
     """A third-party connector tripping the new law is the only thing most
     plugin authors will see of this release; a traceback is the wrong first
