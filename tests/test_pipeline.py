@@ -598,6 +598,23 @@ def test_an_unresolvable_grounding_id_does_not_loop(tmp_path: Path):
     assert isinstance(result, NoOp)
 
 
+def test_an_unresolvable_id_beside_a_resolvable_one_settles(tmp_path: Path):
+    """`test_an_unresolvable_grounding_id_does_not_loop` above declares only an
+    unresolvable id, so its grounding set is empty and no sidecar is ever
+    written -- the comparison in `drifted` never runs. This scenario forces
+    that comparison: `a` grounds in one real document and one that never
+    resolves, so the sidecar is non-empty and rule 3 must compare against the
+    POST-resolution set, or the unresolvable id (present in `declared_ids`,
+    permanently absent from the recorded sidecar) drifts every run forever."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1", "nowhere:X"]})
+    docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
+    _run_once(tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg)
+    result, _ = _run_result(
+        tmp_path, docs, synthesizer=_GroundingSynth(), grounding_config=cfg
+    )
+    assert isinstance(result, NoOp)
+
+
 def test_a_tombstoned_owner_leaves_no_sidecar(tmp_path: Path):
     cfg = _cfg(**{"sys:a": ["other:SVC1"]})
     docs = [_doc("a", "A"), _doc("SVC1", "Ticket", system="other")]
