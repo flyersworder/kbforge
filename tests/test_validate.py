@@ -234,3 +234,27 @@ def test_a_path_both_written_and_removed_is_a_failure():
         coherence[0].message
         == "path is both written and removed in one proposal (§4.4 gate)"
     )
+
+
+def test_expected_resources_uses_the_shared_key_function():
+    """Dedup (grounding) and the law's set-compare must key identically. If this
+    import breaks, the two have diverged."""
+    from datetime import UTC, datetime
+
+    from kbforge.models import ConceptFrontmatter, ResourceAnchor, resource_key
+    from kbforge.validate import _expected_resources
+
+    a = ResourceAnchor(
+        system="s",
+        native_id="n",
+        retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
+        content_hash="h",
+        url="https://example.test/x",
+    )
+    fm = ConceptFrontmatter(
+        type="concept",
+        sources=[a],
+        generated_at=a.retrieved_at,
+        generated_by="kbforge/0",
+    )
+    assert _expected_resources(fm) == {resource_key(a)} == {"https://example.test/x"}

@@ -27,6 +27,15 @@ class ResourceAnchor(BaseModel):
     content_hash: str
 
 
+def resource_key(anchor: ResourceAnchor) -> str:
+    """The identity a `sources` entry is compared by (§4.4 law 3, §5.1).
+
+    One definition, because two consumers must agree exactly: `validate`
+    compares rendered against projected `sources` as sets of this key, and
+    grounding deduplicates candidates by it."""
+    return anchor.url or f"{anchor.system}:{anchor.native_id}"
+
+
 class ConceptFrontmatter(BaseModel):
     """The checkable head of an emitted OKF v0.2 concept (§4.4).
 
