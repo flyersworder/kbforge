@@ -316,24 +316,47 @@ fetched — so a grounding anchor does not appear there merely for being cited.
 grounding document whose content never reached the body — that would make
 `sources` claim a provenance the artifact does not have.
 
-So grounding is a property of the synthesizer, declared on the protocol:
+Grounding is a **capability**, and `Synthesizer` does not widen to describe it.
+A second protocol does:
 
 ```python
-class Synthesizer(Protocol):
-    grounds: bool = False        # LLMSynthesizer sets True
+class Synthesizer(Protocol):        # unchanged from 0.7.0
+    def synthesize(self, changed_docs, changeset,
+                   existing_paths=frozenset()) -> ProposedChange: ...
+
+
+class GroundingSynthesizer(Protocol):
+    grounds: bool
+    def synthesize(self, changed_docs, changeset, existing_paths=frozenset(),
+                   grounding: dict[str, list[CanonicalDocument]] | None = None,
+                   ) -> ProposedChange: ...
 ```
 
-The same flag decides whether the pipeline passes `grounding=` at all. That is
-what actually keeps existing synthesizers working: a Protocol default helps a class
-that declares conformance, but the test doubles in `tests/test_pipeline.py` are
-plain duck-typed classes with no `grounding` parameter, and passing the keyword
-unconditionally would raise `TypeError`. One flag, two jobs — skip the scan, and
-call the old signature.
+Widening `Synthesizer` itself does not work, and the reason is worth recording
+because it is not obvious and a type checker is what surfaced it. Adding *either*
+`grounds` or the `grounding=` parameter makes it a required structural member, so
+every synthesizer written before 0.8.0 stops being assignable — the exact
+population this design set out to keep working. A protocol cannot express "a
+method that may or may not accept this keyword."
 
-The pipeline reads it as `getattr(synthesizer, "grounds", False)`, not as an
-attribute access. A default in a Protocol body documents the expected value; it
-does not supply one to an implementer, so a third-party synthesizer written
-against today's protocol would raise `AttributeError` on a direct read.
+The type checker is right to insist. A `Synthesizer`-typed caller invoking
+`.synthesize(..., grounding=x)` against a pre-0.8.0 implementation really would
+raise `TypeError`; the mismatch is a genuine bug, not checker pedantry.
+
+So the pipeline guards on the capability and narrows at the single call site that
+passes grounding:
+
+```python
+if getattr(synthesizer, "grounds", False):
+    cast(GroundingSynthesizer, synthesizer).synthesize(..., grounding=grounding_map)
+else:
+    synthesizer.synthesize(...)          # the 0.7.0 signature, untouched
+```
+
+One flag, two jobs — skip the drift scan, and call the old signature. Nothing has
+to *declare* conformance: `LLMSynthesizer` satisfies `GroundingSynthesizer`
+structurally by having the attribute and the parameter. `StubSynthesizer` keeps
+its 0.7.0 signature exactly and sets `grounds = False`.
 
 The pipeline skips the §4 drift scan entirely when `grounds` is False. Without
 this, a stub run would re-synthesize a document to produce a byte-identical file.
