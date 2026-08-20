@@ -7,6 +7,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Cross-source grounding: a concept still has exactly one owning document, but
+  synthesis may now additionally read **grounding** documents from any system,
+  write a body informed by them, and cite them in `sources` (§5.1) alongside
+  the owning anchor, which is listed first by convention. Declared two ways —
+  `CanonicalDocument.grounded_by` on the document, or an operator subject map
+  passed as `kbforge run --grounding PATH` — both fully-qualified-`doc_id`
+  only. A grounding synthesizer's next run rebuilds a concept whose grounding
+  moved in another system, even when its own source did not change, via a
+  mirror-side drift sidecar (`mirror/_grounding/`); the no-op rule is restated,
+  not weakened, to cover it.
+- `GroundingSynthesizer`, a protocol separate from `Synthesizer` for exactly
+  this capability, so no synthesizer written before this release stops being
+  assignable. `LLMSynthesizer` implements it; `StubSynthesizer` does not, and
+  the pipeline skips the whole drift scan when a synthesizer does not ground.
+
+### Changed
+
+- `docs/architecture.md` §4.4 law 3 documents the multi-source `sources` case
+  and the owning-anchor-first convention; §7 gains a §7.1 subsection covering
+  cross-source grounding end to end, folded in from
+  `docs/design/2026-08-20-cross-source-grounding-design.md`, which now holds
+  only the deferred phases and a fold table.
+
+### Known limits
+
+- **One level deep.** A grounding document's own grounding is not followed.
+  Transitive grounding is unbounded fan-in wearing a different hat.
+- **The subject map is keyed by `doc_id`,** so a renamed `native_id` silently
+  stops matching. `problems_for()`-style config validation should report map
+  keys that resolve against neither the mirror nor this run.
+- **Every run pays O(mirror)** once `grounds` is True (architecture.md §7.1).
+- **Changing the synthesizer is undetected drift.** Switching stub → LLM, or
+  changing the model or prompt, changes what every concept was built from, and
+  nothing re-synthesizes for it — `generated.by` records the change without
+  forcing one. Pre-existing, but grounding makes the omission more visible,
+  because sidecars written under a non-grounding synthesizer record hashes for
+  grounding that never happened.
+- **`generated.at` on a drift-triggered rebuild** comes from the owning
+  document's `retrieved_at` (`synthesize.py:163`), which for an incremental
+  connector may be the mirror's older timestamp rather than this run's.
+  Pre-existing behaviour, shared with `referrers`; grounding makes it more
+  frequent.
+- **A drift rebuild can open a review request with no visible change.** When
+  the owning document is re-fetched, `generated.at` moves and the diff is
+  never empty. When it comes from the mirror instead — an incremental
+  connector that did not re-fetch it — `retrieved_at` is unchanged, so a
+  rebuild whose prose lands the same produces a byte-identical file. The
+  no-op rule prevents an *unchanged source* from opening a review request; it
+  cannot prevent this one, because the grounding genuinely did change.
+- **Grounding does not create links.** A cited document is provenance, not
+  navigation; if you also want a link, declare a relation.
+
 ## [0.7.0] - 2026-08-18
 
 ### Added

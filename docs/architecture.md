@@ -518,7 +518,15 @@ seen. The four laws are exactly "emit what those affordances read":
 3. **Anchor presence.** Every concept carries ≥1 `sources` entry in frontmatter
    (OKF §5.1), tracing to a canonical doc → a SoR. *Without it:* provenance and
    anchor-based `related_concepts`; the §4.3 grounding chain is only *useful* if
-   it survives to the emitted frontmatter.
+   it survives to the emitted frontmatter. A concept's `sources` may carry more
+   than one entry: cross-source grounding (§7.1) lets synthesis cite documents
+   resolved from *other* systems alongside the one that owns the concept's
+   path, so this law's "≥1" was always the binding form of the requirement, not
+   "exactly 1." The owning document's anchor is listed **first**, by
+   convention — `_check_sources_shape` compares `sources` as a *set*, so the
+   validator does not and will not enforce the order, which is exactly why it
+   is written down here: order is what tells a reader which system owns the
+   concept, without adding a field OKF does not have.
 4. **Freshness legibility.** Every concept's frontmatter carries a machine-readable
    freshness stamp — `generated.at` (OKF §5.2), holding the anchor's
    `retrieved_at`. *Without it:* `whats_stale`, and the agent's ability to caveat
@@ -871,12 +879,18 @@ connector by name and calls `run` with it, so multi-source assembly is a
 deployment's business (run kbforge once per system of record, each with its own
 mirror, cursor, and sync branch) rather than the core's. That keeps the no-op
 rule and the branch-per-system model decidable from one run's inputs.
+Cross-source grounding (§7.1) does not weaken this: a run still fetches exactly
+one system and publishes exactly one system's concepts. Grounding only lets
+synthesis *cite* documents another run already put in the mirror — it never
+fetches across systems, so branch-per-system stays decidable from one run's
+inputs.
 
 Everything main-doc §5.3 requires falls out of the seams: change-scoped updates
-(diff drives synthesis scope), no-op detection (`is_noop` gate), grounding
-(synthesis reads only canonical docs, emits `sources` = anchors), reviewability
-(`ChangeSummary` becomes the MR body), and the security split (fetch stage holds
-credentials but no external action; publish stage acts but holds no SoR access).
+(diff drives synthesis scope), no-op detection (`is_noop` gate — restated, not
+weakened, by grounding drift; see §7.1), grounding (synthesis reads only
+canonical docs, emits `sources` = anchors), reviewability (`ChangeSummary`
+becomes the MR body), and the security split (fetch stage holds credentials but
+no external action; publish stage acts but holds no SoR access).
 
 The §4.4 artifact laws are checked inside `run_validators` as **core** validators —
 never the additive `kbforge_extra_validators` hook (§5.3). They are trust guarantees
@@ -902,6 +916,227 @@ before the per-concept laws (`_check_projection_coherence`): because the gate is
 single point of accountability, it must also catch the producer *omitting* a
 projection for a file it ships — otherwise the gate is bypassed by silence, not by a
 detectable bad emission.
+
+### 7.1 Cross-source grounding
+
+A subject documented in three systems otherwise produces three near-duplicate
+concepts, each citing one system and blind to the other two. Cross-source
+grounding keeps concept identity exactly as it is — one **owning** document
+still alone determines a concept's path — but lets synthesis additionally read
+**grounding** documents from *any* system, write a body informed by them, and
+cite them in `sources` (§5.1, and law 3 above). Attribution becomes honest
+across systems without concept identity moving. Promoting a grounding document
+to co-owner (many documents collapsing onto one concept) is deliberately not
+this: that is the *inverse* of the injectivity property the fetch-side law and
+the `native_id` slug exist to guarantee, and is deferred until cross-system
+subject resolution has proven robust here.
+
+**`relations` is not the channel.** `synthesize.concept_path` turns `relations`
+into `links` — a law-2 concern about *navigation between concepts*. Grounding
+turns into `sources` — a law-3 concern about *provenance of this concept's
+content*. Conflating them would make a citation out of a cross-reference, so
+grounding gets a separate channel rather than a widened one.
+
+**Declaring grounding: two sites, one consumption path.** Both reduce to the
+same thing before synthesis sees anything:
+
+```
+grounding_ids(D) = D.grounded_by ∪ subject_map.get(D.doc_id, [])
+```
+
+- `CanonicalDocument.grounded_by: list[str]` — a default keeps every existing
+  connector valid. Ids are **fully qualified `doc_id`s**, always, with no bare
+  form accepted, even for same-system grounding. A bare form would have to be
+  told from a qualified one by looking for a colon, and a `native_id` may
+  contain one — `notes:draft.md` is either the document `draft.md` in system
+  `notes` or a local file literally named `notes:draft.md`. Guessing between
+  them is exactly the inference protocol-first mapping (`kbforge-mcp`) already
+  refuses. This is also why `relations` cannot simply be widened to carry
+  grounding: `local_files` already coerces every relation entry to its own
+  system, so an existing relation containing a colon would change meaning
+  under any new parsing rule. `local_files` reserves `grounded_by:` in
+  frontmatter so it does not sweep into `structured` and then into facets.
+- The **operator subject map** — a YAML file naming groupings from outside any
+  connector, for systems of record whose documents cannot be edited. Map
+  values and keys must both be fully qualified `doc_id`s; there is no emitting
+  connector here to imply a system, so a bare id is a `problems_for()`-style
+  config error, reported before any fetch, never discovered halfway through a
+  run. Passed as `kbforge run --grounding PATH` — a **pipeline-level** flag,
+  not `--set`: `--set` is connector config, and a connector must not know
+  other systems exist, since `normalize` is pure and a connector reaching for
+  a foreign system's ids would make it not so. The map is applied in the
+  pipeline and **never merged into `docs`**: if it were, `commit()` would
+  write config-dependent content into the mirror, and editing the map would
+  mark documents modified for a reason that has nothing to do with the
+  source. Drift in the map is still detected (below) — just not through the
+  mirror's own change detection.
+
+Whether a declared id **resolves** is a different question from whether it is
+**shaped** correctly, and only shape is fatal: a key or value naming a system
+that has not synced yet is dropped with a `grounding_notes` note, exactly as an
+unresolvable value is. Making keys fatal while values are tolerated would
+punish the same condition twice depending on which side of the map it fell on.
+
+**Resolution** happens once, in the pipeline, against `mirror_docs ∪ docs`,
+preferring `docs` when both carry an id — this run's copy is the fresher one,
+and its hash is what the sidecar records. Then: self-reference is dropped
+silently; an unresolvable id is dropped with a note (the target may live in a
+system that has not synced yet, and failing the run would make one source's
+sync depend on another's — exactly what one-connector-per-run exists to
+prevent); a tombstoned target is dropped, same as a removed link target; fan-in
+is capped at `max_grounding_docs` (default 5, a pipeline-level config key
+because resolution happens in the pipeline, not in `LLMConfig` beside
+`max_source_chars`, which governs prompt size rather than provenance) —
+**deterministic**, sorted by `doc_id` and never the model's choice, since an
+LLM picking which sources to cite would be an LLM editing provenance;
+deduplication is by resource string (`anchor.url or f"{system}:{native_id}"`),
+**including against the owning anchor**, because dropping self-reference by
+`doc_id` alone is not enough when two distinct `doc_id`s share a `url`.
+Resolution is a pipeline responsibility, never a synthesizer one: a
+synthesizer that chose its own sources would be choosing its own provenance.
+
+**Staleness is derived, never written across connectors.** A concept grounded
+in another system's document goes stale when that document changes in the
+*other* system's run — and that run must not touch the owning system's
+concepts, or branch-per-system review dissolves. No dirty flag is needed: the
+mirror is shared and read whole, so any run can already see another system's
+*current* hash. The only missing fact is what that hash was **when this
+concept was last built**, which a sidecar under `mirror/_grounding/<slug>.json`
+records (one JSON object per grounded owning document, keyed by the same slug
+`mirror` uses for the document itself — `load_all` globs `mirror/*.json` at the
+root, so the `_grounding/` subdirectory is invisible to it). The sidecar is
+written by the **pipeline**, not `mirror.commit()`, immediately after a
+successful publish — `commit()` takes only documents, and grounding sets are
+pipeline state. It lives in the mirror rather than beside cursors because it
+describes *what was published last time*, which is the mirror's whole job, and
+because the same `rm -rf` that resets a mirror must reset this, or the two
+drift apart.
+
+The sidecar is **deleted, not merely skipped**, when a document's grounding set
+becomes empty and when its owner is tombstoned: not writing a file does not
+remove the one already there, and a stale sidecar re-synthesizes its document
+on **every** run forever (drift rule 3 below fires permanently against a
+recorded set that no longer applies).
+
+Scoping the scan is not derivable from the connector: `kbforge_connector_info()`
+returns a **static** name, while a generic connector's `system` is
+**per-instance** — `kbforge-mcp` is named `mcp` and carries a configured
+`system`, so a name-keyed scope would be wrong for exactly the connector that
+motivated this design. The pipeline scopes instead by the run's own output,
+`{d.anchor.system for d in docs}`, which needs no connector identity at all. An
+unscoped scan would re-synthesize *other* systems' concepts and break the
+branch-per-system model this whole design exists to preserve; if `docs` is
+empty the scan does not run (a grounded concept whose owner was not fetched
+cannot be found, but an empty fetch publishes nothing anyway).
+
+On a later run, a mirror document whose `anchor.system` is in scope and which
+is not already selected by this run's own diff is re-synthesized when any
+holds: (1) a recorded grounding hash differs from that document's current hash
+in the mirror; (2) a recorded id is now absent or tombstoned; (3) the current
+*resolved* grounding set differs from the recorded key set — this is what
+catches an edited subject map, and a `grounded_by` edit that a connector's
+`content_hash` does not cover (`grounded_by` is deliberately **not** added to
+`canonical.content_hash`'s payload for this reason: that payload is an
+explicit allowlist, and adding a key would change every document's hash and
+re-synthesize the whole mirror on first upgrade — rule 3 exists precisely so
+the hash does not have to carry this). Rule 3 compares sets **after
+resolution**, not as declared: a declared id that never resolves — a system not
+yet synced, a typo — would otherwise be permanently absent from the recorded
+side and permanently present on the declared side, re-synthesizing the
+document on every run forever; that is the same failure the sidecar deletions
+above prevent, from the other direction — what is recorded and what is
+compared must be built by the same rule.
+
+**Mutual grounding converges**, which is not obvious and is worth stating:
+drift is keyed on the *source document's* `content_hash`, and re-synthesis
+never changes that — it changes a concept, not a document. So A grounded in B
+and B grounded in A rebuild at most once each, rather than ping-ponging
+forever.
+
+A document selected by both the drift scan and the pre-existing `referrers`
+mechanism (§7, tombstone-driven re-synthesis) is deduplicated once, after both
+expansions, before either feeds the synthesizer or `summary.sources_changed` —
+`referrers` filters on "not already changed," which knows nothing about drift,
+so the two can select the same document.
+
+**The no-op rule, restated, not weakened.** §7's rule ("if `ChangeSet.is_noop`,
+return `NoOp()` before synthesis") is a stated trust guarantee. Grounding drift
+means a concept can need rebuilding when **nothing this connector fetched
+changed** — returning `NoOp()` there would publish a lie by omission, since the
+concept's own grounding moved. The invariant is therefore *a run synthesizes
+only when something a concept is built from has changed*; today that is only
+the owning document, and grounding adds grounding documents to that set. What
+must not happen — synthesis for a concept nothing built it from has touched —
+still cannot. The cost is real and stated plainly: the cheap no-op path returns
+before the mirror is ever loaded, but detecting grounding drift needs mirror
+state, so where grounding is declared or a sidecar exists from before, the load
+moves ahead of the gate and a no-op run stops being free. Two things bound
+that: the scan runs only when the synthesizer grounds, and only when
+`mirror/_grounding/` is non-empty or something is newly declared — a directory
+listing, not a mirror load, so the cost is proportional to grounding actually
+being *used*, and a deployment that declares none keeps today's cheap no-op.
+Where grounding is in use, every run pays O(mirror); a denormalized
+`doc_id → content_hash` index would cut that to two small reads, but it can
+disagree with the slots it summarizes, so it is not built until the cost is
+measured and real.
+
+**Emission.** `sources=[doc.anchor, *(g.anchor for g in grounding)]` is the
+only change to `assemble()`; the owning-anchor-first convention is documented
+under law 3 above. `ChangeSummary.sources_changed` keeps its existing meaning —
+what this run *fetched* — so a grounding anchor does not appear there merely
+for being cited.
+
+**The stub does not ground.** `StubSynthesizer` renders the canonical text
+verbatim; citing a grounding document whose content never reached the body
+would make `sources` claim a provenance the artifact does not have. Grounding
+is therefore a **capability**, described by a second protocol rather than a
+widened `Synthesizer`:
+
+```python
+class Synthesizer(Protocol):        # unchanged since 0.7.0
+    def synthesize(self, changed_docs, changeset,
+                    existing_paths=frozenset()) -> ProposedChange: ...
+
+class GroundingSynthesizer(Protocol):
+    grounds: bool
+    def synthesize(self, changed_docs, changeset, existing_paths=frozenset(),
+                    grounding: dict[str, list[CanonicalDocument]] | None = None,
+                    ) -> ProposedChange: ...
+```
+
+Widening `Synthesizer` itself does not work, and a type checker is what
+surfaced why: adding *either* `grounds` or the `grounding=` parameter to it
+makes that member structurally required, so every synthesizer written before
+0.8.0 stops being assignable — the exact population this split exists to keep
+working. A protocol cannot express "a method that may or may not accept this
+keyword," and a `Synthesizer`-typed caller invoking `.synthesize(...,
+grounding=x)` against a pre-0.8.0 implementation really would raise
+`TypeError` — the mismatch is a genuine bug, not checker pedantry. The pipeline
+therefore guards on the runtime `grounds` flag and casts to narrow at the
+single call site that passes `grounding=`; nothing declares conformance to
+`GroundingSynthesizer`, which is satisfied structurally by having the
+attribute and the parameter. `StubSynthesizer` keeps its 0.7.0 signature
+exactly and sets `grounds = False`; the pipeline skips the whole drift scan
+when `grounds` is `False`, since otherwise a stub run would re-synthesize a
+document to produce a byte-identical file.
+
+**Untrusted content, one system wider.** Grounding lets text from system B
+reach a concept owned by system A — widening an existing surface (a source
+document has always been untrusted input to synthesis) in a direction a
+reviewer may not expect, since the concept's path and primary citation both
+say "A." What bounds it is unchanged: kbforge owns the structural frame, the
+model writes prose *inside* it, and `links`, `sources`, and `generated` are
+assigned by kbforge from resolved anchors, never taken from model output. A
+grounding document that contains instructions can therefore influence wording;
+it cannot introduce a citation, a link, or a path, and the §4.4 laws check the
+projection built from anchors the pipeline resolved. The honest residue: prose
+in a concept owned by A can be shaped by B, and only the `sources` list
+discloses that B was consulted — the reason the owning anchor is listed first
+and the reason grounding is declared rather than inferred.
+
+No new validator law is required: `_check_sources_shape` and
+`_check_carriers_agree` already handle a multi-entry `sources`, since
+`_expected_resources` maps every anchor, not the first.
 
 ---
 
