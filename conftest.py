@@ -17,8 +17,10 @@ def pytest_addoption(parser):
         default=False,
         help=(
             "run the opt-in live tests that call real external services: the "
-            "LLM synthesizer (OPENROUTER_API_KEY) and the forge publishers "
-            "(GITHUB_TOKEN/GITLAB_TOKEN plus KBFORGE_LIVE_*_REPO)"
+            "LLM synthesizer (OPENROUTER_API_KEY), the forge publishers "
+            "(GITHUB_TOKEN/GITLAB_TOKEN plus KBFORGE_LIVE_*_REPO), and the MCP "
+            "source connector (no credentials for AWS Documentation; "
+            "GITHUB_TOKEN for GitHub)"
         ),
     )
 

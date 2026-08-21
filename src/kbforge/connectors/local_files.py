@@ -11,6 +11,7 @@ from pathlib import Path
 import yaml
 
 from kbforge.canonical import content_hash
+from kbforge.grounding import is_qualified
 from kbforge.hookspecs import hookimpl
 from kbforge.models import (
     CanonicalDocument,
@@ -34,6 +35,7 @@ _RESERVED_KEYS = frozenset(
         "type",
         "title",
         "relations",
+        "grounded_by",
         "description",
         "generated",
         "sources",
@@ -161,10 +163,22 @@ class LocalFilesConnector:
             front, body = _split_frontmatter(text)
             native_id = rec.anchor_hint["native_id"]
             doc_id = f"{_SYSTEM}:{native_id}"
+            # `or []`, not a `.get` default: a bare `relations:` key is valid
+            # YAML that parses to None, and `.get(k, [])` hands that straight to
+            # the comprehension as a TypeError no CLI handler catches.
             relations = sorted(
                 f"{_SYSTEM}:{r}"
-                for r in front.get("relations", [])
+                for r in (front.get("relations") or [])
                 if isinstance(r, str)
+            )
+            # No `_SYSTEM` prefix: §2.1 ids are qualified already. An entry with
+            # no system is dropped rather than guessed at — via the same
+            # predicate the subject map is validated with, so the two
+            # declaration sites cannot drift on what "qualified" means.
+            grounded_by = sorted(
+                r
+                for r in (front.get("grounded_by") or [])
+                if isinstance(r, str) and is_qualified(r)
             )
             structured = {k: v for k, v in front.items() if k not in _RESERVED_KEYS}
             anchor = ResourceAnchor(
@@ -181,6 +195,7 @@ class LocalFilesConnector:
                 text=body.strip(),
                 structured=structured,
                 relations=relations,
+                grounded_by=grounded_by,
             )
             doc.anchor.content_hash = content_hash(doc)
             docs.append(doc)

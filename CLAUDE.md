@@ -21,8 +21,12 @@ than one held up by convention.
 - **The pipeline order is fixed and not pluggable.** Plugins extend stages; they
   cannot reorder or remove them. Same for the two rules below — making them
   configurable would make them optional.
-- **The no-op rule.** If `ChangeSet.is_noop`, the run returns `NoOp()` *before*
-  synthesis. No review request is ever opened for an unchanged source. This is
+- **The no-op rule.** A run synthesizes only when something a concept is built
+  from has changed, and returns `NoOp()` *before* synthesis otherwise. That is
+  `ChangeSet.is_noop` **and** no grounding drift (§7.1) — grounding added a
+  second thing a concept is built from, so the rule covers both or it stops
+  meaning anything. It is still never "open a review request and see": no
+  review request is ever opened for a concept nothing changed under. This is
   also what makes `generated.at` honest and the token bill bounded.
 - **kbforge never merges.** No publisher defines a merge method — check with
   `grep -rn 'def .*merge' src/kbforge/publishers/`. Keep it that way; don't add
@@ -32,6 +36,12 @@ than one held up by convention.
   if you build it, the laws stay core. Opt-in trust guarantees aren't guarantees.
 - **`normalize` is pure** — no network, no clock, no randomness. `assert_stability`
   runs it twice per run and rejects a connector whose output differs.
+- **One bundle path, one owner.** `concept_path` drops the system prefix, so
+  `wiki:readme` and `notes:readme` render the same file. The mirror is shared
+  across systems (§7.1 requires it), so the pipeline aborts on a collision and
+  on a cross-system relation rather than letting one system's concept overwrite
+  another's on merge. System-qualified paths would fix this at the root; that
+  rewrites every published path, so it is its own release, not a patch.
 - **Deletions are explicit tombstones** (`CanonicalDocument.deleted=True`).
   Absence from an incremental fetch never implies deletion; `FetchResult.complete`
   exists so a rate-limited partial fetch can't manufacture removals.

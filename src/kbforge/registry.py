@@ -1,6 +1,7 @@
-"""Plugin registration. Real Pluggy, scoped to the walking skeleton's in-tree
-connectors + publisher. Entry-point discovery and multi-connector
-`subset_hook_caller` dispatch (architecture §5.4) are deferred."""
+"""Plugin registration. Real Pluggy: in-tree connectors and publishers are
+registered explicitly, third-party ones are discovered from their entry-point
+groups. There is no multi-connector dispatch to bind — the CLI resolves one
+connector per run (architecture §5.4, §7), so no hook is ever broadcast."""
 
 from __future__ import annotations
 

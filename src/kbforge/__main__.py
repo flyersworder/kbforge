@@ -8,12 +8,15 @@ shape, so a third-party plugin is usable with no change to this file."""
 from __future__ import annotations
 
 import argparse
+from pathlib import Path
 from typing import cast
 
 import pluggy
 import yaml
+from pydantic import ValidationError
 
 from kbforge.canonical import FetchContractError, StabilityError
+from kbforge.grounding import load_grounding, problems_for
 from kbforge.pipeline import (
     Aborted,
     ConfigError,
@@ -104,6 +107,12 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--mirror", required=True)
     r.add_argument("--out", required=True)
     r.add_argument("--state", required=True)
+    r.add_argument(
+        "--grounding",
+        default=None,
+        metavar="PATH",
+        help="grounding subject map (YAML); see docs/architecture.md §7.1",
+    )
     args = parser.parse_args(argv)
 
     pm = build_registry()
@@ -180,6 +189,25 @@ def main(argv: list[str] | None = None) -> int:
         synthesizer = None  # run() defaults to StubSynthesizer
 
     try:
+        grounding_config = load_grounding(
+            Path(args.grounding) if args.grounding else None
+        )
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ValidationError) as exc:
+        # A missing file, non-UTF-8 bytes, unparseable YAML and a rejected shape
+        # are all operator mistakes about one named path, so they get the
+        # surrounding style — a sentence naming the file and exit 2 — rather than
+        # a traceback. The shape problems `problems_for` reports below are already
+        # handled that way; these four reached the terminal raw.
+        # `UnicodeDecodeError` is listed explicitly because it is a `ValueError`,
+        # not an `OSError`, so `read_text("utf-8")` slips past the other three.
+        print(f"grounding config {args.grounding}: {exc}")
+        return 2
+    problems = problems_for(grounding_config)
+    if problems:
+        print(f"grounding config: {'; '.join(problems)}")
+        return 2
+
+    try:
         result = run(
             connectors[args.connector],
             publishers[args.publisher],
@@ -188,6 +216,7 @@ def main(argv: list[str] | None = None) -> int:
             state_dir=args.state,
             publish_config=publish_config,
             synthesizer=synthesizer,
+            grounding_config=grounding_config,
         )
     except ConfigError as exc:
         print(str(exc))

@@ -15,7 +15,7 @@ from datetime import datetime
 import yaml
 
 from kbforge.canonical import is_blank as _blank
-from kbforge.models import ConceptFrontmatter, ProposedChange
+from kbforge.models import ConceptFrontmatter, ProposedChange, resource_key
 
 _SCALAR = (str, int, float, bool)
 
@@ -305,7 +305,7 @@ def _check_generated_shape(
 def _expected_resources(concept: ConceptFrontmatter) -> set[str]:
     """The `resource` values a conformant render of this projection must carry —
     the same rule `synthesize._source_entry` applies."""
-    return {a.url or f"{a.system}:{a.native_id}" for a in concept.sources}
+    return {resource_key(a) for a in concept.sources}
 
 
 def _check_sources_shape(

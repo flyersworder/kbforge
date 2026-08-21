@@ -58,11 +58,23 @@ def assert_stability(
     normalize: Callable[[Sequence[RawRecord]], list[CanonicalDocument]],
     records: Sequence[RawRecord],
 ) -> None:
-    """§4.3 law 1: normalize twice over identical input, require identical content
-    hashes. A connector that fails is not deterministic and must be rejected."""
-    first = [content_hash(d) for d in normalize(records)]
-    second = [content_hash(d) for d in normalize(records)]
-    if first != second:
+    """§4.3 law 1: normalize twice over identical input, require identical output.
+
+    Compared as `(content_hash, sorted(grounded_by))` rather than the hash alone.
+    `grounded_by` is deliberately NOT in `content_hash`'s payload — that payload
+    is an explicit allowlist, and adding a key would change every document's hash
+    and re-synthesize the whole mirror on first upgrade (§7.1) — but cross-source
+    grounding makes it a re-synthesis driver via drift rule 3. A connector whose
+    `normalize` emitted it nondeterministically would pass this law while
+    re-synthesizing its documents forever, so the law covers it beside the hash
+    instead of inside it.
+
+    A connector that fails is not deterministic and must be rejected."""
+
+    def fingerprint(docs: list[CanonicalDocument]) -> list[tuple[str, list[str]]]:
+        return [(content_hash(d), sorted(d.grounded_by)) for d in docs]
+
+    if fingerprint(normalize(records)) != fingerprint(normalize(records)):
         raise StabilityError("normalize() is not deterministic over identical input")
 
 
