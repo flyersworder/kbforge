@@ -5,7 +5,157 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-08-21
+
+### Added
+
+- The pipeline **aborts**, before synthesis and with no review request opened,
+  when two live documents claim one bundle path, and on a relation that crosses
+  out of its own system. `concept_path` drops the system prefix, so under the
+  shared mirror grounding requires, `wiki:readme` and `notes:readme` render one
+  file on two sync branches and whichever merges second silently overwrote the
+  other; a cross-system relation was silently dropped under §4.4 law 2 instead.
+  System-qualified bundle paths would fix both at the root and are their own
+  release — this turns silent loss into a reported `Failure`.
+- A live test for a drift-triggered republish against a real forge
+  (`--run-live`): two systems into one mirror on their own branches, the
+  grounding document changed in its own system, and the owning concept
+  re-synthesized into the SAME review request with the new grounding
+  `content_hash` in `sources`. Every other live pipeline run is source-triggered;
+  a drift run builds from the mirror rather than the fetch, which nothing had
+  exercised against a forge.
+- A live test that grounds a real model through a shared mirror
+  (`--run-live`): two connectors, one `--mirror`, and the published concept
+  asserted to cite both systems with the owning anchor first. Every other
+  grounding test drives a stub synthesizer, so nothing had checked that a real
+  model's multi-source output passes the §4.4 laws.
+- Cross-source grounding: a concept still has exactly one owning document, but
+  synthesis may now additionally read **grounding** documents from any system,
+  write a body informed by them, and cite them in `sources` (§5.1) alongside
+  the owning anchor, which is listed first by convention. Declared two ways —
+  `CanonicalDocument.grounded_by` on the document, or an operator subject map
+  passed as `kbforge run --grounding PATH` — both fully-qualified-`doc_id`
+  only. A grounding synthesizer's next run rebuilds a concept whose grounding
+  moved in another system, even when its own source did not change, via a
+  mirror-side drift sidecar (`mirror/_grounding/`); the no-op rule is restated,
+  not weakened, to cover it.
+- A grounding sidecar is written through a temp file and read defensively: an
+  unreadable one counts as never-grounded, so a process killed mid-write leaves
+  a mirror that repairs itself on the next run instead of one that raises on
+  every run forever.
+- `GroundingSynthesizer`, a protocol separate from `Synthesizer` for exactly
+  this capability, so no synthesizer written before this release stops being
+  assignable. `LLMSynthesizer` implements it; `StubSynthesizer` does not, and
+  the pipeline skips the whole drift scan when a synthesizer does not ground.
+
+### Changed
+
+- `Cursor` gains a core-owned `systems` field, stamped by the pipeline on every
+  save and distinct from the connector-owned `payload`. It scopes the grounding
+  drift scan on a run whose fetch is empty — the run that needs drift most,
+  since drift exists to republish when the owner's own source did not change.
+- `LLMConfig.max_source_chars` is again the whole-prompt budget its name and
+  docs claim: grounding documents now **share one budget, split evenly**, so a
+  grounded prompt is bounded by `2 x max_source_chars` rather than growing to
+  `(1 + max_grounding_docs)` times an ungrounded one — 6x at the defaults.
+- `docs/architecture.md` §4.4 law 3 documents the multi-source `sources` case
+  and the owning-anchor-first convention; §7 gains a §7.1 subsection covering
+  cross-source grounding end to end, folded in from
+  `docs/design/2026-08-20-cross-source-grounding-design.md`, which now holds
+  only the deferred phases and a fold table.
+- `docs/architecture.md` §5.4 and §7 now state the deployment layout grounding
+  requires, which the per-system claim previously left implicit: one **shared**
+  `--mirror` across the per-system runs (drift is derived by reading it whole),
+  cursor slots keyed by connector name, and a sync branch per system.
+
+### Fixed
+
+- Cursor slots are keyed by connector name **and a digest of the connector's
+  config**, so two instances of one generic connector no longer overwrite each
+  other's state on a shared `--state` directory. Name alone let a sibling's
+  `systems` leak into a run's scope, and an empty-fetch run then published that
+  system's concepts on that system's branch. A pre-keying slot is read once for
+  its payload with `systems` dropped, so upgrading costs at most one run's drift
+  scan rather than a re-fetch. The connector-owned `payload` was silently
+  cross-contaminated the same way before this, on every release. This also closes
+  half of the cursor-identity blocker
+  `docs/design/2026-08-16-mcp-source-connector-design.md` §10.1 raised against the
+  MCP deletion manifest; the load/save asymmetry in that section is untouched and
+  still deferred. This also closes
+  half of the cursor-identity blocker
+  `docs/design/2026-08-16-mcp-source-connector-design.md` §10.1 raised against the
+  MCP deletion manifest; the load/save asymmetry in that section is untouched and
+  still deferred.
+- Grounding declared before the system holding it has synced now survives an
+  incremental connector's empty fetches. The scan's *scope* fell back to the
+  cursor but the *gate* above it did not, so with no subject map and no sidecar
+  the run returned `NoOp()` forever and the concept stayed ungrounded. A
+  declaration that resolves to nothing now records an **empty** sidecar rather
+  than none, which is what keeps the gate open; dropping the declaration still
+  deletes it.
+- A bare `grounded_by:` or `relations:` key in source frontmatter is valid YAML
+  that parses to `None`, and reached `normalize` as an uncaught `TypeError` that
+  killed the whole sync with a traceback.
+- The grounding sidecar's temp file gets a unique name. A fixed
+  `<slot>.json.tmp` is the same path for every writer, so two runs on the shared
+  mirror could replace each other's half-written file into the live slot, and a
+  crash left an orphan invisible to both `has_sidecars` and `delete_sidecar`.
+- `referrers` is scoped to the run's own systems, like the drift scan and
+  `existing`. Under the shared mirror grounding requires, an unscoped
+  `referrers` pulled another system's concept into this run, where the scoped
+  `existing` then stripped every one of its links as dangling under §4.4 law 2
+  and republished it on this run's branch.
+- `kbforge run --grounding` on a non-UTF-8 file exits 2 with a sentence rather
+  than a traceback (`UnicodeDecodeError` is a `ValueError`, so it slipped past
+  the `OSError` guard).
+- `grounding.resolve`'s notes name bundle paths, matching every other note in
+  `ChangeSummary.grounding_notes`; they named `doc_id`s, so one review body
+  spoke two identifier formats.
+
+### Known limits
+
+- **One level deep.** A grounding document's own grounding is not followed.
+  Transitive grounding is unbounded fan-in wearing a different hat.
+- **The subject map is keyed by `doc_id`,** so a renamed `native_id` silently
+  stops matching. `problems_for()`-style config validation should report map
+  keys that resolve against neither the mirror nor this run.
+- **A run pays O(mirror) whenever the drift scan runs** — that is, when the
+  synthesizer grounds *and* something is declared now or a sidecar exists from
+  before (architecture.md §7.1). A deployment that declares no grounding keeps
+  the cheap no-op, which returns before the mirror is ever loaded.
+- **Changing the synthesizer is undetected drift.** Switching stub → LLM, or
+  changing the model or prompt, changes what every concept was built from, and
+  nothing re-synthesizes for it — `generated.by` records the change without
+  forcing one. Pre-existing, and orthogonal to grounding: a rebuild under a
+  non-grounding synthesizer *clears* the concept's sidecar rather than leaving a
+  stale one, so the two do not compound.
+- **Two systems cannot share a `native_id`.** `concept_path` drops the system
+  prefix, so the collision aborts the run rather than resolving. Cross-system
+  `relations` abort for the same reason. Both lift when bundle paths become
+  system-qualified, which rewrites every published path.
+- **A tombstoned grounding target is cited one last time** (§7.1), so a review
+  request can carry a `sources` entry for a document the same request removes.
+  The next run drops it.
+- **Mirror writes are not atomic and runs are not locked.** `commit` writes
+  document slots in place while `load_all` parses every slot, so two runs
+  overlapping on the now-required shared mirror can read a torn file. The
+  sidecar got a temp file and `os.replace`; `commit` did not. See
+  `docs/design/2026-08-20-event-driven-runs-design.md`, where the per-mirror run
+  lock is the one core change proposed.
+- **`generated.at` on a drift-triggered rebuild** comes from the owning
+  document's `retrieved_at` (`synthesize.py:163`), which for an incremental
+  connector may be the mirror's older timestamp rather than this run's.
+  Pre-existing behaviour, shared with `referrers`; grounding makes it more
+  frequent.
+- **A drift rebuild can open a review request with no visible change.** When
+  the owning document is re-fetched, `generated.at` moves and the diff is
+  never empty. When it comes from the mirror instead — an incremental
+  connector that did not re-fetch it — `retrieved_at` is unchanged, so a
+  rebuild whose prose lands the same produces a byte-identical file. The
+  no-op rule prevents an *unchanged source* from opening a review request; it
+  cannot prevent this one, because the grounding genuinely did change.
+- **Grounding does not create links.** A cited document is provenance, not
+  navigation; if you also want a link, declare a relation.
 
 ## [0.7.0] - 2026-08-18
 

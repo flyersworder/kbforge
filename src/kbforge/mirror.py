@@ -9,9 +9,14 @@ from pathlib import Path
 from kbforge.models import CanonicalDocument, ChangeSet
 
 
+def slot_key(doc_id: str) -> str:
+    """The on-disk name for a doc_id. Public so the grounding sidecar names its
+    files identically -- two hashing schemes would silently orphan sidecars."""
+    return hashlib.sha256(doc_id.encode("utf-8")).hexdigest()
+
+
 def _slot(mirror: Path, doc_id: str) -> Path:
-    key = hashlib.sha256(doc_id.encode("utf-8")).hexdigest()
-    return mirror / f"{key}.json"
+    return mirror / f"{slot_key(doc_id)}.json"
 
 
 def _load(mirror: Path, doc_id: str) -> CanonicalDocument | None:

@@ -26,10 +26,20 @@ drives `pipeline.run`, so it pins the *composition* — the mirror advancing, th
 cursor persisting, and open-request detection all being right at once, which is
 where the 0.3.0 data-loss bug lived while every piece was individually correct.
 
+`GITLAB_TOKEN` must be a personal access token with the `api` scope, NOT the
+credential `glab auth login` stores when it authenticates over OAuth. Both
+clients read the same variable and send it differently: kbforge's client sends
+`Authorization: Bearer`, which an OAuth access token satisfies, while `glab`
+sends `PRIVATE-TOKEN`, which it does not. Handing `glab` an OAuth token is worse
+than handing it nothing, because `GITLAB_TOKEN` overrides the working config it
+would otherwise refresh from — so the publish under test succeeds and only the
+read-back 401s, which reads like a kbforge bug and is not one. `gh` has no such
+split: its token works either way.
+
 Run with:
 
     GITHUB_TOKEN=$(gh auth token) \\
-    GITLAB_TOKEN=$(glab config get token --host gitlab.com) \\
+    GITLAB_TOKEN=glpat-...  # api scope; see above \\
     KBFORGE_LIVE_GITHUB_REPO=owner/kbforge-live-test \\
     KBFORGE_LIVE_GITLAB_REPO=user/kbforge-live-test \\
     uv run pytest tests/test_forge_live.py --run-live
@@ -44,12 +54,20 @@ import subprocess
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import quote
 
 import pytest
+import yaml
 
-from kbforge.models import ChangeSummary, ProposedChange
+from kbforge.canonical import content_hash
+from kbforge.models import (
+    CanonicalDocument,
+    ChangeSummary,
+    ProposedChange,
+    ResourceAnchor,
+)
 from kbforge.publishers.github import GitHubPublisher
 from kbforge.publishers.gitlab import GitLabPublisher
 
@@ -481,3 +499,158 @@ def test_accumulates_across_runs_and_deletes_without_resurrection(
     assert len(open_reqs) == 1, (
         f"four runs must share one review request, got {len(open_reqs)}"
     )
+
+
+@pytest.mark.live
+def test_grounding_drift_republishes_into_the_same_request(tmp_path):
+    """A drift-triggered run against a real forge.
+
+    Every other live pipeline run is *source*-triggered: the fetch carries a
+    changed document. A drift run is structurally different — `changed_docs`
+    comes from the mirror, not the fetch, and the run publishes a concept the
+    connector did not return this cycle. That puts open-request detection and
+    branch accumulation in a state nothing has exercised against a forge, which
+    is the composition the 0.3.0 data-loss bug lived in.
+
+    The drift is observable in the shipped bytes without trusting the
+    synthesizer's prose: `sources` carries each anchor's `content_hash`, so when
+    the grounding document changes in the other system, the owning concept's own
+    file must come back with a different hash for that entry. Same file, same
+    branch, same review request — new provenance.
+
+    Two systems, ONE mirror and ONE state directory, which is the layout §7.1
+    requires. Each system publishes to its own branch, as it would in a real
+    deployment.
+    """
+    from kbforge.grounding import GroundingConfig
+    from kbforge.models import ConnectorInfo, Cursor, FetchResult
+    from kbforge.pipeline import NoOp, Published
+    from kbforge.pipeline import run as pipeline_run
+    from kbforge.synthesize import assemble
+
+    repo = _require("KBFORGE_LIVE_GITHUB_REPO")
+    _require("GITHUB_TOKEN")
+
+    class _Grounding:
+        """A grounding synthesizer with no model behind it: the seam under test
+        is pipeline→publisher, and prose from an LLM would make the shipped
+        bytes non-deterministic for no gain."""
+
+        grounds = True
+
+        def synthesize(
+            self, changed_docs, changeset, existing_paths=frozenset(), grounding=None
+        ):
+            items = [(d, d.title, d.title, d.text) for d in changed_docs]
+            return assemble(items, changeset, existing_paths, grounding=grounding)
+
+    class _Conn:
+        def __init__(self, name, docs):
+            self._name, self._docs = name, docs
+
+        def kbforge_connector_info(self):
+            return ConnectorInfo(name=self._name, version="0.1.0", source_system="l")
+
+        def kbforge_validate_config(self, config):
+            return []
+
+        def kbforge_fetch(self, config, cursor):
+            return FetchResult(records=[], cursor=Cursor(connector=self._name))
+
+        def kbforge_normalize(self, records):
+            return list(self._docs)
+
+    def _doc(system, native_id, title, text):
+        return CanonicalDocument(
+            anchor=ResourceAnchor(
+                system=system,
+                native_id=native_id,
+                retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
+                content_hash=content_hash(
+                    CanonicalDocument(
+                        anchor=ResourceAnchor(
+                            system=system,
+                            native_id=native_id,
+                            retrieved_at=datetime(2026, 1, 1, tzinfo=UTC),
+                            content_hash="",
+                        ),
+                        doc_id=f"{system}:{native_id}",
+                        title=title,
+                        text=text,
+                    )
+                ),
+            ),
+            doc_id=f"{system}:{native_id}",
+            title=title,
+            text=text,
+        )
+
+    base_path = f"live/{RUN_ID}-drift"
+    branch_a = f"live-drift-a/{RUN_ID}"
+    branch_b = f"live-drift-b/{RUN_ID}"
+    cfg = GroundingConfig(grounding={"wiki:checkout": ["tickets:SVC0042"]})
+    page = _doc("wiki", "checkout", "Checkout", "Checkout accepts a cart.")
+
+    def _run(connector, branch):
+        return pipeline_run(
+            connector,
+            GitHubPublisher(),
+            config={"system": connector.kbforge_connector_info().name},
+            mirror=str(tmp_path / "mirror"),
+            state_dir=str(tmp_path / "state"),
+            publish_config={"repo": repo, "base_path": base_path, "branch": branch},
+            synthesizer=_Grounding(),
+            grounding_config=cfg,
+        )
+
+    def _ticket(text):
+        return _Conn("tickets", [_doc("tickets", "SVC0042", "Timeouts", text)])
+
+    checkout = f"{base_path}/concepts/checkout/overview.md"
+
+    def _hashes_in(rendered):
+        front = yaml.safe_load(rendered.split("---")[1])
+        return {s["resource"]: s["content_hash"] for s in front["sources"]}
+
+    # The grounding target syncs first, into the shared mirror, on its own branch.
+    assert isinstance(_run(_ticket("Times out at 30s."), branch_b), Published)
+
+    # System A publishes a concept grounded in it.
+    first = _run(_Conn("wiki", [page]), branch_a)
+    assert isinstance(first, Published), f"run 1 did not publish: {first}"
+    prs = _gh_open_prs(repo, branch_a)
+    assert len(prs) == 1, f"expected one review request, got {len(prs)}"
+    pr_number = prs[0]["number"]
+    before = _hashes_in(_gh_file(repo, branch_a, checkout))
+    assert set(before) == {"wiki:checkout", "tickets:SVC0042"}, before
+
+    # Nothing moved anywhere: still a no-op, even with the scan armed.
+    assert isinstance(_run(_Conn("wiki", [page]), branch_a), NoOp)
+    assert len(_gh_open_prs(repo, branch_a)) == 1, "a no-op run opened another request"
+
+    # The grounding document changes in ITS system, on ITS branch.
+    assert isinstance(
+        _run(_ticket("Times out at 30s; gateway raised to 60s."), branch_b), Published
+    )
+
+    # System A's source has not changed. Drift alone must republish it.
+    drifted_run = _run(_Conn("wiki", [page]), branch_a)
+    assert isinstance(drifted_run, Published), f"drift did not publish: {drifted_run}"
+
+    prs = _gh_open_prs(repo, branch_a)
+    assert len(prs) == 1, f"drift opened a second review request: {len(prs)}"
+    assert prs[0]["number"] == pr_number, "drift replaced the review request"
+
+    after = _hashes_in(_gh_file(repo, branch_a, checkout))
+    assert after["wiki:checkout"] == before["wiki:checkout"], (
+        "the owning document did not change; its hash must not either"
+    )
+    assert after["tickets:SVC0042"] != before["tickets:SVC0042"], (
+        "the re-synthesized concept reached the forge still citing the OLD "
+        "grounding hash — the drift rebuild did not carry new provenance"
+    )
+    assert checkout in _gh_tree(repo, branch_a)
+
+    # And it settles: the fourth run has nothing left to do.
+    assert isinstance(_run(_Conn("wiki", [page]), branch_a), NoOp)
+    assert len(_gh_open_prs(repo, branch_a)) == 1

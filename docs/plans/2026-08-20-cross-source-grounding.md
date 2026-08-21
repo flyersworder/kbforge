@@ -58,33 +58,42 @@
 
 In `tests/test_local_files_connector.py`:
 
+There is **no `_normalize` helper** in this file. It uses `_write(dirp, rel, body)`
+plus the explicit two-line pattern, and the connector's config key is `path`:
+
 ```python
-def test_grounded_by_is_read_verbatim_and_never_prefixed(tmp_path):
+def _grounded(tmp_path: Path, frontmatter: str) -> list[str]:
+    """The file's established pattern: write a doc, fetch, normalize."""
+    _write(tmp_path, "a.md", f"---\n{frontmatter}---\nbody\n")
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    return conn.kbforge_normalize(result.records)
+
+
+def test_grounded_by_is_read_verbatim_and_never_prefixed(tmp_path: Path):
     """Qualified-only: the connector must not prefix its own system, or a
     cross-system id becomes `local_files:servicenow:SVC0042`."""
-    (tmp_path / "a.md").write_text(
-        "---\ngrounded_by:\n  - servicenow:SVC0042\n  - local_files:b.md\n---\nbody\n",
-        "utf-8",
+    docs = _grounded(
+        tmp_path, "grounded_by:\n  - servicenow:SVC0042\n  - local_files:b.md\n"
     )
-    docs = _normalize(tmp_path)          # existing helper in this file
     assert docs[0].grounded_by == ["local_files:b.md", "servicenow:SVC0042"]
 
 
-def test_grounded_by_never_becomes_a_facet(tmp_path):
+def test_grounded_by_never_becomes_a_facet(tmp_path: Path):
     """Unreserved keys land in `structured` and then in rendered frontmatter."""
-    (tmp_path / "a.md").write_text(
-        "---\ngrounded_by:\n  - servicenow:SVC0042\n---\nbody\n", "utf-8"
-    )
-    docs = _normalize(tmp_path)
+    docs = _grounded(tmp_path, "grounded_by:\n  - servicenow:SVC0042\n")
     assert "grounded_by" not in docs[0].structured
 
 
-def test_a_bare_grounded_by_id_is_dropped_with_no_prefixing(tmp_path):
+def test_a_bare_grounded_by_id_is_dropped_with_no_prefixing(tmp_path: Path):
     """Spec §2.1 accepts no bare form. Dropping is safer than guessing a system."""
-    (tmp_path / "a.md").write_text(
-        "---\ngrounded_by:\n  - b.md\n---\nbody\n", "utf-8"
-    )
-    assert _normalize(tmp_path)[0].grounded_by == []
+    assert _grounded(tmp_path, "grounded_by:\n  - b.md\n")[0].grounded_by == []
+
+
+def test_a_half_qualified_grounded_by_id_is_dropped(tmp_path: Path):
+    """Both halves must be non-empty: ':x' and 'x:' name no document."""
+    docs = _grounded(tmp_path, "grounded_by:\n  - ':x'\n  - 'x:'\n")
+    assert docs[0].grounded_by == []
 ```
 
 - [ ] **Step 2: Run them and confirm they fail**
@@ -1514,13 +1523,22 @@ passing `grounding_config=grounding_config` into `run(...)`.
 
 Add a CLI test in `tests/test_cli.py`:
 
+The connector config key is `path`, and `--out` is required. This file already
+has a `_plumbing(tmp_path)` helper returning `--mirror/--out/--state`; use it:
+
 ```python
-def test_a_malformed_grounding_map_exits_2_before_fetching(tmp_path, capsys):
-    p = tmp_path / "g.yaml"
-    p.write_text("grounding:\n  payments:\n    - servicenow:SVC0042\n", "utf-8")
-    code = main(["run", "--connector", "local_files", "--grounding", str(p),
-                 "--set", f"root={tmp_path}", "--mirror", str(tmp_path / "m"),
-                 "--state", str(tmp_path / "s")])
+def test_a_malformed_grounding_map_exits_2_before_fetching(tmp_path: Path, capsys):
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text("---\ntitle: X\n---\nbody\n", "utf-8")
+    g = tmp_path / "g.yaml"
+    g.write_text("grounding:\n  payments:\n    - servicenow:SVC0042\n", "utf-8")
+    code = main([
+        "run", "--connector", "local_files",
+        "--set", f"path={src}",
+        "--grounding", str(g),
+        *_plumbing(tmp_path),
+    ])
     assert code == 2
     assert "qualified doc_id" in capsys.readouterr().out
 ```
