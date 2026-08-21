@@ -319,6 +319,32 @@ def test_an_unreadable_grounding_file_exits_2_with_a_message(
     assert "grounding config" in out
 
 
+def test_a_non_utf8_grounding_file_exits_2_with_a_message(tmp_path: Path, capsys):
+    """`UnicodeDecodeError` is a `ValueError`, not an `OSError`, so it slipped
+    past the guard above and reached the terminal as the traceback that guard
+    exists to prevent."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text("---\ntitle: X\n---\nbody\n", "utf-8")
+    g = tmp_path / "latin1.yaml"
+    g.write_bytes(b"grounding:\n  sys:\xe9: []\n")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--grounding",
+            str(g),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    out = capsys.readouterr().out
+    assert str(g) in out and "grounding config" in out
+
+
 def test_cli_reports_a_fetch_contract_violation_as_a_message(tmp_path, capsys):
     """A third-party connector tripping the new law is the only thing most
     plugin authors will see of this release; a traceback is the wrong first

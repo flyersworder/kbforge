@@ -238,3 +238,35 @@ def _takes_grounding_synthesizer(synth: GroundingSynthesizer) -> None:
 def test_llm_synthesizer_structurally_conforms_to_grounding_synthesizer():
     concept = SynthesizedConcept(title="X", description="d", body="b")
     _takes_grounding_synthesizer(_synth(concept))
+
+
+def test_grounding_documents_share_one_budget():
+    """`max_source_chars` is documented as the knob that governs prompt size.
+    Applied per document it stopped doing that: a grounded prompt grew to
+    (1 + max_grounding_docs) times an ungrounded one, 6x at the defaults."""
+    doc = _doc(text="Q" * 5000)
+    grounds = [_doc(doc_id=f"servicenow:SVC{i}", text="Z" * 5000) for i in range(1, 4)]
+    seen: list[str] = []
+
+    def fn(messages, info):
+        seen.append(messages[-1].parts[-1].content)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    SynthesizedConcept(
+                        title="X", description="d", body="b"
+                    ).model_dump(),
+                )
+            ]
+        )
+
+    synth = LLMSynthesizer(
+        LLMConfig(max_source_chars=300),
+        agent=Agent(FunctionModel(fn), output_type=SynthesizedConcept),
+    )
+    synth.synthesize(
+        [doc], ChangeSet(added=[doc.doc_id]), grounding={doc.doc_id: grounds}
+    )
+    assert seen[0].count("Q") == 300  # the owning source keeps the full budget
+    assert seen[0].count("Z") == 300  # the three grounding documents share one

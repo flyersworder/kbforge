@@ -161,14 +161,23 @@ class LLMSynthesizer:
         the model can attribute a claim to the system it came from."""
         if not docs:
             return ""
+        # ONE budget for the whole block, split evenly. `max_source_chars` is
+        # documented as the knob that governs prompt size; applied per document
+        # it stopped doing that, letting a grounded prompt reach
+        # (1 + max_grounding_docs) x max_source_chars — 6x at the defaults, past
+        # the context window the knob exists to stay inside. The prompt is now
+        # bounded by 2 x max_source_chars however many documents ground it.
+        share = max(1, self.config.max_source_chars // len(docs))
         parts = []
         for g in docs:
             text = g.text
-            if len(text) > self.config.max_source_chars:
-                text = text[: self.config.max_source_chars]
+            if len(text) > share:
+                text = text[:share]
+                budget = self.config.max_source_chars
                 notes.append(
                     f"{concept_path(owner_id)}: grounding {g.doc_id} truncated to "
-                    f"{self.config.max_source_chars} chars before synthesis"
+                    f"{share} chars before synthesis (a {budget}-char grounding "
+                    f"budget shared across {len(docs)} documents)"
                 )
             parts.append(f"--- {g.doc_id} ---\n{text}")
         joined = "\n\n".join(parts)

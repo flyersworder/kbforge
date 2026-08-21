@@ -90,10 +90,13 @@ def _load_cursor(state_dir: Path, connector: str) -> Cursor | None:
     return Cursor.model_validate_json(slot.read_text("utf-8"))
 
 
-def _save_cursor(state_dir: Path, cursor: Cursor) -> None:
+def _save_cursor(state_dir: Path, cursor: Cursor, systems: set[str]) -> None:
+    """`systems` is stamped here rather than trusted from the connector: every
+    connector builds a fresh Cursor in fetch, so whatever it set would be lost."""
     state_dir.mkdir(parents=True, exist_ok=True)
     slot = _cursor_slot(state_dir, cursor.connector)
-    slot.write_text(cursor.model_dump_json(), "utf-8")
+    stamped = cursor.model_copy(update={"systems": sorted(systems)})
+    slot.write_text(stamped.model_dump_json(), "utf-8")
 
 
 def _drift_candidates(
@@ -148,7 +151,8 @@ def run(
     mirror_path = Path(mirror)
     state_path = Path(state_dir)
 
-    result = connector.kbforge_fetch(config, _load_cursor(state_path, info.name))
+    prior = _load_cursor(state_path, info.name)
+    result = connector.kbforge_fetch(config, prior)
     docs = connector.kbforge_normalize(result.records)
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
     assert_fetch_contract(docs, complete=result.complete)  # §4.2 fetch contract
@@ -196,10 +200,19 @@ def run(
             max_docs=grounding_cfg.max_grounding_docs,
         )
 
-    # This run's systems. Used twice: to scope the drift scan, and to scope
-    # `existing` below — grounding requires one shared mirror, so both now see
-    # every system's documents and both must filter to this run's own.
-    systems = {d.anchor.system for d in docs}
+    # This run's systems. Used three times: to scope the drift scan, `referrers`,
+    # and `existing` — grounding requires one shared mirror, so all three see
+    # every system's documents and all three must filter to this run's own.
+    #
+    # The fallback is what makes drift work for an incremental connector. Drift
+    # exists to republish when the owner's own source did NOT change, so the
+    # runs that need it most are precisely the ones whose fetch is empty — and
+    # for those, `docs` names no system at all. The prior cursor is the only
+    # per-run record of which systems this connector owns. It is a fallback
+    # rather than a union: unioning would let a reconfigured connector keep
+    # scanning a system it no longer owns, which is the defect the scoping
+    # closed in the first place.
+    systems = {d.anchor.system for d in docs} or set(prior.systems if prior else ())
 
     drift: list[str] = []
     if scan:
@@ -222,12 +235,20 @@ def run(
     # validators only inspect concepts carried by this proposal. The mirror, not
     # `docs`, is the source — an incremental connector's fetch need not contain
     # the referrer.
+    #
+    # Scoped to `systems`, and it is the third site that must be: the shared
+    # mirror carries every system's documents, so a document in another system
+    # can name a doc_id this run tombstones. Unscoped it is pulled in here, and
+    # because `existing` IS scoped, law 2 then strips every one of ITS links as
+    # dangling and republishes it — on the wrong branch, since `branch_hint`
+    # comes from the first item and a deletion-only run has no other.
     referrers: list[CanonicalDocument] = []
     if removed_ids:
         referrers = [
             d
             for d in mirror_docs
-            if d.doc_id not in changed
+            if d.anchor.system in systems
+            and d.doc_id not in changed
             and d.doc_id not in removed_ids
             and removed_ids.intersection(d.relations)
         ]
@@ -353,5 +374,5 @@ def run(
             delete_sidecar(mirror_path, doc.doc_id)
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
-    _save_cursor(state_path, result.cursor)
+    _save_cursor(state_path, result.cursor, systems)
     return Published(url=url)

@@ -225,19 +225,25 @@ class _FakeConnector:
     """Returns a fixed list of CanonicalDocuments, deterministically — satisfies
     assert_stability without a clock or any real I/O."""
 
-    def __init__(self, docs: list[CanonicalDocument], complete: bool = True):
+    def __init__(
+        self,
+        docs: list[CanonicalDocument],
+        complete: bool = True,
+        name: str = "fake",
+    ):
         self._docs = docs
         self._complete = complete
+        self._name = name
 
     def kbforge_connector_info(self) -> ConnectorInfo:
-        return ConnectorInfo(name="fake", version="0.1.0", source_system="sys")
+        return ConnectorInfo(name=self._name, version="0.1.0", source_system="sys")
 
     def kbforge_validate_config(self, config: dict) -> list[str]:
         return []
 
     def kbforge_fetch(self, config: dict, cursor) -> FetchResult:
         return FetchResult(
-            records=[], cursor=Cursor(connector="fake"), complete=self._complete
+            records=[], cursor=Cursor(connector=self._name), complete=self._complete
         )
 
     def kbforge_normalize(self, records) -> list[CanonicalDocument]:
@@ -263,13 +269,17 @@ def _run_once(
     docs: list[CanonicalDocument],
     synthesizer=None,
     grounding_config=None,
+    connector_name: str = "fake",
 ) -> _RecordingPublisher:
     """Runs the pipeline against a fake connector returning `docs`, publishing via
     a recording publisher. Reuses tmp_path's mirror/state across calls in a test,
-    so a second call diffs against the first."""
+    so a second call diffs against the first.
+
+    `connector_name` models a second connector sharing the mirror: cursor state is
+    per-connector, so two systems synced under one name would share one cursor."""
     publisher = _RecordingPublisher()
     result = run(
-        _FakeConnector(docs),
+        _FakeConnector(docs, name=connector_name),
         publisher,
         config={},
         mirror=str(tmp_path / "mirror"),
@@ -835,3 +845,57 @@ def test_no_declared_grounding_keeps_the_cheap_noop(tmp_path: Path, monkeypatch)
     monkeypatch.setattr(pipeline, "load_all", _never)
     result, _ = _run_result(tmp_path, docs, synthesizer=_GroundingSynth())
     assert isinstance(result, NoOp)
+
+
+def test_another_systems_referrer_is_never_pulled_into_scope(tmp_path: Path):
+    """The mirror is shared, so a document in system B can name a doc_id this run
+    tombstones in system A. Unscoped, B's concept is re-synthesized by A's run --
+    and because `existing` IS scoped to A, every one of B's own links is then
+    dropped as dangling by §4.4 law 2, republished on A's branch."""
+    gone = _doc("gone", "Gone")
+    keep = _doc("keep", "Keep", system="other")
+    x = _doc("x", "X", system="other", relations=["sys:gone", "other:keep"])
+    _run_once(tmp_path, [gone, keep, x])
+
+    pub = _run_once(tmp_path, [_doc("gone", "Gone", deleted=True)])
+    assert pub.last_change is not None
+    assert concept_path("other:x") not in pub.last_change.files
+    assert pub.last_change.branch_hint == "sync/sys"
+
+
+def test_drift_is_evaluated_when_this_runs_fetch_is_empty(tmp_path: Path):
+    """Drift exists to republish when the owner's OWN source did not change, so
+    scoping it to `{d.anchor.system for d in docs}` alone switches it off for
+    exactly the connector it is for: an incremental one whose fetch carries
+    nothing this cycle. The run's systems fall back to what its cursor recorded."""
+    cfg = _cfg(**{"sys:a": ["other:SVC1"]})
+    synth = _GroundingSynth()
+    _run_once(
+        tmp_path,
+        [_doc("SVC1", "Ticket", system="other")],
+        synthesizer=synth,
+        grounding_config=cfg,
+    )
+    _run_once(
+        tmp_path,
+        [_doc("a", "A")],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="sys-conn",
+    )
+    _run_once(
+        tmp_path,
+        [_doc("SVC1", "Ticket reassigned", system="other")],
+        synthesizer=synth,
+        grounding_config=cfg,
+    )
+
+    pub = _run_once(
+        tmp_path,
+        [],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="sys-conn",
+    )
+    assert pub.last_change is not None
+    assert concept_path("sys:a") in pub.last_change.files

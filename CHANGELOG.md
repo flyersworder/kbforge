@@ -19,6 +19,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   moved in another system, even when its own source did not change, via a
   mirror-side drift sidecar (`mirror/_grounding/`); the no-op rule is restated,
   not weakened, to cover it.
+- A grounding sidecar is written through a temp file and read defensively: an
+  unreadable one counts as never-grounded, so a process killed mid-write leaves
+  a mirror that repairs itself on the next run instead of one that raises on
+  every run forever.
 - `GroundingSynthesizer`, a protocol separate from `Synthesizer` for exactly
   this capability, so no synthesizer written before this release stops being
   assignable. `LLMSynthesizer` implements it; `StubSynthesizer` does not, and
@@ -26,6 +30,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `Cursor` gains a core-owned `systems` field, stamped by the pipeline on every
+  save and distinct from the connector-owned `payload`. It scopes the grounding
+  drift scan on a run whose fetch is empty — the run that needs drift most,
+  since drift exists to republish when the owner's own source did not change.
+- `LLMConfig.max_source_chars` is again the whole-prompt budget its name and
+  docs claim: grounding documents now **share one budget, split evenly**, so a
+  grounded prompt is bounded by `2 x max_source_chars` rather than growing to
+  `(1 + max_grounding_docs)` times an ungrounded one — 6x at the defaults.
 - `docs/architecture.md` §4.4 law 3 documents the multi-source `sources` case
   and the owning-anchor-first convention; §7 gains a §7.1 subsection covering
   cross-source grounding end to end, folded in from
@@ -35,6 +47,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   requires, which the per-system claim previously left implicit: one **shared**
   `--mirror` across the per-system runs (drift is derived by reading it whole),
   cursor slots keyed by connector name, and a sync branch per system.
+
+### Fixed
+
+- `referrers` is scoped to the run's own systems, like the drift scan and
+  `existing`. Under the shared mirror grounding requires, an unscoped
+  `referrers` pulled another system's concept into this run, where the scoped
+  `existing` then stripped every one of its links as dangling under §4.4 law 2
+  and republished it on this run's branch.
+- `kbforge run --grounding` on a non-UTF-8 file exits 2 with a sentence rather
+  than a traceback (`UnicodeDecodeError` is a `ValueError`, so it slipped past
+  the `OSError` guard).
+- `grounding.resolve`'s notes name bundle paths, matching every other note in
+  `ChangeSummary.grounding_notes`; they named `doc_id`s, so one review body
+  spoke two identifier formats.
 
 ### Known limits
 
@@ -50,9 +76,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Changing the synthesizer is undetected drift.** Switching stub → LLM, or
   changing the model or prompt, changes what every concept was built from, and
   nothing re-synthesizes for it — `generated.by` records the change without
-  forcing one. Pre-existing, but grounding makes the omission more visible,
-  because sidecars written under a non-grounding synthesizer record hashes for
-  grounding that never happened.
+  forcing one. Pre-existing, and orthogonal to grounding: a rebuild under a
+  non-grounding synthesizer *clears* the concept's sidecar rather than leaving a
+  stale one, so the two do not compound.
 - **`generated.at` on a drift-triggered rebuild** comes from the owning
   document's `retrieved_at` (`synthesize.py:163`), which for an incremental
   connector may be the mirror's older timestamp rather than this run's.
@@ -93,6 +119,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never loaded when such a path was targeted directly, so live tests ran against the
   network with no opt-in — breaking the invariant that `uv run pytest` never touches
   it.
+
+### Fixed
+
+- `referrers` is scoped to the run's own systems, like the drift scan and
+  `existing`. Under the shared mirror grounding requires, an unscoped
+  `referrers` pulled another system's concept into this run, where the scoped
+  `existing` then stripped every one of its links as dangling under §4.4 law 2
+  and republished it on this run's branch.
+- `kbforge run --grounding` on a non-UTF-8 file exits 2 with a sentence rather
+  than a traceback (`UnicodeDecodeError` is a `ValueError`, so it slipped past
+  the `OSError` guard).
+- `grounding.resolve`'s notes name bundle paths, matching every other note in
+  `ChangeSummary.grounding_notes`; they named `doc_id`s, so one review body
+  spoke two identifier formats.
 
 ### Known limits
 

@@ -16,7 +16,7 @@ from kbforge.grounding import (
     resolve,
     write_sidecar,
 )
-from kbforge.mirror import load_all
+from kbforge.mirror import load_all, slot_key
 from kbforge.models import CanonicalDocument, ResourceAnchor
 
 
@@ -117,6 +117,9 @@ def test_unresolvable_id_is_dropped_with_a_note_not_an_error():
     assert got == []
     assert notes and "servicenow:SVC0042" in notes[0]
     assert "not found" in notes[0] and "tombstoned" not in notes[0]
+    # Paths, not doc_ids: `assemble` sets that convention for the review body and
+    # every other note in `grounding_notes` already follows it.
+    assert notes[0].startswith("concepts/payments/overview.md: ")
 
 
 def test_tombstoned_target_is_dropped():
@@ -126,6 +129,7 @@ def test_tombstoned_target_is_dropped():
     got, notes = resolve(owner, ["servicenow:SVC0042"], _by_id(owner, dead), max_docs=5)
     assert got == [] and notes
     assert "servicenow:SVC0042" in notes[0] and "tombstoned" in notes[0]
+    assert notes[0].startswith("concepts/payments/overview.md: ")
 
 
 def test_duplicate_resource_collapses_even_across_different_doc_ids():
@@ -248,3 +252,43 @@ def test_an_unresolvable_id_does_not_drift_forever(tmp_path: Path):
         )
         == []
     )
+
+
+def test_a_corrupt_sidecar_reads_as_never_grounded(tmp_path: Path):
+    """A sidecar is written non-atomically after publish, so a process killed
+    mid-loop leaves a truncated one. Raising here wedges every later run of a
+    shared mirror on a file nothing ever deletes -- and the recovery is a
+    republish, which is exactly what "never grounded" already produces."""
+    write_sidecar(tmp_path, "sys:a", {"other:SVC1": "h1"})
+    slot = next((tmp_path / SIDECAR_DIR).glob("*.json"))
+    slot.write_text('{"doc_id": "sys:a", "groundin', "utf-8")
+    assert read_sidecar(tmp_path, "sys:a") is None
+
+
+def test_a_sidecar_missing_its_grounding_key_reads_as_never_grounded(tmp_path: Path):
+    write_sidecar(tmp_path, "sys:a", {"other:SVC1": "h1"})
+    slot = next((tmp_path / SIDECAR_DIR).glob("*.json"))
+    slot.write_text('{"doc_id": "sys:a"}', "utf-8")
+    assert read_sidecar(tmp_path, "sys:a") is None
+
+
+def test_drift_survives_a_corrupt_sidecar_and_reconverges(tmp_path: Path):
+    owner = _doc("sys:a")
+    write_sidecar(tmp_path, "sys:a", {"other:SVC1": "h1"})
+    slot = next((tmp_path / SIDECAR_DIR).glob("*.json"))
+    slot.write_text("not json at all", "utf-8")
+    # Unreadable => empty recorded set, so a currently-grounded owner drifts...
+    assert drifted(tmp_path, [owner], {"sys:a": ["other:SVC1"]}, {"other:SVC1": "h1"})
+    # ...and the republish rewrites the sidecar, which then settles.
+    write_sidecar(tmp_path, "sys:a", {"other:SVC1": "h1"})
+    assert (
+        drifted(tmp_path, [owner], {"sys:a": ["other:SVC1"]}, {"other:SVC1": "h1"})
+        == []
+    )
+
+
+def test_a_sidecar_write_leaves_no_temp_file_behind(tmp_path: Path):
+    write_sidecar(tmp_path, "sys:a", {"other:SVC1": "h1"})
+    assert [p.name for p in (tmp_path / SIDECAR_DIR).iterdir()] == [
+        f"{slot_key('sys:a')}.json"
+    ]

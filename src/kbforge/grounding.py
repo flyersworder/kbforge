@@ -8,6 +8,7 @@ sources would be choosing its own provenance."""
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 
 import yaml
@@ -15,6 +16,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kbforge.mirror import slot_key
 from kbforge.models import CanonicalDocument, resource_key
+from kbforge.synthesize import concept_path
 
 DEFAULT_MAX_GROUNDING_DOCS = 5
 
@@ -90,14 +92,14 @@ def resolve(
         doc = by_id.get(gid)
         if doc is None:
             notes.append(
-                f"{owner.doc_id}: grounding {gid} was not found in the mirror or "
-                "this fetch and was dropped"
+                f"{concept_path(owner.doc_id)}: grounding {gid} was not found in "
+                "the mirror or this fetch and was dropped"
             )
             continue
         if doc.deleted:
             notes.append(
-                f"{owner.doc_id}: grounding {gid} is tombstoned upstream and "
-                "was dropped"
+                f"{concept_path(owner.doc_id)}: grounding {gid} is tombstoned "
+                "upstream and was dropped"
             )
             continue
         key = resource_key(doc.anchor)
@@ -109,7 +111,8 @@ def resolve(
     if len(kept) > max_docs:
         dropped = ", ".join(d.doc_id for d in kept[max_docs:])
         notes.append(
-            f"{owner.doc_id}: grounding capped at {max_docs}; dropped {dropped}"
+            f"{concept_path(owner.doc_id)}: grounding capped at {max_docs}; "
+            f"dropped {dropped}"
         )
         kept = kept[:max_docs]
     return kept, notes
@@ -126,18 +129,41 @@ def _sidecar(mirror: Path, doc_id: str) -> Path:
 
 def read_sidecar(mirror: Path, doc_id: str) -> dict[str, str] | None:
     """The grounding hashes recorded when this concept was last published, or
-    None if it has never been grounded."""
+    None if it has never been grounded.
+
+    An unreadable sidecar reads as never-grounded rather than raising. This is
+    recoverable state, not a corrupt mirror: it records what a past run did, and
+    the repair -- republish the concept and rewrite it -- is exactly what the
+    never-grounded answer produces. Raising instead wedges every later run on the
+    shared mirror, permanently, because nothing on the failing path ever reaches
+    `delete_sidecar`."""
     path = _sidecar(mirror, doc_id)
     if not path.exists():
         return None
-    return dict(json.loads(path.read_text("utf-8"))["grounding"])
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+        return {str(k): str(v) for k, v in payload["grounding"].items()}
+    except (
+        OSError,
+        UnicodeDecodeError,
+        json.JSONDecodeError,
+        TypeError,
+        KeyError,
+        AttributeError,
+    ):
+        return None
 
 
 def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
+    """Written through a temp file in the same directory, so a process killed
+    mid-write leaves either the old sidecar or the new one -- never a truncated
+    file. `read_sidecar` tolerates one anyway; this keeps them from being made."""
     path = _sidecar(mirror, doc_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
-    path.write_text(json.dumps(payload, sort_keys=True), "utf-8")
+    tmp = path.with_name(f"{path.name}.tmp")
+    tmp.write_text(json.dumps(payload, sort_keys=True), "utf-8")
+    os.replace(tmp, path)
 
 
 def delete_sidecar(mirror: Path, doc_id: str) -> None:

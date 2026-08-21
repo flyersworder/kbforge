@@ -192,12 +192,14 @@ def main(argv: list[str] | None = None) -> int:
         grounding_config = load_grounding(
             Path(args.grounding) if args.grounding else None
         )
-    except (OSError, yaml.YAMLError, ValidationError) as exc:
-        # A missing file, unparseable YAML and a rejected shape are all operator
-        # mistakes about one named path, so they get the surrounding style — a
-        # sentence naming the file and exit 2 — rather than a traceback. The
-        # shape problems `problems_for` reports below are already handled that
-        # way; these three reached the terminal raw.
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ValidationError) as exc:
+        # A missing file, non-UTF-8 bytes, unparseable YAML and a rejected shape
+        # are all operator mistakes about one named path, so they get the
+        # surrounding style — a sentence naming the file and exit 2 — rather than
+        # a traceback. The shape problems `problems_for` reports below are already
+        # handled that way; these four reached the terminal raw.
+        # `UnicodeDecodeError` is listed explicitly because it is a `ValueError`,
+        # not an `OSError`, so `read_text("utf-8")` slips past the other three.
         print(f"grounding config {args.grounding}: {exc}")
         return 2
     problems = problems_for(grounding_config)

@@ -95,6 +95,12 @@ class Cursor(BaseModel):
 
     connector: str
     payload: dict = Field(default_factory=dict)
+    systems: list[str] = Field(default_factory=list)
+    """The `anchor.system` values this connector last published, stamped by the
+    pipeline — core-owned, unlike `payload`, and overwritten on every save. It
+    exists so a run whose fetch returns nothing can still scope the grounding
+    drift scan: `ConnectorInfo.source_system` is prose, and a generic connector's
+    system is per-instance config, so neither identifies the run (§7.1)."""
 
 
 class ConnectorInfo(BaseModel):

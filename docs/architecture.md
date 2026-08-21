@@ -1014,7 +1014,11 @@ once the mirror advances (the tombstone branch in `grounding.resolve` is
 unreachable from the pipeline and kept as a contract for direct callers);
 fan-in is capped at `max_grounding_docs` (default 5, a pipeline-level config key
 because resolution happens in the pipeline, not in `LLMConfig` beside
-`max_source_chars`, which governs prompt size rather than provenance) —
+`max_source_chars`, which governs prompt size rather than provenance — and
+which the grounding documents **share as one budget, split evenly**, so a
+grounded prompt stays bounded by `2 x max_source_chars` however many documents
+ground it, rather than growing to `(1 + max_grounding_docs)` times an
+ungrounded one) —
 **deterministic**, sorted by `doc_id` and never the model's choice, since an
 LLM picking which sources to cite would be an LLM editing provenance;
 deduplication is by resource string (`anchor.url or f"{system}:{native_id}"`),
@@ -1040,6 +1044,13 @@ describes *what was published last time*, which is the mirror's whole job, and
 because the same `rm -rf` that resets a mirror must reset this, or the two
 drift apart.
 
+A sidecar is written through a temp file in the same directory and read
+defensively: an unreadable one counts as *never grounded* rather than raising.
+It records what a past run did, and the repair — republish and rewrite it — is
+exactly what the never-grounded answer produces, whereas raising would wedge
+every later run on the shared mirror permanently, since nothing on the failing
+path ever reaches the delete below.
+
 The sidecar is **deleted, not merely skipped**, when a document's grounding set
 becomes empty and when its owner is tombstoned: not writing a file does not
 remove the one already there, and a stale sidecar re-synthesizes its document
@@ -1051,11 +1062,23 @@ returns a **static** name, while a generic connector's `system` is
 **per-instance** — `kbforge-mcp` is named `mcp` and carries a configured
 `system`, so a name-keyed scope would be wrong for exactly the connector that
 motivated this design. The pipeline scopes instead by the run's own output,
-`{d.anchor.system for d in docs}`, which needs no connector identity at all. An
-unscoped scan would re-synthesize *other* systems' concepts and break the
-branch-per-system model this whole design exists to preserve; if `docs` is
-empty the scan does not run (a grounded concept whose owner was not fetched
-cannot be found, but an empty fetch publishes nothing anyway).
+`{d.anchor.system for d in docs}`, falling back to `Cursor.systems` — a
+core-owned field the pipeline stamps on every save, distinct from the
+connector-owned `payload` — when this run's fetch is empty. The fallback is
+what makes drift work for an incremental connector at all: drift exists to
+republish when the owner's own source did **not** change, so the runs that
+need it most are exactly the ones whose fetch carries nothing, and for those
+`docs` names no system. It is a fallback, not a union: unioning would let a
+reconfigured connector keep scanning a system it no longer owns.
+
+The same scope binds three sites, and all three must have it — the drift scan,
+`referrers`, and `existing`. Grounding requires one shared mirror, so each of
+them now sees every system's documents. Scope one and not another and the
+asymmetry is worse than scoping none: an unscoped `referrers` pulls another
+system's concept into this run, and the scoped `existing` then strips every one
+of *its* links as dangling under law 2 and republishes it on this run's
+branch — `branch_hint` comes from the first item, and a deletion-only run has
+no other.
 
 On a later run, a mirror document whose `anchor.system` is in scope and which
 is not already selected by this run's own diff is re-synthesized when any
