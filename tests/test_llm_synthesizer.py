@@ -16,7 +16,7 @@ from kbforge.llm_synthesizer import (  # noqa: E402
     _strip_title_heading,
 )
 from kbforge.models import CanonicalDocument, ChangeSet, ResourceAnchor  # noqa: E402
-from kbforge.synthesize import concept_path  # noqa: E402
+from kbforge.synthesize import GroundingSynthesizer, concept_path  # noqa: E402
 from kbforge.validate import run_validators  # noqa: E402
 
 
@@ -179,3 +179,94 @@ def test_strip_title_heading_unit():
         _strip_title_heading("## Overview\n\nbody text", title)
         == "## Overview\n\nbody text"
     )
+
+
+def test_llm_synthesizer_declares_that_it_grounds():
+    assert LLMSynthesizer.grounds is True
+
+
+def test_grounding_text_reaches_the_prompt_and_is_labelled_by_system():
+    """The model must be able to tell whose text it is reading, or it cannot
+    attribute a claim to the right system in prose."""
+    doc = _doc()
+    ground = _doc(doc_id="servicenow:SVC0042", text="Escalate to the payments queue.")
+    seen: list[str] = []
+
+    def fn(messages, info):
+        seen.append(messages[-1].parts[-1].content)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    SynthesizedConcept(
+                        title="X", description="d", body="b"
+                    ).model_dump(),
+                )
+            ]
+        )
+
+    synth = LLMSynthesizer(
+        LLMConfig(), agent=Agent(FunctionModel(fn), output_type=SynthesizedConcept)
+    )
+    synth.synthesize(
+        [doc], ChangeSet(added=[doc.doc_id]), grounding={doc.doc_id: [ground]}
+    )
+    assert "servicenow:SVC0042" in seen[0]
+    assert "Escalate to the payments queue." in seen[0]
+
+
+def test_a_grounding_document_is_truncated_like_a_source():
+    doc = _doc()
+    ground = _doc(doc_id="servicenow:SVC0042", text="x" * 5000)
+    concept = SynthesizedConcept(title="X", description="d", body="b")
+    synth = _synth(concept, max_source_chars=100)
+    proposal = synth.synthesize(
+        [doc], ChangeSet(added=[doc.doc_id]), grounding={doc.doc_id: [ground]}
+    )
+    assert any(
+        "servicenow:SVC0042" in n and "truncated" in n
+        for n in proposal.summary.grounding_notes
+    )
+
+
+def _takes_grounding_synthesizer(synth: GroundingSynthesizer) -> None:
+    """Type-only sink: exists so `ty` fails if `LLMSynthesizer` ever drifts off
+    the `GroundingSynthesizer` shape. Nothing declares conformance to that
+    protocol, so this is the only check that would catch the drift."""
+
+
+def test_llm_synthesizer_structurally_conforms_to_grounding_synthesizer():
+    concept = SynthesizedConcept(title="X", description="d", body="b")
+    _takes_grounding_synthesizer(_synth(concept))
+
+
+def test_grounding_documents_share_one_budget():
+    """`max_source_chars` is documented as the knob that governs prompt size.
+    Applied per document it stopped doing that: a grounded prompt grew to
+    (1 + max_grounding_docs) times an ungrounded one, 6x at the defaults."""
+    doc = _doc(text="Q" * 5000)
+    grounds = [_doc(doc_id=f"servicenow:SVC{i}", text="Z" * 5000) for i in range(1, 4)]
+    seen: list[str] = []
+
+    def fn(messages, info):
+        seen.append(messages[-1].parts[-1].content)
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    SynthesizedConcept(
+                        title="X", description="d", body="b"
+                    ).model_dump(),
+                )
+            ]
+        )
+
+    synth = LLMSynthesizer(
+        LLMConfig(max_source_chars=300),
+        agent=Agent(FunctionModel(fn), output_type=SynthesizedConcept),
+    )
+    synth.synthesize(
+        [doc], ChangeSet(added=[doc.doc_id]), grounding={doc.doc_id: grounds}
+    )
+    assert seen[0].count("Q") == 300  # the owning source keeps the full budget
+    assert seen[0].count("Z") == 300  # the three grounding documents share one

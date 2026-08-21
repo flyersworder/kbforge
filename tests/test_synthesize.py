@@ -231,3 +231,50 @@ def test_branch_hint_survives_a_deletion_only_run():
     change = assemble([], changeset)
 
     assert change.branch_hint == "sync/local_files"
+
+
+def test_grounding_documents_are_cited_after_the_owning_anchor():
+    """Owning anchor first is kbforge convention, not a validator rule --
+    `_check_sources_shape` compares resources as sets. It is what makes
+    "primary" legible in the artifact without adding a field to OKF."""
+    owner = _doc("local_files:a.md")  # existing helper
+    ground = _doc("servicenow:SVC0042")
+    proposal = assemble(
+        [(owner, "T", "D", "body")],
+        ChangeSet(added=[owner.doc_id]),
+        grounding={owner.doc_id: [ground]},
+    )
+    fm = proposal.concepts[concept_path(owner.doc_id)]
+    assert [a.native_id for a in fm.sources] == ["a.md", "SVC0042"]
+
+
+def test_a_grounded_concept_still_passes_the_laws():
+    owner = _doc("local_files:a.md")
+    ground = _doc("servicenow:SVC0042")
+    proposal = assemble(
+        [(owner, "T", "D", "body")],
+        ChangeSet(added=[owner.doc_id]),
+        grounding={owner.doc_id: [ground]},
+    )
+    path = concept_path(owner.doc_id)
+    from kbforge.validate import run_validators
+
+    assert run_validators(proposal, frozenset({path})) == []
+
+
+def test_grounding_for_another_document_does_not_leak():
+    owner = _doc("local_files:a.md")
+    other = _doc("local_files:b.md")
+    ground = _doc("servicenow:SVC0042")
+    proposal = assemble(
+        [(owner, "T", "D", "body"), (other, "T2", "D2", "body2")],
+        ChangeSet(added=[owner.doc_id, other.doc_id]),
+        grounding={owner.doc_id: [ground]},
+    )
+    assert len(proposal.concepts[concept_path(other.doc_id)].sources) == 1
+
+
+def test_the_stub_declares_that_it_does_not_ground():
+    from kbforge.synthesize import StubSynthesizer
+
+    assert StubSynthesizer.grounds is False

@@ -27,6 +27,15 @@ class ResourceAnchor(BaseModel):
     content_hash: str
 
 
+def resource_key(anchor: ResourceAnchor) -> str:
+    """The identity a `sources` entry is compared by (§4.4 law 3, §5.1).
+
+    One definition, because two consumers must agree exactly: `validate`
+    compares rendered against projected `sources` as sets of this key, and
+    grounding deduplicates candidates by it."""
+    return anchor.url or f"{anchor.system}:{anchor.native_id}"
+
+
 class ConceptFrontmatter(BaseModel):
     """The checkable head of an emitted OKF v0.2 concept (§4.4).
 
@@ -86,6 +95,12 @@ class Cursor(BaseModel):
 
     connector: str
     payload: dict = Field(default_factory=dict)
+    systems: list[str] = Field(default_factory=list)
+    """The `anchor.system` values this connector last published, stamped by the
+    pipeline — core-owned, unlike `payload`, and overwritten on every save. It
+    exists so a run whose fetch returns nothing can still scope the grounding
+    drift scan: `ConnectorInfo.source_system` is prose, and a generic connector's
+    system is per-instance config, so neither identifies the run (§7.1)."""
 
 
 class ConnectorInfo(BaseModel):
@@ -122,6 +137,10 @@ class CanonicalDocument(BaseModel):
     text: str
     structured: dict = Field(default_factory=dict)
     relations: list[str] = Field(default_factory=list)
+    grounded_by: list[str] = Field(default_factory=list)
+    """Fully qualified doc_ids this document should be grounded in (§2.1).
+    Qualified-only: a bare id would have to be told from a qualified one by
+    looking for a colon, and a native_id may contain one."""
     deleted: bool = False
 
 

@@ -12,11 +12,17 @@ from kbforge.canonical import (
 from kbforge.models import CanonicalDocument, RawRecord, ResourceAnchor
 
 
-def _doc(text="body", retrieved_at=datetime(2026, 7, 19, tzinfo=UTC)):
+def _doc(text="body", retrieved_at=datetime(2026, 7, 19, tzinfo=UTC), grounded_by=None):
     anchor = ResourceAnchor(
         system="s", native_id="n", retrieved_at=retrieved_at, content_hash="ignored"
     )
-    return CanonicalDocument(anchor=anchor, doc_id="s:n", title="T", text=text)
+    return CanonicalDocument(
+        anchor=anchor,
+        doc_id="s:n",
+        title="T",
+        text=text,
+        grounded_by=grounded_by or [],
+    )
 
 
 def test_content_hash_excludes_anchor_volatility():
@@ -45,6 +51,27 @@ def test_assert_stability_raises_for_unstable_normalize():
 
     with pytest.raises(StabilityError):
         assert_stability(flaky, [RawRecord(media_type="x", payload=b"")])
+
+
+def test_assert_stability_rejects_a_nondeterministic_grounded_by():
+    """`grounded_by` is deliberately outside `content_hash` (adding it would
+    re-synthesize every mirror on first upgrade), but cross-source grounding
+    makes it a re-synthesis driver via drift rule 3. A connector emitting it
+    nondeterministically would otherwise pass law 1 and re-synthesize forever."""
+    calls = {"n": 0}
+
+    def flaky(records):
+        calls["n"] += 1
+        return [_doc(grounded_by=[f"other:SVC{calls['n']}"])]
+
+    with pytest.raises(StabilityError):
+        assert_stability(flaky, [RawRecord(media_type="x", payload=b"")])
+
+
+def test_content_hash_still_ignores_grounded_by():
+    """The payload is an explicit allowlist; law 1 covers `grounded_by` beside
+    the hash rather than inside it, so no existing mirror re-synthesizes."""
+    assert content_hash(_doc()) == content_hash(_doc(grounded_by=["other:SVC1"]))
 
 
 def _fdoc(doc_id="sys:a.md", native_id="a.md", deleted=False):
