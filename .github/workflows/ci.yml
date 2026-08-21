@@ -81,9 +81,15 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # No `enable-cache`, deliberately. setup-uv v10 changed the `auto` default
+      # to DISABLE the cache on `release`, `pull_request_target` and
+      # `workflow_run` events, because a poisoned cache entry on those triggers
+      # runs with the workflow's own privileges. This job is the whole reason
+      # that matters here: it holds `id-token: write` and mints the PyPI
+      # trusted-publishing token. An explicit `enable-cache: true` opted straight
+      # back out of the protection, on the one job where it counts. The cache
+      # saved seconds on a job that runs a few times a month.
       - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          enable-cache: true
       - run: uv python install 3.13
       # `--all-packages`: this is a uv workspace, and a bare `uv build` builds
       # only the root package -- `kbforge-mcp` is a separate distribution and
