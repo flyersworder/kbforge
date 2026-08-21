@@ -5,7 +5,7 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.8.0] - 2026-08-21
 
 ### Added
 
@@ -77,7 +77,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   system's concepts on that system's branch. A pre-keying slot is read once for
   its payload with `systems` dropped, so upgrading costs at most one run's drift
   scan rather than a re-fetch. The connector-owned `payload` was silently
-  cross-contaminated the same way before this, on every release.
+  cross-contaminated the same way before this, on every release. This also closes
+  half of the cursor-identity blocker
+  `docs/design/2026-08-16-mcp-source-connector-design.md` §10.1 raised against the
+  MCP deletion manifest; the load/save asymmetry in that section is untouched and
+  still deferred. This also closes
+  half of the cursor-identity blocker
+  `docs/design/2026-08-16-mcp-source-connector-design.md` §10.1 raised against the
+  MCP deletion manifest; the load/save asymmetry in that section is untouched and
+  still deferred.
 - Grounding declared before the system holding it has synced now survives an
   incremental connector's empty fetches. The scan's *scope* fell back to the
   cursor but the *gate* above it did not, so with no subject map and no sidecar
@@ -174,42 +182,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   never loaded when such a path was targeted directly, so live tests ran against the
   network with no opt-in — breaking the invariant that `uv run pytest` never touches
   it.
-
-### Fixed
-
-- Cursor slots are keyed by connector name **and a digest of the connector's
-  config**, so two instances of one generic connector no longer overwrite each
-  other's state on a shared `--state` directory. Name alone let a sibling's
-  `systems` leak into a run's scope, and an empty-fetch run then published that
-  system's concepts on that system's branch. A pre-keying slot is read once for
-  its payload with `systems` dropped, so upgrading costs at most one run's drift
-  scan rather than a re-fetch. The connector-owned `payload` was silently
-  cross-contaminated the same way before this, on every release.
-- Grounding declared before the system holding it has synced now survives an
-  incremental connector's empty fetches. The scan's *scope* fell back to the
-  cursor but the *gate* above it did not, so with no subject map and no sidecar
-  the run returned `NoOp()` forever and the concept stayed ungrounded. A
-  declaration that resolves to nothing now records an **empty** sidecar rather
-  than none, which is what keeps the gate open; dropping the declaration still
-  deletes it.
-- A bare `grounded_by:` or `relations:` key in source frontmatter is valid YAML
-  that parses to `None`, and reached `normalize` as an uncaught `TypeError` that
-  killed the whole sync with a traceback.
-- The grounding sidecar's temp file gets a unique name. A fixed
-  `<slot>.json.tmp` is the same path for every writer, so two runs on the shared
-  mirror could replace each other's half-written file into the live slot, and a
-  crash left an orphan invisible to both `has_sidecars` and `delete_sidecar`.
-- `referrers` is scoped to the run's own systems, like the drift scan and
-  `existing`. Under the shared mirror grounding requires, an unscoped
-  `referrers` pulled another system's concept into this run, where the scoped
-  `existing` then stripped every one of its links as dangling under §4.4 law 2
-  and republished it on this run's branch.
-- `kbforge run --grounding` on a non-UTF-8 file exits 2 with a sentence rather
-  than a traceback (`UnicodeDecodeError` is a `ValueError`, so it slipped past
-  the `OSError` guard).
-- `grounding.resolve`'s notes name bundle paths, matching every other note in
-  `ChangeSummary.grounding_notes`; they named `doc_id`s, so one review body
-  spoke two identifier formats.
 
 ### Known limits
 

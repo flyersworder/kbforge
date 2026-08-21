@@ -4,7 +4,7 @@ title: kbforge — MCP as a Source Transport (what remains deferred)
 description: The parts of the MCP source connector that 0.7.0 did not build — the deletion manifest, the cursor-identity collision that blocks it, the path collisions the fetch-side law does not yet close, and the untaken option for selectors whose ids arrive as JSON-in-text.
 tags: [okf, mcp, connectors, agentic-fetch, selector, producer]
 generated: { by: human:flyersworder, at: 2026-08-18T00:00:00Z }
-status: partially shipped in 0.7.0 — §9–§10 remain deferred to 0.8.0
+status: partially shipped in 0.7.0; §10.1 half-resolved in 0.8.0 — §9 and the rest of §10 still deferred
 okf_version: "0.2"
 ---
 
@@ -60,13 +60,13 @@ can add and update concepts but can never remove one.** Stale concepts accumulat
 until an enumerating pass runs — the fail-safe direction, since a stale concept is
 visible in review and a wrongly-deleted one is silent data loss.
 
-**All of this is deferred to 0.8.0.** 0.7.0 needs no manifest and no cursor: like
+**All of this is still deferred.** 0.7.0 needs no manifest and no cursor: like
 `local_files`, it re-selects every run and lets the mirror diff do the work, which
 is why §10.1 did not block the connector phase. It ships
 `Cursor(connector="mcp", payload={})` and reads nothing back, which is
 forward-compatible with either resolution below.
 
-## 10. Deferred to 0.8.0
+## 10. Deferred
 
 ### 10.1 Cursor identity — blocks the manifest phase, not the connector
 
@@ -88,10 +88,21 @@ static while its `system` is per-instance. Both branches fail silently:
   mirror is safe, since `doc_id`s are `system:`-prefixed), so source B's
   enumerating run replaces A's memory and A's deletions are then never propagated.
 
-Resolving this needs either a core change (config-dependent connector identity, or
-a cursor-key parameter on `run()`) or namespacing the manifest inside
-`Cursor.payload` under the configured `system`. The second is enforceable without
-touching core and remains the front-runner; it has not been designed.
+**0.8.0 shipped the first option, arriving from the grounding side rather than
+this one.** Cursor slots are now keyed `cursor-<connector>-<config-digest>.json`,
+so two instances of one connector no longer share a slot: the second bullet above
+— source B's enumerating run replacing A's memory — is closed, and with it the
+shared-`--state` deployment hazard. Grounding forced it because `Cursor` began
+carrying `systems`, which decides *which system's concepts a run may touch*, so a
+shared slot stopped being a data-loss risk and became a trust-guarantee one.
+
+**The first bullet survives.** The load/save asymmetry is unchanged: `run` still
+loads with `info.name` and saves with `cursor.connector`, so a connector setting
+`Cursor(connector=config["system"])` still writes a slot it will never read. The
+digest keys both sides identically and therefore cannot fix a mismatch in the
+other half of the key. Closing it means making the save side use `info.name` too,
+or taking a cursor-key parameter on `run()`; namespacing the manifest inside
+`Cursor.payload` remains the option that needs no core change. Still not designed.
 
 ### 10.2 Manifest scope, and the collisions the slug does not close
 
@@ -160,7 +171,7 @@ a reader feel it. Cheap to add whenever someone wants it.
 |---|---|---|
 | **0.6.0** ✅ | fetch-side law (`architecture.md` §4.2, §4.4, §7) | none — shipped |
 | **0.7.0** ✅ | `kbforge-mcp`: client, two-tool set, tiered mapping, static + query selectors, AWS docs + GitHub live tests | none |
-| **0.8.0** | manifest cursor, tombstones, merge-vs-replace | §10.1, §10.2 |
+| **0.9.0** | manifest cursor, tombstones, merge-vs-replace | §10.1 (load/save half), §10.2 |
 | later | an agentic selector | bounds/budget/tool set from agentic-ingest §9 |
 | later | `json_text` selectors | §10.3 |
 | later | the `mcp-server-git` negative fixture | §10.4 |

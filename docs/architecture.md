@@ -10,7 +10,7 @@ okf_version: "0.2"
 
 # kbforge — Library Architecture & Connector Protocol
 
-**Status:** describes kbforge 0.7.0; sections marked **not built** are specification, not shipped code · **Companion to:** [`context/knowledge-base-design.md`](context/knowledge-base-design.md)
+**Status:** describes kbforge 0.8.0; sections marked **not built** are specification, not shipped code · **Companion to:** [`context/knowledge-base-design.md`](context/knowledge-base-design.md)
 **Name:** `kbforge` — *agent-first knowledge bases, forged from your systems of record.*
 **Repo:** `flyersworder/kbforge` · connectors: `kbforge-<system>` · entry points: `kbforge.connectors`
 
