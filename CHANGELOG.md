@@ -17,6 +17,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other; a cross-system relation was silently dropped under §4.4 law 2 instead.
   System-qualified bundle paths would fix both at the root and are their own
   release — this turns silent loss into a reported `Failure`.
+- A live test for a drift-triggered republish against a real forge
+  (`--run-live`): two systems into one mirror on their own branches, the
+  grounding document changed in its own system, and the owning concept
+  re-synthesized into the SAME review request with the new grounding
+  `content_hash` in `sources`. Every other live pipeline run is source-triggered;
+  a drift run builds from the mirror rather than the fetch, which nothing had
+  exercised against a forge.
 - A live test that grounds a real model through a shared mirror
   (`--run-live`): two connectors, one `--mirror`, and the published concept
   asserted to cite both systems with the owning anchor first. Every other
