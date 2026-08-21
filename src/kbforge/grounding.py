@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import tempfile
 from pathlib import Path
 
 import yaml
@@ -38,8 +39,13 @@ def load_grounding(path: Path | None) -> GroundingConfig:
     return GroundingConfig.model_validate(raw)
 
 
-def _qualified(value: str) -> bool:
-    """A doc_id is `system:native_id` with both halves non-empty."""
+def is_qualified(value: str) -> bool:
+    """A doc_id is `system:native_id` with both halves non-empty.
+
+    Public because both declaration sites must agree on it: the subject map the
+    CLI validates, and `grounded_by` as a connector reads it off a source
+    document. Two copies of this rule would let the two sites accept different
+    ids, and only one of them produces an operator-facing message."""
     system, sep, native = value.partition(":")
     return bool(sep and system and native)
 
@@ -51,13 +57,13 @@ def problems_for(cfg: GroundingConfig) -> list[str]:
     if cfg.max_grounding_docs < 1:
         problems.append("grounding 'max_grounding_docs' must be at least 1")
     for key, values in sorted(cfg.grounding.items()):
-        if not _qualified(key):
+        if not is_qualified(key):
             problems.append(
                 f"grounding key {key!r} must be a qualified doc_id "
                 "('system:native_id'); bare ids are not accepted"
             )
         for value in values:
-            if not _qualified(value):
+            if not is_qualified(value):
                 problems.append(
                     f"grounding value {value!r} under {key!r} must be a qualified "
                     "doc_id ('system:native_id'); bare ids are not accepted"
@@ -161,9 +167,20 @@ def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
     path = _sidecar(mirror, doc_id)
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
-    tmp = path.with_name(f"{path.name}.tmp")
-    tmp.write_text(json.dumps(payload, sort_keys=True), "utf-8")
-    os.replace(tmp, path)
+    # A unique temp name, not `<slot>.json.tmp`: a fixed one is the same path for
+    # every writer, so two runs on the shared mirror can `os.replace` each
+    # other's half-written file into the live slot — defeating the atomicity the
+    # temp file is here for. The finally-unlink covers the crash-between case,
+    # which would otherwise leave an orphan invisible to both `has_sidecars`
+    # (it globs `*.json`) and `delete_sidecar`.
+    fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True))
+        os.replace(tmp, path)
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def delete_sidecar(mirror: Path, doc_id: str) -> None:

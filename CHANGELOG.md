@@ -9,6 +9,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- The pipeline **aborts**, before synthesis and with no review request opened,
+  when two live documents claim one bundle path, and on a relation that crosses
+  out of its own system. `concept_path` drops the system prefix, so under the
+  shared mirror grounding requires, `wiki:readme` and `notes:readme` render one
+  file on two sync branches and whichever merges second silently overwrote the
+  other; a cross-system relation was silently dropped under §4.4 law 2 instead.
+  System-qualified bundle paths would fix both at the root and are their own
+  release — this turns silent loss into a reported `Failure`.
 - Cross-source grounding: a concept still has exactly one owning document, but
   synthesis may now additionally read **grounding** documents from any system,
   write a body informed by them, and cite them in `sources` (§5.1) alongside
@@ -50,6 +58,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cursor slots are keyed by connector name **and a digest of the connector's
+  config**, so two instances of one generic connector no longer overwrite each
+  other's state on a shared `--state` directory. Name alone let a sibling's
+  `systems` leak into a run's scope, and an empty-fetch run then published that
+  system's concepts on that system's branch. A pre-keying slot is read once for
+  its payload with `systems` dropped, so upgrading costs at most one run's drift
+  scan rather than a re-fetch. The connector-owned `payload` was silently
+  cross-contaminated the same way before this, on every release.
+- Grounding declared before the system holding it has synced now survives an
+  incremental connector's empty fetches. The scan's *scope* fell back to the
+  cursor but the *gate* above it did not, so with no subject map and no sidecar
+  the run returned `NoOp()` forever and the concept stayed ungrounded. A
+  declaration that resolves to nothing now records an **empty** sidecar rather
+  than none, which is what keeps the gate open; dropping the declaration still
+  deletes it.
+- A bare `grounded_by:` or `relations:` key in source frontmatter is valid YAML
+  that parses to `None`, and reached `normalize` as an uncaught `TypeError` that
+  killed the whole sync with a traceback.
+- The grounding sidecar's temp file gets a unique name. A fixed
+  `<slot>.json.tmp` is the same path for every writer, so two runs on the shared
+  mirror could replace each other's half-written file into the live slot, and a
+  crash left an orphan invisible to both `has_sidecars` and `delete_sidecar`.
 - `referrers` is scoped to the run's own systems, like the drift scan and
   `existing`. Under the shared mirror grounding requires, an unscoped
   `referrers` pulled another system's concept into this run, where the scoped
@@ -79,6 +109,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   forcing one. Pre-existing, and orthogonal to grounding: a rebuild under a
   non-grounding synthesizer *clears* the concept's sidecar rather than leaving a
   stale one, so the two do not compound.
+- **Two systems cannot share a `native_id`.** `concept_path` drops the system
+  prefix, so the collision aborts the run rather than resolving. Cross-system
+  `relations` abort for the same reason. Both lift when bundle paths become
+  system-qualified, which rewrites every published path.
+- **A tombstoned grounding target is cited one last time** (§7.1), so a review
+  request can carry a `sources` entry for a document the same request removes.
+  The next run drops it.
+- **Mirror writes are not atomic and runs are not locked.** `commit` writes
+  document slots in place while `load_all` parses every slot, so two runs
+  overlapping on the now-required shared mirror can read a torn file. The
+  sidecar got a temp file and `os.replace`; `commit` did not. See
+  `docs/design/2026-08-20-event-driven-runs-design.md`, where the per-mirror run
+  lock is the one core change proposed.
 - **`generated.at` on a drift-triggered rebuild** comes from the owning
   document's `retrieved_at` (`synthesize.py:163`), which for an incremental
   connector may be the mirror's older timestamp rather than this run's.
@@ -122,6 +165,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Cursor slots are keyed by connector name **and a digest of the connector's
+  config**, so two instances of one generic connector no longer overwrite each
+  other's state on a shared `--state` directory. Name alone let a sibling's
+  `systems` leak into a run's scope, and an empty-fetch run then published that
+  system's concepts on that system's branch. A pre-keying slot is read once for
+  its payload with `systems` dropped, so upgrading costs at most one run's drift
+  scan rather than a re-fetch. The connector-owned `payload` was silently
+  cross-contaminated the same way before this, on every release.
+- Grounding declared before the system holding it has synced now survives an
+  incremental connector's empty fetches. The scan's *scope* fell back to the
+  cursor but the *gate* above it did not, so with no subject map and no sidecar
+  the run returned `NoOp()` forever and the concept stayed ungrounded. A
+  declaration that resolves to nothing now records an **empty** sidecar rather
+  than none, which is what keeps the gate open; dropping the declaration still
+  deletes it.
+- A bare `grounded_by:` or `relations:` key in source frontmatter is valid YAML
+  that parses to `None`, and reached `normalize` as an uncaught `TypeError` that
+  killed the whole sync with a traceback.
+- The grounding sidecar's temp file gets a unique name. A fixed
+  `<slot>.json.tmp` is the same path for every writer, so two runs on the shared
+  mirror could replace each other's half-written file into the live slot, and a
+  crash left an orphan invisible to both `has_sidecars` and `delete_sidecar`.
 - `referrers` is scoped to the run's own systems, like the drift scan and
   `existing`. Under the shared mirror grounding requires, an unscoped
   `referrers` pulled another system's concept into this run, where the scoped

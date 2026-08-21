@@ -7,6 +7,7 @@ from kbforge import pipeline
 from kbforge.canonical import FetchContractError, content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.grounding import GroundingConfig, has_sidecars
+from kbforge.mirror import commit
 from kbforge.models import (
     CanonicalDocument,
     ConceptFrontmatter,
@@ -16,7 +17,7 @@ from kbforge.models import (
     ProposedChange,
     ResourceAnchor,
 )
-from kbforge.pipeline import NoOp, Published, run
+from kbforge.pipeline import Aborted, NoOp, Published, run
 from kbforge.publishers.dry_run import DryRunPublisher
 from kbforge.synthesize import StubSynthesizer, assemble, concept_path
 
@@ -270,6 +271,7 @@ def _run_once(
     synthesizer=None,
     grounding_config=None,
     connector_name: str = "fake",
+    config: dict | None = None,
 ) -> _RecordingPublisher:
     """Runs the pipeline against a fake connector returning `docs`, publishing via
     a recording publisher. Reuses tmp_path's mirror/state across calls in a test,
@@ -281,7 +283,7 @@ def _run_once(
     result = run(
         _FakeConnector(docs, name=connector_name),
         publisher,
-        config={},
+        config=config or {},
         mirror=str(tmp_path / "mirror"),
         state_dir=str(tmp_path / "state"),
         publish_config={},
@@ -295,14 +297,21 @@ def _run_once(
     return publisher
 
 
-def _run_result(tmp_path, docs, synthesizer=None, grounding_config=None):
+def _run_result(
+    tmp_path,
+    docs,
+    synthesizer=None,
+    grounding_config=None,
+    connector_name: str = "fake",
+    config: dict | None = None,
+):
     """The raw result, so a test can assert NoOp. `_run_once` asserts a publish
     happened and cannot express "nothing should have happened"."""
     publisher = _RecordingPublisher()
     result = run(
-        _FakeConnector(docs),
+        _FakeConnector(docs, name=connector_name),
         publisher,
-        config={},
+        config=config or {},
         mirror=str(tmp_path / "mirror"),
         state_dir=str(tmp_path / "state"),
         publish_config={},
@@ -852,10 +861,15 @@ def test_another_systems_referrer_is_never_pulled_into_scope(tmp_path: Path):
     tombstones in system A. Unscoped, B's concept is re-synthesized by A's run --
     and because `existing` IS scoped to A, every one of B's own links is then
     dropped as dangling by §4.4 law 2, republished on A's branch."""
-    gone = _doc("gone", "Gone")
-    keep = _doc("keep", "Keep", system="other")
-    x = _doc("x", "X", system="other", relations=["sys:gone", "other:keep"])
-    _run_once(tmp_path, [gone, keep, x])
+    _run_once(tmp_path, [_doc("gone", "Gone"), _doc("keep", "Keep", system="other")])
+    # Seeded straight into the mirror: a cross-system relation is now rejected at
+    # the run boundary, so the only way one exists is a mirror written before that
+    # rule -- which is exactly the state an upgrade produces, and exactly what
+    # this scope has to survive.
+    commit(
+        tmp_path / "mirror",
+        [_doc("x", "X", system="other", relations=["sys:gone", "other:keep"])],
+    )
 
     pub = _run_once(tmp_path, [_doc("gone", "Gone", deleted=True)])
     assert pub.last_change is not None
@@ -899,3 +913,85 @@ def test_drift_is_evaluated_when_this_runs_fetch_is_empty(tmp_path: Path):
     )
     assert pub.last_change is not None
     assert concept_path("sys:a") in pub.last_change.files
+
+
+def test_two_systems_claiming_one_bundle_path_abort_the_run(tmp_path: Path):
+    """`concept_path` drops the system prefix, so `sys:readme` and `other:readme`
+    render one file on two sync branches and whichever merges second silently
+    overwrites the other. The shared mirror this design requires is what makes
+    the collision reachable, so the run aborts rather than publishing into it."""
+    _run_once(tmp_path, [_doc("readme", "Wiki readme", system="other")])
+    result, _ = _run_result(tmp_path, [_doc("readme", "Notes readme")])
+    assert isinstance(result, Aborted)
+    slugs = {f.law for f in result.failures}
+    assert "bundle-path-collision" in slugs
+    assert any("other:readme" in f.message for f in result.failures)
+
+
+def test_a_cross_system_relation_aborts_instead_of_vanishing(tmp_path: Path):
+    """A link whose target is in another system cannot survive: `existing` is
+    scoped to this run's systems, so law 2 drops it. Dropping it silently loses
+    an author's stated relation with no note anywhere in the review."""
+    _run_once(tmp_path, [_doc("b", "B", system="other")])
+    result, _ = _run_result(tmp_path, [_doc("a", "A", relations=["other:b"])])
+    assert isinstance(result, Aborted)
+    slugs = {f.law for f in result.failures}
+    assert "cross-system-relation" in slugs
+    assert any("other:b" in f.message for f in result.failures)
+
+
+def test_two_instances_of_one_connector_keep_separate_cursors(tmp_path: Path):
+    """A generic connector's name is static while its `system` is per-instance
+    config, so a name-keyed slot lets sibling instances clobber each other's
+    scope -- and an empty-fetch run then publishes another system's concepts on
+    that system's branch, the exact violation the scoping exists to prevent."""
+    synth = _GroundingSynth()
+    cfg = _cfg(**{"B:b": ["C:c"]})
+
+    def mcp(docs, system):
+        return _run_once(
+            tmp_path,
+            docs,
+            synthesizer=synth,
+            grounding_config=cfg,
+            connector_name="mcp",
+            config={"system": system},
+        )
+
+    _run_once(tmp_path, [_doc("c", "C v1", system="C")], connector_name="gitc")
+    mcp([_doc("a", "A", system="A")], "A")
+    mcp([_doc("b", "B", system="B")], "B")
+    _run_once(tmp_path, [_doc("c", "C v2", system="C")], connector_name="gitc")
+
+    # Instance A's incremental run. Its own cursor never saw system B, so B's
+    # pending drift is B's run to pick up.
+    result, _ = _run_result(
+        tmp_path,
+        [],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="mcp",
+        config={"system": "A"},
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_grounding_declared_before_a_sibling_synced_survives_an_empty_fetch(
+    tmp_path: Path,
+):
+    """The scan SCOPE was taught to fall back to the cursor; the GATE above it was
+    not. With no subject map and a sidecar the pipeline deleted as unresolvable,
+    an incremental connector's empty fetch never reaches the scan at all and the
+    concept stays ungrounded forever -- the stranding `grounding.drifted` exists
+    to prevent."""
+    synth = _GroundingSynth()
+    a = _doc("a", "A")
+    a.grounded_by = ["other:b"]
+    _run_once(tmp_path, [a], synthesizer=synth, connector_name="wiki")
+    _run_once(tmp_path, [_doc("b", "B", system="other")], synthesizer=synth)
+
+    pub = _run_once(tmp_path, [], synthesizer=synth, connector_name="wiki")
+    assert pub.last_change is not None
+    assert concept_path("sys:a") in pub.last_change.files
+    fm = pub.last_change.concepts[concept_path("sys:a")]
+    assert [s.native_id for s in fm.sources] == ["a", "b"]

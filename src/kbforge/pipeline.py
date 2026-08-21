@@ -3,8 +3,10 @@ no-op and never-auto-merge rules are trust guarantees enforced here."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, cast
 
@@ -79,22 +81,49 @@ class ConfigError(RuntimeError):
     """A connector rejected its config before any I/O."""
 
 
-def _cursor_slot(state_dir: Path, connector: str) -> Path:
-    return state_dir / f"cursor-{connector}.json"
+def _instance_key(config: dict) -> str:
+    """A short digest of the connector's config, so two INSTANCES of one connector
+    get separate state.
+
+    `kbforge_connector_info().name` is static while a generic connector's
+    `system` is per-instance config — `kbforge-mcp` is named `mcp` and carries a
+    configured `system`. A name-keyed slot therefore lets sibling instances
+    overwrite each other on the one shared `--state` §5.4 documents: the
+    connector-owned `payload` is cross-contaminated, and `Cursor.systems` is
+    worse, because scope decides which system's concepts a run may touch."""
+    canonical = json.dumps(config, sort_keys=True, default=str)
+    return sha256(canonical.encode("utf-8")).hexdigest()[:8]
 
 
-def _load_cursor(state_dir: Path, connector: str) -> Cursor | None:
-    slot = _cursor_slot(state_dir, connector)
-    if not slot.exists():
+def _cursor_slot(state_dir: Path, connector: str, config: dict) -> Path:
+    return state_dir / f"cursor-{connector}-{_instance_key(config)}.json"
+
+
+def _load_cursor(state_dir: Path, connector: str, config: dict) -> Cursor | None:
+    slot = _cursor_slot(state_dir, connector, config)
+    if slot.exists():
+        return Cursor.model_validate_json(slot.read_text("utf-8"))
+    # One-time read-through for a slot written before instance keying, so an
+    # upgrade does not force a full re-fetch. Its `systems` is dropped: that is
+    # the field siblings could have clobbered, and an empty one only costs the
+    # first run's drift scan, whereas a wrong one publishes on another system's
+    # branch. The payload is kept as-is — sharing it is exactly what this run
+    # would have done before the upgrade, and it stops after this run.
+    legacy = state_dir / f"cursor-{connector}.json"
+    if not legacy.exists():
         return None
-    return Cursor.model_validate_json(slot.read_text("utf-8"))
+    return Cursor.model_validate_json(legacy.read_text("utf-8")).model_copy(
+        update={"systems": []}
+    )
 
 
-def _save_cursor(state_dir: Path, cursor: Cursor, systems: set[str]) -> None:
+def _save_cursor(
+    state_dir: Path, cursor: Cursor, systems: set[str], config: dict
+) -> None:
     """`systems` is stamped here rather than trusted from the connector: every
     connector builds a fresh Cursor in fetch, so whatever it set would be lost."""
     state_dir.mkdir(parents=True, exist_ok=True)
-    slot = _cursor_slot(state_dir, cursor.connector)
+    slot = _cursor_slot(state_dir, cursor.connector, config)
     stamped = cursor.model_copy(update={"systems": sorted(systems)})
     slot.write_text(stamped.model_dump_json(), "utf-8")
 
@@ -130,6 +159,63 @@ def _drift_candidates(
     ]
 
 
+def _scope_failures(
+    changed_docs: list[CanonicalDocument],
+    by_id: dict[str, CanonicalDocument],
+) -> list[Failure]:
+    """Two ways the shared mirror can silently lose a concept, both reported
+    rather than published into.
+
+    `concept_path` drops the system prefix, so the bundle has one namespace where
+    the mirror has one per system. Under the shared mirror grounding requires,
+    that is reachable two ways, and both used to be silent:
+
+    - **A path collision.** `wiki:readme` and `notes:readme` render one file on
+      two sync branches; whichever merges second overwrites the other with no
+      validator, no conflict, and no note.
+    - **A cross-system relation.** `existing` is scoped to this run's systems --
+      it must be, or a link resolves through a collision against a document this
+      system does not have -- so `assemble` drops the link under §4.4 law 2. An
+      author's stated relation vanishes with nothing anywhere saying so.
+
+    Both abort. System-qualified bundle paths would remove the collision at its
+    root and let cross-system links work, but that rewrites every published path,
+    so it is its own release rather than a patch (architecture.md §5.4)."""
+    failures: list[Failure] = []
+
+    owners: dict[str, str] = {}
+    for doc in sorted(by_id.values(), key=lambda d: d.doc_id):
+        if doc.deleted:
+            continue
+        path = concept_path(doc.doc_id)
+        prior = owners.setdefault(path, doc.doc_id)
+        if prior != doc.doc_id:
+            failures.append(
+                Failure(
+                    path,
+                    "bundle-path-collision",
+                    f"{prior} and {doc.doc_id} are different documents that render "
+                    "one bundle path; whichever review request merges second would "
+                    "overwrite the other",
+                )
+            )
+
+    for doc in changed_docs:
+        system = doc.doc_id.partition(":")[0]
+        for target in doc.relations:
+            if target.partition(":")[0] != system:
+                failures.append(
+                    Failure(
+                        concept_path(doc.doc_id),
+                        "cross-system-relation",
+                        f"relation to {target} crosses out of {system}; kbforge "
+                        "links within one system only, and publishing would drop "
+                        "it silently under §4.4 law 2",
+                    )
+                )
+    return failures
+
+
 def run(
     connector: ConnectorProtocol,
     publisher: PublisherProtocol,
@@ -151,7 +237,7 @@ def run(
     mirror_path = Path(mirror)
     state_path = Path(state_dir)
 
-    prior = _load_cursor(state_path, info.name)
+    prior = _load_cursor(state_path, info.name, config)
     result = connector.kbforge_fetch(config, prior)
     docs = connector.kbforge_normalize(result.records)
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
@@ -192,13 +278,23 @@ def run(
     removed_ids = set(changeset.removed)
     changed_docs = [d for d in docs if d.doc_id in changed]
 
+    # Memoised: every drifted document is resolved once for the drift comparison
+    # and again for `grounding_map`, from the same `by_id` and the same config,
+    # so the second call is provably the first one's answer. Keyed by doc_id,
+    # which is safe because every caller passes the `by_id` copy of a document.
+    _resolutions: dict[str, tuple[list[CanonicalDocument], list[str]]] = {}
+
     def _resolved(doc: CanonicalDocument) -> tuple[list[CanonicalDocument], list[str]]:
-        return resolve(
-            doc,
-            declared_ids(doc, grounding_cfg),
-            by_id,
-            max_docs=grounding_cfg.max_grounding_docs,
-        )
+        cached = _resolutions.get(doc.doc_id)
+        if cached is None:
+            cached = resolve(
+                doc,
+                declared_ids(doc, grounding_cfg),
+                by_id,
+                max_docs=grounding_cfg.max_grounding_docs,
+            )
+            _resolutions[doc.doc_id] = cached
+        return cached
 
     # This run's systems. Used three times: to scope the drift scan, `referrers`,
     # and `existing` — grounding requires one shared mirror, so all three see
@@ -225,7 +321,10 @@ def run(
             {d.doc_id: [g.doc_id for g in _resolved(d)[0]] for d in candidates},
             hashes,
         )
-        changed_docs += [d for d in candidates if d.doc_id in set(drift)]
+        # Hoisted: as a comprehension condition this was rebuilt once per
+        # candidate, and `candidates` is O(mirror).
+        drift_ids = set(drift)
+        changed_docs += [d for d in candidates if d.doc_id in drift_ids]
 
     if changeset.is_noop and not drift:
         return NoOp()
@@ -290,6 +389,10 @@ def run(
         )
         - tombstoned
     )
+
+    scope_failures = _scope_failures(changed_docs, by_id)
+    if scope_failures:
+        return Aborted(failures=scope_failures)
 
     grounding_map: dict[str, list[CanonicalDocument]] = {}
     grounding_notes: list[str] = []
@@ -363,6 +466,16 @@ def run(
                 doc.doc_id,
                 {g.doc_id: g.anchor.content_hash for g in docs_for},
             )
+        elif grounds and declared_ids(doc, grounding_cfg):
+            # Declared, but nothing resolved — the sibling system has not synced
+            # yet. An EMPTY sidecar, not no sidecar: `has_sidecars` is the cheap
+            # gate that decides whether the scan runs at all, and an incremental
+            # connector whose later fetches are empty has nothing else to trip
+            # it. Without this the concept is stranded ungrounded forever, which
+            # is the stranding `grounding.drifted` exists to prevent. It cannot
+            # loop: still-unresolvable means `current == set() == recorded`, and
+            # dropping the declaration falls through to the delete below.
+            write_sidecar(mirror_path, doc.doc_id, {})
         else:
             # A delete, not a skip: a stale sidecar fires rule 3 forever. Run
             # OUTSIDE the `grounds` guard, matching the tombstone loop below: a
@@ -374,5 +487,5 @@ def run(
             delete_sidecar(mirror_path, doc.doc_id)
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
-    _save_cursor(state_path, result.cursor, systems)
+    _save_cursor(state_path, result.cursor, systems, config)
     return Published(url=url)

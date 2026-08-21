@@ -203,3 +203,16 @@ def test_a_half_qualified_grounded_by_id_is_dropped(tmp_path: Path):
     """Both halves must be non-empty: ':x' and 'x:' name no document."""
     docs = _grounded(tmp_path, "grounded_by:\n  - ':x'\n  - 'x:'\n")
     assert docs[0].grounded_by == []
+
+
+def test_an_empty_grounded_by_key_is_not_a_crash(tmp_path: Path):
+    """`grounded_by:` with no value is valid YAML that parses to None. `.get(k, [])`
+    returns it, and `normalize` then raises a TypeError no CLI handler catches —
+    one such file kills the whole sync with a traceback."""
+    (tmp_path / "x.md").write_text(
+        "---\ntitle: X\ngrounded_by:\nrelations:\n---\nbody\n", "utf-8"
+    )
+    conn = LocalFilesConnector()
+    result = conn.kbforge_fetch({"path": str(tmp_path)}, None)
+    docs = conn.kbforge_normalize(result.records)
+    assert docs[0].grounded_by == [] and docs[0].relations == []

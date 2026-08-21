@@ -704,8 +704,9 @@ the doc is gone from the mirror, so a later tombstone is not even a removal.
 Closing a kbforge review request without merging therefore discards its contents
 for good. Abandon a request by merging it, or by resetting **both** the mirror
 and the connector's cursor (`_load_cursor`/`_save_cursor` in `pipeline.py` keep
-it in the state directory, at `<state-dir>/cursor-<connector-name>.json`,
-separate from the mirror). Deleting the mirror alone is not enough for an
+it in the state directory, at
+`<state-dir>/cursor-<connector-name>-<config-digest>.json`, separate from the
+mirror). Deleting the mirror alone is not enough for an
 incremental connector: the surviving cursor still bounds `kbforge_fetch` to
 records past it, so the next run can fetch few or no records, `ChangeSet.is_noop`
 fires, and nothing is re-proposed. Only deleting both re-proposes everything
@@ -770,11 +771,34 @@ The **mirror is shared** across those runs, and cross-source grounding (§7.1)
 *requires* that it is: drift is derived by reading the mirror whole, so a run
 can only see another system's current hash if both write into the same
 `--mirror`. Concretely, the supported layout is one `--mirror` for the whole
-deployment, one `--state` directory (cursor slots are named
-`cursor-<connector>.json`, so per-connector state directories work too and a
-shared one cannot collide), and a separate sync branch per system, which the
-publisher derives from `branch_hint`. Nothing here fans out: each run still
+deployment, one `--state` directory, and a separate sync branch per system,
+which the publisher derives from `branch_hint`.
+
+Cursor slots are keyed by connector name **and a digest of the connector's
+config**, so a shared state directory cannot collide even between two instances
+of one connector. Name alone is not enough and used not to be checked: a
+generic connector's name is static while its `system` is per-instance config —
+`kbforge-mcp` is named `mcp` and carries a configured `system` — so siblings
+overwrote each other's slot. That silently crossed the connector-owned
+`payload` between two systems, and once the slot began carrying `systems` it
+was worse: an empty-fetch run inherited a sibling's scope and published that
+system's concepts on that system's branch, the branch-per-system violation the
+scoping exists to prevent. A slot written before this keying is read once for
+its payload, with its `systems` dropped, so upgrading costs at most one run's
+drift scan rather than a full re-fetch. Nothing here fans out: each run still
 fetches one system and publishes one system's concepts.
+
+The shared mirror has one cost the shared bundle does not absorb: `concept_path`
+drops the system prefix, so `wiki:readme.md` and `notes:readme.md` render one
+file on two sync branches, and whichever request merges second overwrites the
+other. The pipeline therefore **aborts** — before synthesis, so no review
+request opens — when two live documents claim one bundle path, and likewise on
+a relation that crosses out of its own system, which `existing`'s scoping would
+otherwise drop silently under §4.4 law 2. Both are reported as `Failure`s, in
+the register the emit-side laws already use. System-qualified bundle paths
+(`concepts/<system>/<native_id>/`) would remove the collision at its root and
+let cross-system links resolve; that rewrites every path in every published
+bundle, so it is its own deliberate release rather than a patch.
 
 ---
 
