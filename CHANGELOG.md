@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   other; a cross-system relation was silently dropped under §4.4 law 2 instead.
   System-qualified bundle paths would fix both at the root and are their own
   release — this turns silent loss into a reported `Failure`.
+- A live test that grounds a real model through a shared mirror
+  (`--run-live`): two connectors, one `--mirror`, and the published concept
+  asserted to cite both systems with the owning anchor first. Every other
+  grounding test drives a stub synthesizer, so nothing had checked that a real
+  model's multi-source output passes the §4.4 laws.
 - Cross-source grounding: a concept still has exactly one owning document, but
   synthesis may now additionally read **grounding** documents from any system,
   write a body informed by them, and cite them in `sources` (§5.1) alongside
