@@ -26,10 +26,20 @@ drives `pipeline.run`, so it pins the *composition* — the mirror advancing, th
 cursor persisting, and open-request detection all being right at once, which is
 where the 0.3.0 data-loss bug lived while every piece was individually correct.
 
+`GITLAB_TOKEN` must be a personal access token with the `api` scope, NOT the
+credential `glab auth login` stores when it authenticates over OAuth. Both
+clients read the same variable and send it differently: kbforge's client sends
+`Authorization: Bearer`, which an OAuth access token satisfies, while `glab`
+sends `PRIVATE-TOKEN`, which it does not. Handing `glab` an OAuth token is worse
+than handing it nothing, because `GITLAB_TOKEN` overrides the working config it
+would otherwise refresh from — so the publish under test succeeds and only the
+read-back 401s, which reads like a kbforge bug and is not one. `gh` has no such
+split: its token works either way.
+
 Run with:
 
     GITHUB_TOKEN=$(gh auth token) \\
-    GITLAB_TOKEN=$(glab config get token --host gitlab.com) \\
+    GITLAB_TOKEN=glpat-...  # api scope; see above \\
     KBFORGE_LIVE_GITHUB_REPO=owner/kbforge-live-test \\
     KBFORGE_LIVE_GITLAB_REPO=user/kbforge-live-test \\
     uv run pytest tests/test_forge_live.py --run-live
