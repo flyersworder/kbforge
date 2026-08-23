@@ -131,7 +131,9 @@ Parse failure kinds, each distinct:
 | `missing-required` | no `type` / `title` / `description` / `generated` / `sources` |
 | `bad-generated` | not a mapping, or missing `by`/`at` |
 | `bad-timestamp` | `generated.at` present but unparseable |
+| `naive-timestamp` | `generated.at` parses but carries no UTC offset (law 4 requires one) |
 | `bad-sources` | not a list, or an entry with no `resource` |
+| `bad-links` | `links` is not a list, or holds a non-string entry |
 
 This is where the tool parts ways with kbforge's own parser, and the divergence
 is intentional. `validate._parse_frontmatter` collapses no-fence, unterminated
