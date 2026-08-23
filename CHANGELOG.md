@@ -5,6 +5,36 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- `kbforge-okfquery`, a separate distribution that turns a published OKF v0.2
+  bundle into a queryable DuckDB database. `load(bundle, mirror=None)` returns the
+  bare `duckdb.DuckDBPyConnection` — an OKF bundle *is* a DuckDB database, so
+  wrapping it would only hide `COPY ... TO 'x.parquet'`, `ATTACH`, `INSTALL fts`,
+  and joins against your own data. Four tables from the bundle (`concepts`,
+  `sources` with `ordinal` preserved so the owning anchor stays distinguishable
+  from grounding, `links`, `problems`) plus an optional `mirror` view, and a
+  `query` / `shell` / `schema` / `check` CLI. Nothing under its `src/` imports
+  kbforge: it reads any OKF v0.2 bundle, kbforge-produced or not, which is what
+  makes the layer table's portability claim checkable rather than asserted.
+  Import name and console script are `okfquery`; the distribution is namespaced
+  because PyPI already carries an unrelated `okf`.
+- Parse failures are rows, not exceptions. Every non-reserved scanned file yields
+  exactly one `concepts` row — NULLs for what could not be read — plus zero or
+  more `problems` rows across ten kinds, so "which files stopped parsing" is a
+  query rather than a crash, and `okfquery check` exits 1 on any of them. An
+  audit tool that dropped its unreadable files would hide precisely the ones most
+  likely to be wrong.
+- A live test for the mirror/bundle skew (`--run-live`): publish, merge, edit one
+  concept, publish again, then query across the still-open review request. It
+  demonstrates that an equi-join on `content_hash` returns nothing for a concept
+  under review — because `pipeline.run` advances the mirror at publish while the
+  bundle advances only at merge, and kbforge never merges — and that joining on
+  `sources.id` and *comparing* hashes reports it correctly. The offline
+  round-trip test cannot reach this: `dry_run` never opens a review request.
+
 ## [0.8.0] - 2026-08-21
 
 ### Added
@@ -461,7 +491,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/flyersworder/kbforge/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/flyersworder/kbforge/compare/v0.6.0...v0.7.0
 [0.6.0]: https://github.com/flyersworder/kbforge/compare/v0.5.0...v0.6.0
 [0.5.0]: https://github.com/flyersworder/kbforge/compare/v0.4.0...v0.5.0

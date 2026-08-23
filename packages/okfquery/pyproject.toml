@@ -1,0 +1,37 @@
+[project]
+name = "kbforge-okfquery"
+version = "0.1.0"
+description = "SQL over an OKF v0.2 bundle, via DuckDB"
+readme = "README.md"
+requires-python = ">=3.12"
+authors = [{ name = "Qing", email = "qingye779@gmail.com" }]
+license = { text = "MIT" }
+keywords = ["okf", "open-knowledge-format", "duckdb", "sql", "knowledge-base"]
+dependencies = [
+    "duckdb>=1.1",
+    "pyyaml>=6",
+    # DuckDB's Python client needs this to materialize ANY TIMESTAMPTZ column as
+    # a Python datetime, with or without a session timezone set -- without it,
+    # fetchone() on a TIMESTAMPTZ column raises InvalidInputException. `load`
+    # also does `SET timezone = 'UTC'`, but that's about rendering the same
+    # value the same way on every machine, not about pytz being needed at all.
+    "pytz>=2024.1",
+]
+
+[project.scripts]
+okfquery = "okfquery.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/okfquery"]
+
+# kbforge is needed ONLY by tests/test_roundtrip.py, which builds a real bundle
+# to check this package's replicated reserved rule has not drifted from
+# validate._check_strict_okf. A PEP 735 group is never written into wheel
+# metadata, so the published okfquery still depends on no kbforge code -- which
+# is the claim spec §1 rests on.
+[dependency-groups]
+dev = ["kbforge"]

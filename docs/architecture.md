@@ -26,6 +26,7 @@ This library is the reference implementation of that missing half:
 | Semantic vocabulary (`type` taxonomy) | us, per domain | our design doc §5.4 |
 | **Production protocol** (connectors, canonicalization, diff, provenance, publish) | **this library** | this spec |
 | Serving protocol | MCP — or a context database that ingests the bundle (§4.4) | exists |
+| *(a worked consumer)* | `okfquery`, a sibling distribution — see `docs/design/2026-08-23-okfquery-design.md` | ships, not this spec |
 
 Design stance carried over from the main doc: **the core ships zero credentialed
 connectors, zero CI logic.** Connectors are plugins; deployments are separate
@@ -505,7 +506,12 @@ is an equally valid consumer; it reads the same three artifact features under
 different names. Enumerating the features rather than the API is what keeps the
 serving side swappable: the laws are stated against *affordances*, so a bundle
 that satisfies them is portable across serving implementations we have never
-seen. The four laws are exactly "emit what those affordances read":
+seen. `okfquery` — a sibling distribution in this repo, importing none of this
+library — is a third consumer shape that is neither an MCP server nor a context
+database: it loads a bundle into DuckDB and answers SQL. It reads the same three
+features under a fourth set of names, which is the closest thing to evidence
+this table has that enumerating features rather than an API was the right call.
+The four laws are exactly "emit what those affordances read":
 
 1. **Facet survival.** Every `structured` field synthesis relied on to make a
    claim appears as a **frontmatter key**, never only in prose. *Without it:*

@@ -20,7 +20,7 @@ losing an afternoon to review.
 |---|---|
 | Artifact format | OKF v0.2 |
 | **Production protocol** — connectors, canonicalization, diff, provenance, publish | **kbforge** |
-| Serving protocol | MCP — or any context database that ingests the bundle |
+| Serving protocol | MCP — or any context database that ingests the bundle (see [`packages/okfquery`](packages/okfquery) for a DuckDB reader) |
 
 "Agent-first" is a *checkable* claim, not a downstream hope. kbforge stays a producer —
 the agent connects over MCP, which kbforge doesn't own — but every publish is gated on
@@ -44,6 +44,21 @@ synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra).
 
 Not built yet: a credentialed system-of-record connector. See
 [`docs/architecture.md`](docs/architecture.md) for the full map.
+
+## Companion distributions
+
+This repo is a uv workspace and ships three distributions, versioned independently.
+Neither companion is required to use kbforge, and neither is installed with it.
+
+| Distribution | Import | What it does |
+|---|---|---|
+| [`kbforge`](https://pypi.org/project/kbforge/) | `kbforge` | the production protocol — this README |
+| [`kbforge-mcp`](packages/kbforge-mcp) | `kbforge_mcp` | makes any MCP server with a select tool and a read-by-id tool a kbforge **source**, through configuration alone |
+| [`kbforge-okfquery`](packages/okfquery) | `okfquery` | reads a published bundle **back**: `okfquery query "SELECT ..."` over concepts, sources, links, and parse problems |
+
+They sit on opposite sides of the pipeline. `kbforge-mcp` is an ingest-side plugin
+that registers a connector entry point; `okfquery` registers nothing and imports no
+kbforge code at runtime, so it reads any OKF v0.2 bundle, kbforge-produced or not.
 
 ## Quickstart
 
@@ -161,6 +176,9 @@ them optional. Plugins extend stages. They cannot reorder or remove them.
 - [`docs/design/2026-08-08-okf-02-deferred-decisions.md`](docs/design/2026-08-08-okf-02-deferred-decisions.md)
   — the OKF v0.2 families kbforge does not emit yet (`verified`, `status: deprecated`,
   `stale_after`, footnote attribution) and why each is a decision, not a backlog item.
+- [`docs/design/2026-08-23-okfquery-design.md`](docs/design/2026-08-23-okfquery-design.md)
+  — why `okfquery` is a separate distribution rather than a `kbforge query` subcommand,
+  its schema, and the two lossy mirror joins a reader has to know about.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Related projects
