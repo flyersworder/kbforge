@@ -13,9 +13,14 @@ CREATE TABLE concepts (
     title         VARCHAR,
     description   VARCHAR,
     generated_by  VARCHAR,
-    -- TIMESTAMPTZ, never TIMESTAMP. §4.4 law 4 requires an *aware* stamp, not a
-    -- UTC one, so a connector may legally emit +09:00 -- and a naive TIMESTAMP
-    -- would drop that offset, making every staleness query wrong by up to a day.
+    -- TIMESTAMPTZ, never TIMESTAMP. Not because a naive column would corrupt
+    -- the instant on this package's load path -- `load` binds an aware Python
+    -- datetime through executemany, so the instant survives a naive column
+    -- fine. What a naive column loses is the type: values come back with no
+    -- tzinfo, so every comparison against now() (itself TIMESTAMPTZ) needs a
+    -- cast, and the column asserts UTC by convention with nothing recording
+    -- that it does. §4.4 law 4 exists to force an *aware* stamp; a column that
+    -- cannot hold one throws away exactly the property the law buys.
     generated_at  TIMESTAMPTZ,
     facets        JSON,
     body          VARCHAR
