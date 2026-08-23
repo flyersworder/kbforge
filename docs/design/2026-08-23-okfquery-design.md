@@ -61,8 +61,13 @@ rule makes it a natural primary key.
 `synthesize.assemble` places the owning anchor first by convention (§6), and
 that ordering is the only signal distinguishing "this system owns the concept"
 from "this is cross-source grounding" (§7.1) — OKF has no field for it.
-Discarding ordinal during unnest would destroy it. `WHERE ordinal = 0` is the
-owner query.
+Discarding ordinal during unnest would destroy it.
+
+The claim stops there, though. OKF specifies no ordering, and §1's whole point
+is that this reads foreign bundles too — so `WHERE ordinal = 0` is the owner
+query **for a kbforge-produced bundle** and is merely source order on any other,
+returning an arbitrary entry with no error. The tool records the ordering
+faithfully; it does not certify what the ordering means.
 
 **`facets` is one JSON column, not columns.** `synthesize._facets` is open by
 construction: any non-`OKF_OWNED` scalar or scalar-list from a connector's
@@ -77,6 +82,18 @@ actually uses.
 mirror table is therefore a view, not a loader — one line, and it stays correct
 if `CanonicalDocument` gains a field.
 
+Two constraints on that one line. **The glob is `<mirror>/*.json`, never
+`**/*.json`**: `grounding.SIDECAR_DIR` puts drift sidecars in
+`<mirror>/_grounding/`, and those are flat `{doc_id: content_hash}` maps, not
+`CanonicalDocument`s — sweeping them in would wreck the inferred schema.
+`grounding.py`'s own docstring flags this same trap for `mirror.load_all`, which
+is the precedent for keeping the glob shallow. And **`read_json_auto` raises on
+a glob matching zero files** (`IOException: No files found that match the
+pattern`), so `--mirror` against a fresh mirror must fail with a message naming
+the empty directory rather than a DuckDB IO error. The view is not created in
+that case; fabricating an empty one would mean inventing a `CanonicalDocument`
+schema this package deliberately does not import.
+
 ## 3. Parsing, and why `problems` is additive
 
 Scan is `concepts/**/*.md` under the bundle root — where `concept_path` puts
@@ -85,7 +102,7 @@ rule still applies inside that glob: a directory listing (OKF §8) may sit besid
 the concepts it lists, so the rule is applied at every level rather than only at
 the bundle root.
 
-**The reserved rule is copied from `validate.py`, deliberately.** A file is
+**The reserved rule is copied from `validate._check_strict_okf`, deliberately.** A file is
 skipped only if its basename is `index.md`/`log.md` **and** it does not open
 with a `---` fence; an `index.md` that claims frontmatter is a concept. Since
 this package does not import kbforge, the rule is replicated. That duplication
@@ -109,7 +126,7 @@ Parse failure kinds, each distinct:
 
 This is where the tool parts ways with kbforge's own parser, and the divergence
 is intentional. `validate._parse_frontmatter` collapses no-fence, unterminated
-fence, and broken YAML alike to `{}` — the comment at `validate.py:364` flags
+fence, and broken YAML alike to `{}` — the comment above that check in `_check_strict_okf` flags
 that collapse as a hazard it routes around by re-checking the raw fence. The
 collapse is correct for a gate, which only needs "no usable frontmatter" and
 fails either way. It is wrong here, where *which* case occurred is the entire
@@ -120,19 +137,37 @@ requirements. The module docstring says so, so the duplication is not later
 
 **The invariant the loader is built around:**
 
-> Every scanned file gets exactly one `concepts` row. `problems` is additive,
-> never exclusive.
+> Every **non-reserved** scanned file gets exactly one `concepts` row.
+> `problems` is additive, never exclusive.
 
 A file with broken YAML still appears in `concepts` with NULLs for what could
 not be read. Dropping it instead would make "show me everything stale" silently
 exclude precisely the files most likely to be wrong — an audit tool hiding its
-worst cases. It also makes correctness checkable with one query: `count(*) FROM
-concepts` equals the number of files scanned, always.
+worst cases. It also makes correctness checkable with one query: `count(*) FROM concepts`
+equals the number of scanned files minus the reserved ones, always. The
+qualifier is not a weakening — stating the invariant over *all* scanned files
+would make it false on any bundle containing a fenceless `index.md`, so the test
+asserting it would fail against a correct loader and its mutation check would be
+run against an already-red baseline.
 
 Loading is explicit DDL plus inserts, not a dataframe round-trip: it pins column
 types so an empty bundle still answers queries instead of erroring on a missing
-table, and it keeps `generated_at` a real `TIMESTAMP` so interval arithmetic
-works without casting.
+table, and it types `generated_at` as **`TIMESTAMPTZ`**, not `TIMESTAMP`.
+
+That distinction is load-bearing. `synthesize._generated` writes
+`fm.generated_at.isoformat()`, and law 4 (`validate._check_freshness_legible`)
+requires only that the stamp be offset-*aware* — not that the offset be UTC. A
+naive `TIMESTAMP` silently discards the offset:
+
+```
+'2026-08-23T09:00:00+09:00'::timestamp   -> 2026-08-23 09:00       (wrong instant)
+'2026-08-23T09:00:00+09:00'::timestamptz -> 2026-08-23 00:00 UTC   (correct)
+```
+
+Every `ORDER BY generated_at` and every `now() - generated_at` staleness query
+would be off by the offset — up to a full day — for any connector that stamps
+non-UTC. `load` sets `timezone = 'UTC'` on the connection so rendered values are
+comparable across bundles rather than dependent on the reader's locale.
 
 ## 4. API and CLI
 
@@ -166,10 +201,14 @@ inside the SQL, and a second export path would be a worse version of a feature
 already shipping.
 
 `shell` is the only place anything is materialized — it writes a temp `.duckdb`
-and execs the `duckdb` CLI, for history and completion instead of a homegrown
-REPL. The temp file dies with the session, so the ephemeral guarantee holds. If
-the binary is absent it prints the path and the command rather than falling back
-to a second REPL implementation.
+and runs the `duckdb` CLI against it, for history and completion instead of a
+homegrown REPL. It **spawns via `subprocess` and deletes the file in a
+`finally`**; it must not `exec`. `exec` replaces the Python process, so no
+`finally`, `atexit`, or `TemporaryDirectory` finalizer would ever run, and a
+database holding every concept body would outlive the session until the OS
+cleared its temp dir — quietly breaking the ephemeral guarantee that motivated
+the whole design. If the binary is absent it prints the path and the command
+rather than falling back to a second REPL implementation.
 
 `check` exists so a bundle repo's CI can fail on a concept that stopped parsing.
 It is `query` plus an exit code, and it is the first thing to cut if this needs
@@ -192,8 +231,11 @@ against the test file.
    loader reports the right kind for the wrong reason; the unterminated-fence
    and broken-YAML fixtures are the pair most likely to be conflated, so those
    two assert distinct messages.
-2. **Invariant** — `count(*) FROM concepts` equals the file count on the messy
-   bundle. One assertion for "no silent drops".
+2. **Invariant** — `count(*) FROM concepts` equals the messy bundle's scanned
+   file count *minus its two reserved fenceless files*. One assertion for "no
+   silent drops". The fixture deliberately contains both a reserved file that is
+   skipped and a reserved-named file that is not, so the count is wrong under
+   either sloppy reading of the rule.
 3. **Round-trip** — run kbforge's pipeline (`local_files` + `dry_run`) to
    produce a real bundle, then load it. This is the anti-drift test: it catches
    the replicated reserved rule diverging from `validate.py`, and a change to
@@ -211,16 +253,31 @@ All fixtures are on disk, so `uv run pytest` still never touches the network.
 
 ## 6. Known limits
 
-**The `id` → `doc_id` join has an unguarded gap.** The natural mirror join is
-`sources.id = mirror.doc_id`, and it holds for every shipped connector. But
+**Both mirror joins are lossy, and they fail differently.** Join on `id`;
+compare on `hash`.
+
+`sources.id = mirror.doc_id` holds for every shipped connector, but
 `synthesize._source_entry` builds `id` from `anchor.system`/`anchor.native_id`
 while `doc_id` is its own field, and as `assemble`'s comment notes, nothing
-enforces that a connector keeps the two in agreement. A third-party connector
-where they diverge produces a silent false miss on that join, not an error —
-the same class of defect as the dual carrier: two expressions of one identity
-with no gate binding them. `sources.content_hash = mirror.anchor.content_hash`
-has no such gap, being one value copied through, so **hash is the sound join and
-`id` is the convenience one.** Documented in the README, not worked around.
+enforces the two agree. A third-party connector where they diverge produces a
+silent false miss — the dual-carrier defect again: two expressions of one
+identity with no gate binding them.
+
+`sources.content_hash = mirror.anchor.content_hash` is *not* the sound
+alternative. `pipeline.run` calls `commit(mirror_path, docs)` immediately after
+`kbforge_publish`, and publishing only **opens a review request** — kbforge
+never merges. Between publish and merge the mirror already holds the new hash
+while the bundle still carries the previous run's, so an equi-join on hash
+returns zero rows for precisely the concepts under open review: the ones an
+audit most wants to see.
+
+Read the other way round, that is the useful query rather than the broken one.
+Join on `id`, then **compare** hashes: rows that match are current, rows whose
+hashes differ have an update in review, and rows missing from the bundle have
+never been published. Hash collisions are not a concern here —
+`canonical.content_hash` hashes a payload including `doc_id`, so byte-identical
+documents in two systems still hash differently. What remains is the `id` gap
+above, documented in the README rather than worked around.
 
 **Bundle-only staleness is relative, not absolute.** `generated_at` comes from
 the anchor's `retrieved_at`, which under-reports for concepts re-rendered to
