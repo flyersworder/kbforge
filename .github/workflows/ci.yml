@@ -103,10 +103,16 @@ jobs:
       # This asserts the distribution the tag names is actually about to publish
       # something -- built at the tagged version, and not already on PyPI.
       # Skipped on workflow_dispatch, which has no release tag to check.
+      # The tag arrives via `env:`, never interpolated into the `run:` text.
+      # `${{ }}` substitutes BEFORE the shell sees the line, so a tag containing
+      # a quote would close it and run the rest -- on the one job holding
+      # `id-token: write` and minting the PyPI publishing token.
       - if: github.event_name == 'release'
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
         run: >-
           uv run --no-project python .github/scripts/check_release_target.py
-          '${{ github.event.release.tag_name }}' dist
+          "$RELEASE_TAG" dist
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           # `--all-packages` puts all THREE distributions in dist/, but
