@@ -97,6 +97,16 @@ jobs:
       # out of the built metadata, so kbforge-mcp's dependency on kbforge is
       # published as the PyPI requirement, not a workspace path.
       - run: uv build --all-packages --no-sources
+      # The counterpart to `skip-existing` below. That flag stops a duplicate file
+      # from failing the job AFTER other files uploaded, but it also makes "nothing
+      # needed publishing" and "the version bump was forgotten" the same green job.
+      # This asserts the distribution the tag names is actually about to publish
+      # something -- built at the tagged version, and not already on PyPI.
+      # Skipped on workflow_dispatch, which has no release tag to check.
+      - if: github.event_name == 'release'
+        run: >-
+          uv run --no-project python .github/scripts/check_release_target.py
+          '${{ github.event.release.tag_name }}' dist
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
           # `--all-packages` puts all THREE distributions in dist/, but
