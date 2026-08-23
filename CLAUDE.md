@@ -82,6 +82,28 @@ the repo keeps a `.venv` that resolves the package to the original source, so
 nothing is actually mutated and everything passes. Assert on failure *messages*,
 not just law slugs, or a test passes on a different violation than the one it names.
 
+## Releasing
+
+Three distributions ship from this workspace and **version independently**. Bump
+only the one that changed. kbforge 0.8.0 → 0.9.0 carried nothing but packaging and
+docs — the whole change was `kbforge-okfquery` 0.1.0 arriving — and a consumer
+diffing those two kbforge releases finds nothing. Don't repeat that: if only a
+companion changed, only the companion's version moves.
+
+- **Tags name what is being released.** `vX.Y.Z` is kbforge. A companion gets
+  `<dist>-vX.Y.Z` (`okfquery-v0.2.0`). The workflow triggers on any release event,
+  so a companion-only tag publishes correctly with kbforge untouched.
+- **CHANGELOG sections are keyed by tag**, not by kbforge's version, for the same
+  reason. Everything through `[0.9.0]` predates this rule and stays as it is.
+- **`skip-existing: true` is a safety net, not the mechanism.** It exists so one
+  job publishing several distributions cannot half-fail: a duplicate file 400s,
+  and without the flag that failure can land *after* other files uploaded. Do not
+  lean on it to mean "kbforge had no changes, so nothing uploads" — a forgotten
+  version bump then produces the same green job as a correct no-op release, and
+  the job reports success having published nothing. **Not built:** a pre-publish
+  step asserting the tagged distribution's version is not already on PyPI. Until
+  it exists, check the PyPI version by hand after a release.
+
 ## Docs layout
 
 `docs/architecture.md` is the library spec. `docs/design/` holds specs for
