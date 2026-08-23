@@ -35,17 +35,33 @@ reduced strength (and the paths to full strength) is spelled out honestly in
 
 ## Status
 
-**Alpha — a working walking skeleton.** The deterministic core runs end to end with no
-credentials: two built-in connectors (`local_files`, `git_commits`), canonicalization
-with a stability law, a replay-safe mirror and diff, the §4.4 validator gate, and a
-dry-run publisher, plus change detection, the no-op rule, and incremental sync via a
-real cursor, all exercised by the test suite. Two credentialed publishers, GitHub and
-GitLab, are also available (opt-in via `--publisher`, token from an env var). Synthesis ships in
-two forms: a deterministic stub (the default, no LLM) and an opt-in grounded LLM
-synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra).
+**Beta.** The full pipeline runs end to end, and every seam that can only be
+checked against a real service has a live suite (`--run-live`) rather than a mock.
 
-Not built yet: a credentialed system-of-record connector. See
-[`docs/architecture.md`](docs/architecture.md) for the full map.
+- **Sources** — `local_files` and `git_commits` built in, no credentials. Any MCP
+  server with a select tool and a read-by-id tool becomes a source through
+  configuration alone via [`kbforge-mcp`](packages/kbforge-mcp), live-tested
+  against AWS Documentation and GitHub. Third-party connectors are discovered
+  through an entry point with no change to kbforge.
+- **Core** — canonicalization under a stability law, a replay-safe mirror and diff,
+  change detection, the no-op rule, incremental sync via a real cursor, and
+  cross-source grounding: one owning document per concept, cited alongside
+  grounding documents from other systems.
+- **Gate** — the §4.4 emit-side laws plus a projection↔files coherence check, so
+  nothing ships unvalidated.
+- **Synthesis** — a deterministic stub (default, no LLM) or an opt-in grounded LLM
+  synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra).
+- **Publishers** — `dry-run` built in; GitHub and GitLab opt-in via `--publisher`
+  with the token from an env var. kbforge opens review requests and never merges.
+- **Reading a bundle back** — [`kbforge-okfquery`](packages/okfquery) loads a
+  published bundle into DuckDB.
+
+Still 0.x, and the API can still move: `docs/design/` holds specs for work that is
+designed but unbuilt, and sections of [`docs/architecture.md`](docs/architecture.md)
+headed **not built** are specification rather than shipped code. The largest known
+gap is a first-party connector for a specific system of record — the *capability*
+exists through `kbforge-mcp`, but nothing ships preconfigured for Confluence,
+ServiceNow, or their kin.
 
 ## Companion distributions
 

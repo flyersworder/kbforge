@@ -5,6 +5,31 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Changed
+
+- Development status is now **Beta** (README and the PyPI classifier). The prior
+  "alpha — a working walking skeleton" text predated cross-source grounding, both
+  companion distributions, and the live suites, and its "not built yet: a
+  credentialed system-of-record connector" line had become misleading: `kbforge-mcp`
+  makes any credentialed MCP server a source. What is actually missing is a
+  *first-party* connector for a named system of record, which the Status section
+  now says instead.
+
+### Added
+
+- A pre-publish guard (`.github/scripts/check_release_target.py`) that fails a
+  release unless the distribution its tag names was built at the tagged version and
+  is absent from PyPI. `skip-existing` protects against a half-published release but
+  makes a correct no-op and a forgotten version bump the same green job.
+
+### Fixed
+
+- The release tag reaches the publish job through `env:` instead of `${{ }}`
+  interpolation into a `run:` block, where a tag containing a quote would have
+  executed as shell — on the one job holding `id-token: write`.
+
 ## [0.9.0] - 2026-08-23
 
 ### Added
