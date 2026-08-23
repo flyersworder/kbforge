@@ -7,3 +7,8 @@ version of what DuckDB already offers."""
 from __future__ import annotations
 
 __version__ = "0.1.0"
+
+from okfquery.load import EmptyMirrorError, load
+from okfquery.schema import SCHEMA_SQL
+
+__all__ = ["EmptyMirrorError", "SCHEMA_SQL", "__version__", "load"]

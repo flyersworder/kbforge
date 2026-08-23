@@ -10,6 +10,11 @@ keywords = ["okf", "open-knowledge-format", "duckdb", "sql", "knowledge-base"]
 dependencies = [
     "duckdb>=1.1",
     "pyyaml>=6",
+    # DuckDB's Python client needs this to materialize a TIMESTAMPTZ column as a
+    # Python datetime once a session timezone is set (`SET timezone = 'UTC'`,
+    # required so a non-UTC generated.at offset round-trips correctly) -- without
+    # it, fetchone() on any TIMESTAMPTZ column raises InvalidInputException.
+    "pytz>=2024.1",
 ]
 
 [project.scripts]
