@@ -191,10 +191,12 @@ exactly the property the law buys. `load` also sets `timezone = 'UTC'` on the
 connection so rendered values are comparable across bundles rather than
 dependent on the reader's locale.
 
-That session setting has one non-obvious cost: DuckDB's Python client needs
-`pytz` to materialise a `TIMESTAMPTZ` as a `datetime` once a session timezone is
-set, so `pytz` is a runtime dependency of the package — a consequence of the
-type choice, not an independent one.
+The type choice has one non-obvious cost: DuckDB's Python client needs `pytz`
+to materialise *any* `TIMESTAMPTZ` as a `datetime`, session timezone set or
+not, so `pytz` is a runtime dependency of the package — a consequence of the
+type choice, not an independent one. The session setting is a separate
+concern: it is what makes a rendered value read the same on every machine,
+not what makes pytz necessary.
 
 ## 4. API and CLI
 

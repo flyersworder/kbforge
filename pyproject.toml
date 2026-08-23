@@ -94,8 +94,8 @@ exclude = [
 testpaths = ["tests", "packages/kbforge-mcp/tests", "packages/okfquery/tests"]
 
 [tool.ruff]
-# Both workspace packages are first-party, so their imports group together and
-# `kbforge_mcp` is not sorted in with third-party dependencies.
+# All three workspace packages are first-party, so their imports group together
+# and `kbforge_mcp`/`okfquery` are not sorted in with third-party dependencies.
 src = ["src", "packages/kbforge-mcp/src", "packages/okfquery/src"]
 target-version = "py312"
 

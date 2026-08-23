@@ -183,12 +183,16 @@ it still say what its source currently does."
   run's, so an equi-join on hash returns **zero rows for every concept with a
   review request open** — exactly the ones an audit most wants to see.
 
-The correct form: join on `id`, then **compare** hashes instead of joining on
-them. A match means current; a mismatch means an update is sitting in review;
-a source with no mirror row was never published. Run for real against the
-messy fixture's `concepts/ok/overview.md` (two sources: an owning `wiki:ok` and
-a grounding `notes:ok`) with a synthetic two-document mirror — one hash left
-matching, one changed to simulate an update stuck in review:
+The correct form: join on `id` with a **`LEFT JOIN`**, not an inner join, then
+**compare** hashes instead of joining on them — an inner join silently drops
+every source with no mirror row at all, which is exactly the "never
+published" case the query needs to report. A match means current; a mismatch
+means an update is sitting in review; a source with no mirror row was never
+published. Run for real against the messy fixture (`concepts/ok/overview.md`'s
+two sources — an owning `wiki:ok` and a grounding `notes:ok` — plus two other
+concepts whose sources have no mirror row at all) with a synthetic
+two-document mirror covering only `wiki:ok` and `notes:ok`, one hash left
+matching and one changed to simulate an update stuck in review:
 
 ```bash
 $ okfquery query "
@@ -196,18 +200,21 @@ SELECT s.path,
        s.id,
        s.content_hash AS bundle_hash,
        m.anchor.content_hash AS mirror_hash,
-       CASE WHEN s.content_hash = m.anchor.content_hash
-            THEN 'current' ELSE 'update in review' END AS status
-FROM sources s JOIN mirror m ON s.id = m.doc_id
+       CASE WHEN m.doc_id IS NULL THEN 'never published'
+            WHEN s.content_hash = m.anchor.content_hash THEN 'current'
+            ELSE 'update in review' END AS status
+FROM sources s LEFT JOIN mirror m ON s.id = m.doc_id
 ORDER BY s.path, s.id;
 " --bundle packages/okfquery/tests/fixtures/messy --mirror /path/to/mirror
-┌─────────────────────────┬──────────┬─────────────┬─────────────┬──────────────────┐
-│          path           │    id    │ bundle_hash │ mirror_hash │      status      │
-│         varchar         │ varchar  │   varchar   │   varchar   │     varchar      │
-├─────────────────────────┼──────────┼─────────────┼─────────────┼──────────────────┤
-│ concepts/ok/overview.md │ notes:ok │ h-ground    │ h-ground-v2 │ update in review │
-│ concepts/ok/overview.md │ wiki:ok  │ h-own       │ h-own       │ current          │
-└─────────────────────────┴──────────┴─────────────┴─────────────┴──────────────────┘
+┌─────────────────────────────────┬─────────────────┬─────────────┬─────────────┬──────────────────┐
+│               path              │       id        │ bundle_hash │ mirror_hash │      status      │
+│             varchar             │     varchar     │   varchar   │   varchar   │     varchar      │
+├─────────────────────────────────┼─────────────────┼─────────────┼─────────────┼──────────────────┤
+│ concepts/claims/index.md        │ wiki:claims     │ h-claims    │ NULL        │ never published  │
+│ concepts/incomplete/overview.md │ wiki:incomplete │ NULL        │ NULL        │ never published  │
+│ concepts/ok/overview.md         │ notes:ok        │ h-ground    │ h-ground-v2 │ update in review │
+│ concepts/ok/overview.md         │ wiki:ok         │ h-own       │ h-own       │ current          │
+└─────────────────────────────────┴─────────────────┴─────────────┴─────────────┴──────────────────┘
 ```
 
 That does not fix the `id` gap above: a connector whose anchor disagrees with

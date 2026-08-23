@@ -4,6 +4,7 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from okfquery import EmptyMirrorError, load
@@ -28,8 +29,11 @@ def test_empty_bundle_answers_instead_of_erroring(tmp_path):
 
 
 def test_generated_at_is_timestamptz_and_keeps_the_offset():
-    # The messy bundle's ok/overview.md stamps +09:00. A naive TIMESTAMP would
-    # read this as 09:00 and be nine hours wrong.
+    # The messy bundle's ok/overview.md stamps +09:00. `load` binds an aware
+    # Python datetime through executemany, so the instant survives a naive
+    # TIMESTAMP column fine -- what TIMESTAMPTZ buys here is the *type*: a
+    # naive column would come back with no tzinfo and assert UTC by
+    # convention, with nothing recording that it does.
     con = load(MESSY)
     got = con.execute(
         "select generated_at from concepts where path = 'concepts/ok/overview.md'"
@@ -47,7 +51,7 @@ def test_generated_at_column_type_is_timestamptz():
 
 
 def test_no_silent_drops_invariant():
-    # Eleven .md files, two reserved-and-fenceless. Stating this over ALL
+    # Nine .md files, two reserved-and-fenceless. Stating this over ALL
     # scanned files would make it false and the mutation check meaningless.
     files = list((MESSY / "concepts").rglob("*.md"))
     assert len(files) == 9
@@ -142,7 +146,7 @@ def test_paths_are_bundle_relative_and_posix():
 
 def test_mirror_view_absent_unless_requested():
     con = load(CLEAN)
-    with pytest.raises(Exception):
+    with pytest.raises(duckdb.CatalogException, match="mirror"):
         con.execute("select * from mirror")
 
 
