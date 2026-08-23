@@ -20,6 +20,19 @@ from okfquery.load import EmptyMirrorError, load
 from okfquery.schema import SCHEMA_SQL
 
 
+def _bundle_missing(bundle: str) -> bool:
+    """True when `bundle` has no `concepts/` directory to scan.
+
+    `load()` must keep answering an empty bundle (no .md files under an
+    existing `concepts/`) rather than erroring -- that is a real, if boring,
+    OKF bundle. A *missing* `concepts/` is different: it means the path is
+    wrong, and `scan()` silently returning `[]` for it would make `check`
+    report "no problems" and exit 0 against a bundle that was never loaded at
+    all. That is a CLI-level concern, not `load()`'s, so it is caught here.
+    """
+    return not (Path(bundle) / "concepts").is_dir()
+
+
 def _connect(args: argparse.Namespace) -> duckdb.DuckDBPyConnection:
     mirror = Path(args.mirror) if args.mirror else None
     return load(Path(args.bundle), mirror=mirror)
@@ -41,6 +54,9 @@ def _emit(con: duckdb.DuckDBPyConnection, sql: str, fmt: str) -> None:
 
 
 def _shell(args: argparse.Namespace) -> int:
+    if _bundle_missing(args.bundle):
+        print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)
+        return 2
     # subprocess, NEVER exec. exec replaces this process, so the TemporaryDirectory
     # finalizer would never run and a database holding every concept body would
     # outlive the session -- quietly breaking the ephemeral guarantee the whole
@@ -48,7 +64,11 @@ def _shell(args: argparse.Namespace) -> int:
     with tempfile.TemporaryDirectory(prefix="okfquery-") as tmp:
         database = Path(tmp) / "bundle.duckdb"
         mirror = Path(args.mirror) if args.mirror else None
-        load(Path(args.bundle), mirror=mirror, database=str(database)).close()
+        try:
+            load(Path(args.bundle), mirror=mirror, database=str(database)).close()
+        except EmptyMirrorError as exc:
+            print(exc, file=sys.stderr)
+            return 2
         try:
             return subprocess.run(["duckdb", str(database)], check=False).returncode
         except FileNotFoundError:
@@ -90,6 +110,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "shell":
         return _shell(args)
+
+    if _bundle_missing(args.bundle):
+        print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)
+        return 2
 
     try:
         con = _connect(args)

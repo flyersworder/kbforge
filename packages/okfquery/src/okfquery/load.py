@@ -32,10 +32,15 @@ def scan(bundle: Path) -> list[Path]:
     root = bundle / "concepts"
     if not root.is_dir():
         return []
+    # errors="replace", not the bare default: a mis-encoded file is exactly the
+    # pathology this tool exists to surface. Raising here would abort the whole
+    # load over one file; U+FFFD replacement characters let it through to
+    # `parse()`, which turns it into a `concepts` row (NULLs where the decode
+    # broke the frontmatter) plus a `problems` row, same as any other bad file.
     return [
         p
         for p in sorted(root.rglob("*.md"))
-        if not is_reserved(p.name, p.read_text("utf-8"))
+        if not is_reserved(p.name, p.read_text("utf-8", errors="replace"))
     ]
 
 
@@ -82,7 +87,10 @@ def load(
 
     for file in scan(bundle):
         path = file.relative_to(bundle).as_posix()
-        concept = parse(file.read_text("utf-8"))
+        # Same errors="replace" as scan(), and for the same reason: one
+        # mis-encoded file must produce a row, not a traceback that aborts
+        # every other concept in the bundle along with it.
+        concept = parse(file.read_text("utf-8", errors="replace"))
         concepts.append(
             (
                 path,

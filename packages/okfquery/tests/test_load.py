@@ -213,3 +213,25 @@ def test_empty_mirror_raises_a_named_error(tmp_path):
     mirror.mkdir()
     with pytest.raises(EmptyMirrorError, match=str(mirror)):
         load(CLEAN, mirror=mirror)
+
+
+def test_misencoded_file_gets_a_row_instead_of_aborting_the_load(tmp_path):
+    # One mis-encoded file must not raise UnicodeDecodeError and take the rest
+    # of the bundle down with it -- that is exactly the pathology this tool
+    # exists to surface, not crash on.
+    concepts = tmp_path / "concepts"
+    concepts.mkdir()
+    (concepts / "bad.md").write_bytes(b"\xff\xfe not valid utf-8 garbage")
+    con = load(tmp_path)
+    assert (
+        con.execute(
+            "select count(*) from concepts where path = 'concepts/bad.md'"
+        ).fetchone()[0]
+        == 1
+    )
+    # The replacement characters land before any '---' fence, so this is
+    # "no-frontmatter" -- an existing kind, not a new one invented for this.
+    kind = con.execute(
+        "select kind from problems where path = 'concepts/bad.md'"
+    ).fetchone()[0]
+    assert kind == "no-frontmatter"

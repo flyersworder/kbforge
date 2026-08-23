@@ -63,3 +63,35 @@ def test_empty_mirror_is_a_message_not_a_traceback(capsys, tmp_path):
     code = main(["query", "select 1", "--bundle", CLEAN, "--mirror", str(mirror)])
     assert code == 2
     assert str(mirror) in capsys.readouterr().err
+
+
+def test_missing_bundle_is_a_message_not_a_silent_success(capsys, tmp_path):
+    # scan() returns [] for a bundle with no concepts/ dir, same as a genuinely
+    # empty one -- so `check` must reject the missing case itself, or it prints
+    # "no problems" and exits 0 for a bundle that was never loaded at all.
+    missing = tmp_path / "nonexistent"
+    code = main(["check", "--bundle", str(missing)])
+    assert code == 2
+    assert str(missing) in capsys.readouterr().err
+
+
+def test_missing_bundle_rejected_for_query_too(capsys, tmp_path):
+    missing = tmp_path / "nonexistent"
+    code = main(["query", "select 1", "--bundle", str(missing)])
+    assert code == 2
+    assert str(missing) in capsys.readouterr().err
+
+
+def test_shell_on_empty_mirror_is_a_message_not_a_traceback(capsys, tmp_path):
+    mirror = tmp_path / "mirror"
+    mirror.mkdir()
+    code = main(["shell", "--bundle", CLEAN, "--mirror", str(mirror)])
+    assert code == 2
+    assert str(mirror) in capsys.readouterr().err
+
+
+def test_shell_on_missing_bundle_is_a_message_not_a_traceback(capsys, tmp_path):
+    missing = tmp_path / "nonexistent"
+    code = main(["shell", "--bundle", str(missing)])
+    assert code == 2
+    assert str(missing) in capsys.readouterr().err
