@@ -165,20 +165,36 @@ Loading is explicit DDL plus inserts, not a dataframe round-trip: it pins column
 types so an empty bundle still answers queries instead of erroring on a missing
 table, and it types `generated_at` as **`TIMESTAMPTZ`**, not `TIMESTAMP`.
 
-That distinction is load-bearing. `synthesize._generated` writes
-`fm.generated_at.isoformat()`, and law 4 (`validate._check_freshness_legible`)
-requires only that the stamp be offset-*aware* — not that the offset be UTC. A
-naive `TIMESTAMP` silently discards the offset:
+That distinction is load-bearing, though not for the reason it first appears.
+`synthesize._generated` writes `fm.generated_at.isoformat()`, and law 4
+(`validate._check_freshness_legible`) requires only that the stamp be
+offset-*aware* — not that the offset be UTC. Two DuckDB paths handle such a
+stamp differently, and only one of them is the loader's:
 
 ```
-'2026-08-23T09:00:00+09:00'::timestamp   -> 2026-08-23 09:00       (wrong instant)
-'2026-08-23T09:00:00+09:00'::timestamptz -> 2026-08-23 00:00 UTC   (correct)
+-- SQL string-cast: truncates the offset, yielding the WRONG INSTANT
+'2026-08-23T09:00:00+09:00'::timestamp    -> 2026-08-23 09:00
+'2026-08-23T09:00:00+09:00'::timestamptz  -> 2026-08-23 00:00+00:00
+
+-- parameter binding of an aware datetime, which is what `load` does:
+INSERT ... VALUES (?)  into TIMESTAMP    -> 2026-08-23 00:00        (right instant, naive)
+INSERT ... VALUES (?)  into TIMESTAMPTZ  -> 2026-08-23 00:00+00:00  (right instant, aware)
 ```
 
-Every `ORDER BY generated_at` and every `now() - generated_at` staleness query
-would be off by the offset — up to a full day — for any connector that stamps
-non-UTC. `load` sets `timezone = 'UTC'` on the connection so rendered values are
-comparable across bundles rather than dependent on the reader's locale.
+So a naive column does **not** corrupt the instant on the path this code takes —
+an earlier draft of this note claimed it did, generalising from the cast. What a
+naive column loses is the *type*: values come back with no `tzinfo`, so every
+comparison against `now()` (itself `TIMESTAMPTZ`) needs a cast, and the column
+asserts UTC by convention with nothing recording that it does. Law 4 exists to
+force an aware stamp; storing it in a column that cannot hold one throws away
+exactly the property the law buys. `load` also sets `timezone = 'UTC'` on the
+connection so rendered values are comparable across bundles rather than
+dependent on the reader's locale.
+
+That session setting has one non-obvious cost: DuckDB's Python client needs
+`pytz` to materialise a `TIMESTAMPTZ` as a `datetime` once a session timezone is
+set, so `pytz` is a runtime dependency of the package — a consequence of the
+type choice, not an independent one.
 
 ## 4. API and CLI
 
