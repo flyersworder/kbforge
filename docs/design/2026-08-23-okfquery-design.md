@@ -43,6 +43,15 @@ It lives at `packages/okfquery/`, following the `packages/kbforge-mcp`
 precedent — with the difference that `kbforge-mcp` is an **ingest**-side plugin
 that registers an entry point, and this registers nothing.
 
+The distribution is `kbforge-okfquery`; the import name and console script are
+both `okfquery`. PyPI already carries an unrelated `okf` — "A CLI for OKF", one
+0.1.0 release by a different author, citing the same spec — and a bare
+`okfquery` published beside it would read as that project's companion. The split
+keeps each name honest about a different thing: the distribution says who ships
+it, the import and command say what it reads. Namespacing the distribution costs
+nothing here precisely because the package depends on no kbforge code — the name
+records provenance, not a dependency.
+
 ## 2. Schema
 
 ```
