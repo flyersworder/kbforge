@@ -20,7 +20,7 @@ losing an afternoon to review.
 |---|---|
 | Artifact format | OKF v0.2 |
 | **Production protocol** — connectors, canonicalization, diff, provenance, publish | **kbforge** |
-| Serving protocol | MCP — or any context database that ingests the bundle |
+| Serving protocol | MCP — or any context database that ingests the bundle (see [`packages/okfquery`](packages/okfquery) for a DuckDB reader) |
 
 "Agent-first" is a *checkable* claim, not a downstream hope. kbforge stays a producer —
 the agent connects over MCP, which kbforge doesn't own — but every publish is gated on

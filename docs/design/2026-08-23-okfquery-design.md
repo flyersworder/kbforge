@@ -4,7 +4,7 @@ title: okfquery — SQL over an OKF bundle
 description: A standalone DuckDB reader for OKF v0.2 bundles. Ephemeral, additive about parse failures, and dependent on no kbforge code — the serving-side counterpart kbforge deliberately does not own.
 tags: [okf, duckdb, serving, audit, tooling]
 generated: { by: human:flyersworder, at: 2026-08-23T00:00:00Z }
-status: designed — not built
+status: shipped — unreleased; the package is packages/okfquery, this note keeps the rationale
 okf_version: "0.2"
 ---
 
