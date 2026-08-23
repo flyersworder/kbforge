@@ -1,6 +1,8 @@
 # kbforge
 
-[![PyPI](https://img.shields.io/pypi/v/kbforge.svg)](https://pypi.org/project/kbforge/)
+[![kbforge](https://img.shields.io/pypi/v/kbforge.svg?label=kbforge)](https://pypi.org/project/kbforge/)
+[![kbforge-mcp](https://img.shields.io/pypi/v/kbforge-mcp.svg?label=kbforge-mcp)](https://pypi.org/project/kbforge-mcp/)
+[![kbforge-okfquery](https://img.shields.io/pypi/v/kbforge-okfquery.svg?label=kbforge-okfquery)](https://pypi.org/project/kbforge-okfquery/)
 [![CI](https://github.com/flyersworder/kbforge/actions/workflows/ci.yml/badge.svg)](https://github.com/flyersworder/kbforge/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -53,8 +55,8 @@ Neither companion is required to use kbforge, and neither is installed with it.
 | Distribution | Import | What it does |
 |---|---|---|
 | [`kbforge`](https://pypi.org/project/kbforge/) | `kbforge` | the production protocol — this README |
-| [`kbforge-mcp`](packages/kbforge-mcp) | `kbforge_mcp` | makes any MCP server with a select tool and a read-by-id tool a kbforge **source**, through configuration alone |
-| [`kbforge-okfquery`](packages/okfquery) | `okfquery` | reads a published bundle **back**: `okfquery query "SELECT ..."` over concepts, sources, links, and parse problems |
+| [`kbforge-mcp`](https://pypi.org/project/kbforge-mcp/) ([src](packages/kbforge-mcp)) | `kbforge_mcp` | makes any MCP server with a select tool and a read-by-id tool a kbforge **source**, through configuration alone |
+| [`kbforge-okfquery`](https://pypi.org/project/kbforge-okfquery/) ([src](packages/okfquery)) | `okfquery` | reads a published bundle **back**: `okfquery query "SELECT ..."` over concepts, sources, links, and parse problems |
 
 They sit on opposite sides of the pipeline. `kbforge-mcp` is an ingest-side plugin
 that registers a connector entry point; `okfquery` registers nothing and imports no
