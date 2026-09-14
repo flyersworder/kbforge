@@ -1,6 +1,6 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.16.3
+    rev: v0.16.7
     hooks:
       - id: ruff-check
         args: [--fix]
@@ -10,6 +10,6 @@ repos:
   # `uv check` under the hood, so kbforge's own dependencies resolve for ty --
   # a local `entry: ty check` hook cannot see them.
   - repo: https://github.com/astral-sh/ty-pre-commit
-    rev: v0.0.71
+    rev: v0.0.80
     hooks:
       - id: ty

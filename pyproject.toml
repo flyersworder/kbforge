@@ -102,6 +102,11 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP"]
 
+[tool.ruff.format]
+# Ruff 0.16.4 formats code blocks in markdown. Those in docs/ are spec excerpts
+# whose comment alignment is the documentation; reformatting strands comments.
+exclude = ["*.md"]
+
 [tool.ty.environment]
 python-version = "3.12"
 
