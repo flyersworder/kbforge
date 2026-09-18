@@ -100,6 +100,10 @@ def problems_for(config: dict) -> list[str]:
         problems.append("config 'query' is blank")
     if is_blank(cfg.type):
         problems.append("config 'type' is blank; OKF requires a non-empty type")
+    if is_blank(cfg.title):
+        problems.append("config 'title' is blank")
+    if any(is_blank(c) for c in cfg.id):
+        problems.append("config 'id' has a blank column name")
 
     used = {*cfg.id, cfg.title, *cfg.facets}
     if cfg.text:

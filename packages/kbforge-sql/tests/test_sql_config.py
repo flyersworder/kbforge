@@ -64,6 +64,15 @@ def test_a_blank_type_is_rejected():
     assert any("config 'type' is blank" in p for p in problems_for(_cfg(type=" ")))
 
 
+def test_a_blank_title_is_rejected():
+    assert "config 'title' is blank" in problems_for(_cfg(title="  "))
+
+
+def test_a_blank_id_column_is_rejected():
+    problems = problems_for(_cfg(id=["product_id", " "]))
+    assert "config 'id' has a blank column name" in problems
+
+
 def test_an_empty_id_list_is_rejected():
     assert any(p.startswith("config id:") for p in problems_for(_cfg(id=[])))
 
