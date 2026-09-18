@@ -78,7 +78,7 @@ grounding:                       # existing: explicit ids, unchanged
 rules:                           # new
   - for:   {type: product}                    # which concepts this rule grounds
     from:  {system: web}                      # which documents may ground them
-    match: ["{native_id}", "{family}"]         # any-of; {field} filled per concept
+    match: ["{native_id}"]                    # any-of; {field} filled per concept
     newest: 3                                 # cap, newest first (default 3)
     by: published                             # optional date facet; else first-seen
   - for:   {doc: [local:applications/ev-traction.md]}
