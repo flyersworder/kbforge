@@ -237,6 +237,36 @@ def rule_matches(
     return matched, notes
 
 
+def resolve_all(
+    owner: CanonicalDocument,
+    cfg: GroundingConfig,
+    by_id: dict[str, CanonicalDocument],
+    first_seen: dict[str, datetime],
+) -> tuple[list[CanonicalDocument], list[str]]:
+    """Everything that grounds `owner`: explicit grounding first, resolved and
+    capped exactly as before, then rule matches on top. A hand-picked source is
+    never crowded out by news, and one artifact is cited once."""
+    kept, notes = resolve(
+        owner, declared_ids(owner, cfg), by_id, max_docs=cfg.max_grounding_docs
+    )
+    if not cfg.rules:
+        return kept, notes
+    matched, rule_notes = rule_matches(owner, cfg, by_id, first_seen)
+    seen = {resource_key(owner.anchor)} | {resource_key(d.anchor) for d in kept}
+    reasons: list[str] = []
+    for doc_id, reason in matched:
+        doc = by_id.get(doc_id)
+        if doc is None or doc.deleted:
+            continue
+        key = resource_key(doc.anchor)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(doc)
+        reasons.append(reason)
+    return kept, notes + reasons + rule_notes
+
+
 def problems_for(cfg: GroundingConfig) -> list[str]:
     """Shape only ([] = ok). Whether an id *resolves* is not a shape question and
     is not fatal -- §2.2, symmetric with the unresolvable-value rule in §3."""

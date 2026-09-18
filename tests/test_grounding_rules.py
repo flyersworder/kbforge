@@ -330,3 +330,52 @@ def test_first_seen_is_invisible_to_load_all(tmp_path: Path):
 def test_first_seen_writes_leave_no_temp_files(tmp_path: Path):
     record_first_seen(tmp_path, [_doc("web:a")])
     assert [p.suffix for p in (tmp_path / FIRST_SEEN_DIR).iterdir()] == [".json"]
+
+
+from kbforge.grounding import resolve_all  # noqa: E402
+
+
+def test_without_rules_resolve_all_is_resolve():
+    owner = _doc("sql:A")
+    target = _doc("web:x")
+    cfg = GroundingConfig(grounding={"sql:A": ["web:x"]})
+    docs, notes = resolve_all(owner, cfg, _by_id(owner, target), {})
+    assert [d.doc_id for d in docs] == ["web:x"] and notes == []
+
+
+def test_explicit_grounding_comes_first_and_keeps_its_own_cap():
+    owner = _doc("sql:IMC300", structured={"type": "product"})
+    picked = [_doc(f"web:p{i}") for i in range(3)]
+    news = [_doc(f"web:n{i}", text="IMC300") for i in range(2)]
+    cfg = GroundingConfig.model_validate(
+        {
+            "max_grounding_docs": 2,
+            "grounding": {"sql:IMC300": [d.doc_id for d in picked]},
+            "rules": [_rule()],
+        }
+    )
+    docs, notes = resolve_all(owner, cfg, _by_id(owner, *picked, *news), {})
+    assert [d.doc_id for d in docs] == ["web:p0", "web:p1", "web:n0", "web:n1"]
+    assert any("grounding capped at 2" in n for n in notes)
+
+
+def test_a_rule_match_already_cited_explicitly_is_cited_once_without_a_reason():
+    owner = _doc("sql:IMC300", structured={"type": "product"})
+    both = _doc("web:a", text="IMC300")
+    cfg = GroundingConfig.model_validate(
+        {"grounding": {"sql:IMC300": ["web:a"]}, "rules": [_rule()]}
+    )
+    docs, notes = resolve_all(owner, cfg, _by_id(owner, both), {})
+    assert [d.doc_id for d in docs] == ["web:a"]
+    assert not any("grounded by rule" in n for n in notes)
+
+
+def test_rule_documents_carry_their_reason_notes():
+    owner = _doc("sql:IMC300", structured={"type": "product"})
+    hit = _doc("web:a", text="IMC300")
+    docs, notes = resolve_all(owner, _cfg(_rule()), _by_id(owner, hit), {})
+    assert [d.doc_id for d in docs] == ["web:a"]
+    assert notes == [
+        "concepts/IMC300/overview.md: grounded by rule 1 "
+        "('{native_id}' = 'IMC300') via web:a"
+    ]
