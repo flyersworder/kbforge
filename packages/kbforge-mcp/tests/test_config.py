@@ -184,3 +184,17 @@ def test_a_valid_static_id_list_has_no_problems():
     cfg.pop("select")
     cfg["static_ids"] = ["docs/retention.md", "docs/policy.md"]
     assert problems_for(cfg) == []
+
+
+def test_title_key_requires_text_key():
+    # title_key reads the reader's structuredContent, which only a tier-2
+    # (text_key) read consults; alone it would be silently ignored.
+    cfg = {
+        "system": "web",
+        "transport": {"kind": "stdio", "command": "x"},
+        "static_ids": ["https://x/a"],
+        "read": {"tool": "read", "id_arg": "url", "title_key": "title"},
+    }
+    assert any(
+        "'read.title_key' requires 'read.text_key'" in p for p in problems_for(cfg)
+    )

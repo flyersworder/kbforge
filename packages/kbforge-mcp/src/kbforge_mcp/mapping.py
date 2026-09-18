@@ -369,13 +369,18 @@ def records_from_read(
                 f"a {type(body).__name__}, not a document body: {body!r:.80}. "
                 "Point 'text_key' at the key holding the text itself."
             )
+        title = ref.title
+        if spec.title_key:
+            own = result.structured_content.get(spec.title_key)
+            if isinstance(own, str) and own.strip():
+                title = own.strip()
         return [
             record(
                 str(body).encode("utf-8"),
                 ref.native_id,
                 ref.url,
                 media_type,
-                ref.title,
+                title,
             )
         ]
 
