@@ -1261,6 +1261,7 @@ rules:
     from:  {system: web}
     match: ["{native_id}"]
     newest: 3
+    by: published
   - for:   {doc: [local:applications/ev-traction.md]}
     from:  {system: web}
     match: ["traction inverter", "SiC MOSFET"]

@@ -274,6 +274,57 @@ def test_a_rule_with_only_missing_fields_matches_nothing():
     assert _ids(rule_matches(owner, cfg, _by_id(owner, hit), {})) == []
 
 
+def test_the_cap_note_summarizes_many_dropped_docs_instead_of_listing_them():
+    """1,500 matching docs used to produce a 104,048-char review body -- one
+    dropped doc_id per line. Past 5 dropped, the note names a count and the
+    first 5 doc_ids in rank order instead of all of them."""
+    cfg = _cfg(_rule(newest=2))
+    docs = [_doc(f"web:{n:03d}", text="IMC300") for n in range(10)]
+    seen = {d.doc_id: datetime(2026, 1, 1, tzinfo=UTC) for d in docs}
+    _, notes = rule_matches(PRODUCT, cfg, _by_id(PRODUCT, *docs), seen)
+    (note,) = notes
+    assert note == (
+        "concepts/IMC300/overview.md: rule 1 capped at 2; dropped 8 "
+        "(first 5: web:002, web:003, web:004, web:005, web:006, …)"
+    )
+
+
+def test_unparseable_by_notes_are_limited_to_kept_candidates_in_doc_id_order():
+    """A note per matched candidate -- including ones the cap then drops --
+    is what made the note body unbounded. Only notes for candidates the cap
+    KEEPS may appear, and in doc_id order rather than rank order."""
+    cfg = _cfg(_rule(newest=1, by="published"))
+    kept = _doc("web:kept", text="IMC300", structured={"published": "not-a-date"})
+    dropped = _doc(
+        "web:zzz-dropped", text="IMC300", structured={"published": "also-not-a-date"}
+    )
+    seen = {"web:kept": datetime(2026, 3, 1, tzinfo=UTC)}
+    matches, notes = rule_matches(PRODUCT, cfg, _by_id(PRODUCT, kept, dropped), seen)
+    assert [d for d, _ in matches] == ["web:kept"]
+    assert notes == [
+        "concepts/IMC300/overview.md: rule 1 capped at 1; dropped web:zzz-dropped",
+        "concepts/IMC300/overview.md: rule 1: web:kept has an unparseable "
+        "'published' value 'not-a-date'; ranked by first-seen",
+    ]
+
+
+def test_review_notes_stay_bounded_with_a_thousand_matching_docs():
+    """Measured regression: 1,500 matching docs with unparseable `by` values
+    produced a 104,048-char review body, past GitHub's 65,536-char limit, and
+    since nothing commits on failure every later run failed the same way."""
+    cfg = _cfg(_rule(newest=3, by="published"))
+    docs = [
+        _doc(
+            f"web:{n:04d}",
+            text="IMC300",
+            structured={"published": "not-a-date"},
+        )
+        for n in range(1000)
+    ]
+    _, notes = rule_matches(PRODUCT, cfg, _by_id(PRODUCT, *docs), {})
+    assert len("\n".join(notes)) < 2000
+
+
 from kbforge.grounding import (  # noqa: E402
     FIRST_SEEN_DIR,
     delete_first_seen,

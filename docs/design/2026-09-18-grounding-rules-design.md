@@ -97,8 +97,10 @@ rules:                           # new
   skipped, and one artifact is cited once: the same filters `resolve` applies
   today.
 - **`match`** is a list of phrases, any of which qualifies a candidate:
-  - Matching is case-insensitive and on word boundaries (`\b…\b` over the
-    escaped phrase), so `TLE9` matches `TLE9 driver` but not `TLE95`. It runs
+  - Matching is case-insensitive and on word boundaries (`(?<!\w)…(?!\w)`
+    around the escaped phrase, not `\b…\b`, so a phrase starting or ending in
+    punctuation still matches: `TLE9` matches `TLE9 driver` but not `TLE95`,
+    and `SiC-MOSFET (1200V)` matches text ending `... (1200V) part.`). It runs
     over the candidate's `title` and `text`, both NFC-normalized first.
   - `{field}` is filled from the owner's `structured` fields (its facets), or
     the reserved names `title` and `native_id`. For a `kbforge-sql` source the
@@ -195,9 +197,13 @@ request says why, through the existing `ChangeSummary.grounding_notes`:
 > via `web:@www.automotiveworld.com/news/skyworks-unveils-sic-and-igbt-gate-driver-at-pcim-2026`
 
 Notes also record a rule's `newest` cap dropping matches, and an unparseable
-`by` value, as `resolve` already notes the explicit cap. A new citation always
-arrives with its reason; that is what keeps a review of a re-synthesized concept
-short.
+`by` value, as `resolve` already notes the explicit cap -- bounded so a match
+count in the thousands cannot blow up the review body: the cap note lists
+dropped doc_ids only up to 5, past which it names a count and the first 5
+("dropped 1495 (first 5: web:a, web:b, …)"), and an unparseable-`by` note is
+written only for a candidate the cap keeps, in doc_id order, never for one it
+drops. A new citation always arrives with its reason; that is what keeps a
+review of a re-synthesized concept short.
 
 **The stub synthesizer doesn't ground** (`grounds = False`), so rules take
 effect only with `--synthesizer llm`. With the stub, rules are validated and the
@@ -245,6 +251,13 @@ review gate. None of these makes an untrusted page safe to publish unreviewed.
 
 ## 9. Deferred
 
+- **A matching index or prefilter.** Matching is O(owners × mirror docs ×
+  text) every run with rules -- measured 96s/run for 500 owners × 2,000 10KB
+  docs. An index, or a sound case-insensitive substring prefilter ahead of the
+  word-boundary regex, would cut this; `casefold()` and `re.IGNORECASE` do not
+  agree on every codepoint (Turkish dotless ı / dotted İ), so a prefilter built
+  on one and a match built on the other can silently disagree about a hit.
+  Known limit for now; see the CHANGELOG.
 - **Reader-provided dates in `kbforge-mcp`**, so web pages carry a `published`
   facet from their metadata and `by: published` works for Scout. Until then,
   web documents rank by first-seen. `kbforge-sql` date columns work with `by`

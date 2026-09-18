@@ -194,6 +194,13 @@ def rule_matches(
         if not patterns:
             continue
         ranked: list[tuple[datetime | None, str, str]] = []
+        # Raw unparseable `by` values, keyed by doc_id. A note is worth writing
+        # only for a candidate the cap keeps -- one per matched candidate,
+        # dropped ones included, is exactly what made the review body grow
+        # without bound (measured: 1,500 matches -> 104,048 chars, over
+        # GitHub's 65,536-char review-body limit, and nothing commits on
+        # failure, so every later run failed the same way).
+        unparseable: dict[str, object] = {}
         for doc in by_id.values():
             if (
                 doc.deleted
@@ -210,10 +217,7 @@ def rule_matches(
                 raw = doc.structured.get(rule.by)
                 when = _as_time(raw)
                 if raw is not None and when is None:
-                    notes.append(
-                        f"{path}: rule {i}: {doc.doc_id} has an unparseable "
-                        f"{rule.by!r} value {raw!r}; ranked by first-seen"
-                    )
+                    unparseable[doc.doc_id] = raw
             if when is None:
                 when = first_seen.get(doc.doc_id)
             reason = (
@@ -226,10 +230,22 @@ def rule_matches(
         )
         kept, dropped = ranked[: rule.newest], ranked[rule.newest :]
         if dropped:
-            notes.append(
-                f"{path}: rule {i} capped at {rule.newest}; dropped "
-                + ", ".join(doc_id for _, doc_id, _ in dropped)
-            )
+            dropped_ids = [doc_id for _, doc_id, _ in dropped]
+            if len(dropped_ids) <= 5:
+                tail = ", ".join(dropped_ids)
+            else:
+                first_five = ", ".join(dropped_ids[:5])
+                tail = f"{len(dropped_ids)} (first 5: {first_five}, …)"
+            notes.append(f"{path}: rule {i} capped at {rule.newest}; dropped {tail}")
+        # In doc_id order, not rank order: rank order is an artifact of `when`,
+        # which is not what a reviewer is scanning notes by.
+        for doc_id in sorted(doc_id for _, doc_id, _ in kept):
+            raw = unparseable.get(doc_id)
+            if raw is not None:
+                notes.append(
+                    f"{path}: rule {i}: {doc_id} has an unparseable "
+                    f"{rule.by!r} value {raw!r}; ranked by first-seen"
+                )
         for _, doc_id, reason in kept:
             if doc_id not in listed:
                 listed.add(doc_id)

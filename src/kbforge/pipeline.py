@@ -277,7 +277,11 @@ def run(
     # grounding drift) is not tombstone-specific — there is no cheaper subset
     # of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
-    # Recency fallback for grounding rules; loaded once, only when rules exist.
+    # Recency fallback for grounding rules; loaded once, only when the drift
+    # scan runs and rules exist. Gated on `scan`, not `grounding_cfg.rules`
+    # alone: `scan` already requires `grounds`, and a synthesizer that never
+    # grounds never ranks anything by first-seen, so loading it under the
+    # stub was pure waste on every run under a rules config.
     # Overlaid with THIS run's own documents (existing records win): a rule
     # can match a document committed in the same run as its owner, before its
     # sidecar exists, and without the overlay it would rank as undated on this
@@ -285,7 +289,7 @@ def run(
     # stop being a no-op.
     first_seen = (
         with_first_seen(load_first_seen(mirror_path), docs)
-        if grounding_cfg.rules
+        if scan and grounding_cfg.rules
         else {}
     )
     by_id = {d.doc_id: d for d in mirror_docs}
@@ -455,8 +459,8 @@ def run(
         path = concept_path(doc_id)
         if path in proposal.files:
             proposal.summary.grounding_notes.append(
-                f"{path}: re-synthesized because a document it is grounded in "
-                "changed in another system; its own source is unchanged"
+                f"{path}: re-synthesized because its grounding changed since "
+                "it was last published; its own source is unchanged"
             )
 
     failures = run_validators(proposal, existing)

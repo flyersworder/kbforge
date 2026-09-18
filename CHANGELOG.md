@@ -40,7 +40,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - First-seen records start with this release: after upgrading, documents a
   source republishes all look equally new once, until the next genuinely new
-  document arrives.
+  document arrives. An incremental connector that never re-fetches an old
+  document never gives it a first-seen record either, so under a rule with no
+  usable `by` facet it ranks last (undated), permanently.
+- Grounding-rule matching is O(owners × mirror docs × text) every run with
+  rules configured: measured 96s/run for 500 owners × 2,000 10KB documents.
+  No index or prefilter yet; see the design note §9.
 
 ## [kbforge-mcp-v0.2.0] - 2026-09-18
 

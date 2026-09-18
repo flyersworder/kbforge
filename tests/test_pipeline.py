@@ -567,7 +567,9 @@ def test_drift_in_another_system_reopens_the_owner_on_its_next_run(tmp_path: Pat
     )
     assert pub_a.last_change is not None
     assert concept_path("sys:a") in pub_a.last_change.files
-    assert any("another system" in n for n in pub_a.last_change.summary.grounding_notes)
+    assert any(
+        "grounding changed" in n for n in pub_a.last_change.summary.grounding_notes
+    )
 
 
 def test_an_unchanged_grounded_run_is_still_a_noop(tmp_path: Path):
@@ -1104,6 +1106,20 @@ def test_a_non_matching_article_leaves_the_product_a_noop(tmp_path):
         connector_name="sql",
     )
     assert isinstance(result, NoOp)
+
+
+def test_a_non_grounding_synthesizer_never_loads_first_seen(tmp_path, monkeypatch):
+    """`rules` alone used to gate the first-seen load, even under the stub
+    synthesizer (`grounds = False`), which never ranks anything by it. Only
+    the drift scan -- gated on `grounds` -- needs it."""
+    cfg = _rules_cfg()
+
+    def _never(mirror):
+        raise AssertionError("load_first_seen ran under a non-grounding synthesizer")
+
+    monkeypatch.setattr(pipeline, "load_first_seen", _never)
+    pub = _run_once(tmp_path, [_product()], grounding_config=cfg, connector_name="sql")
+    assert pub.last_change is not None
 
 
 def test_an_edited_matched_article_drifts_the_product(tmp_path):
