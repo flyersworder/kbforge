@@ -406,6 +406,21 @@ law 3) and no-op detection (unbounded volatility no `normalize` can strip). And 
 design (agentic retriever, refresh vs. discover, bootstrap):
 [`design/2026-07-19-agentic-ingest-design.md`](design/2026-07-19-agentic-ingest-design.md).
 
+**The SQL source connector, `kbforge-sql` (shipped, not core).** Any database
+SQLAlchemy can reach becomes a source through one scoped query: one `SELECT`
+per source defines the corpus, and each row (or grouped set of rows sharing an
+id) becomes one canonical document. Because the fetch is a full snapshot
+rather than an incremental one, the id set kbforge already holds from the last
+published run is enough to derive deletions from this run's result — an id
+that leaves the result becomes an explicit tombstone — which makes this the
+first connector to emit them at all. Read-only here is a rolled-back
+transaction plus the account's grants, not a proof: kbforge cannot tell
+whether a configured SQL string has a side effect through a function call, a
+procedure, or a dialect extension, the same limit `kbforge-mcp` has for a tool
+it cannot inspect. Rationale and what remains deferred (incremental fetch,
+relations between rows, deletion memory across a query edit) are in
+[`design/2026-09-18-sql-source-connector-design.md`](design/2026-09-18-sql-source-connector-design.md).
+
 ### 4.2 Incremental contract
 
 - `fetch(config, cursor)` where `cursor=None` means full backfill — this is the

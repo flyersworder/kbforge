@@ -4,7 +4,7 @@ title: kbforge — a relational database as a source (kbforge-sql)
 description: A configuration-only SQL source connector — one scoped query per source, optional row grouping, deterministic markdown rendering, snapshot fetch with manifest-derived tombstones, and the guards that keep an empty or shrunken result from deleting the knowledge base.
 tags: [okf, connectors, sql, sqlalchemy, denodo, deletion, producer]
 generated: { by: human:flyersworder, at: 2026-09-18T00:00:00Z }
-status: design — not built
+status: shipped in kbforge-sql 0.1.0 — §9 still deferred
 okf_version: "0.2"
 ---
 

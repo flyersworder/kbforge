@@ -20,7 +20,8 @@ def pytest_addoption(parser):
             "LLM synthesizer (OPENROUTER_API_KEY), the forge publishers "
             "(GITHUB_TOKEN/GITLAB_TOKEN plus KBFORGE_LIVE_*_REPO), and the MCP "
             "source connector (no credentials for AWS Documentation; "
-            "GITHUB_TOKEN for GitHub)"
+            "GITHUB_TOKEN for GitHub), and the SQL source connector "
+            "(KBFORGE_SQL_LIVE_URL)"
         ),
     )
 
