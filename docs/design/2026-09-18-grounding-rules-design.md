@@ -4,7 +4,7 @@ title: kbforge — grounding rules (fresh evidence into existing concepts)
 description: Templated, deterministic rules that ground existing concepts in matching documents from another system — web articles naming a product, market news about an application — ranked newest-first by a date facet or first-seen time, reusing the drift sidecar so a concept re-synthesizes only when its evidence changes.
 tags: [okf, grounding, synthesis, mirror, provenance, web]
 generated: { by: human:flyersworder, at: 2026-09-18T00:00:00Z }
-status: design — not built
+status: shipped — unreleased; folded into architecture.md §7.1; this note keeps the rationale and §9
 okf_version: "0.2"
 ---
 
@@ -126,10 +126,11 @@ rules:                           # new
 
 ## 4. Pipeline
 
-- `grounding.py` gains `rule_matches(owner, rules, by_id, first_seen) ->
-  tuple[list[str], list[str]]`, returning the matched ids and notes. It is pure,
-  over `by_id`: the mirror plus this fetch, the same map resolution already
-  builds. Patterns are compiled once per owner per rule.
+- `grounding.py` gains `rule_matches(owner, cfg, by_id, first_seen) ->
+  tuple[list[tuple[str, str]], list[str]]`, returning `(doc_id, reason)` pairs
+  in rank order plus notes. It is pure, over `by_id`: the mirror plus this
+  fetch, the same map resolution already builds. Patterns are compiled once
+  per owner per rule.
 - Resolution runs for **explicit ids** (`declared_ids`, unchanged, capped by
   `max_grounding_docs`) and for **rule matches** (already capped per rule),
   through the same self/tombstone/duplicate filters. The union is what the
@@ -165,8 +166,14 @@ rules:                           # new
 - **Upgrade:** documents committed before this release have no record. They get
   one on their next commit, so everything a source republishes after upgrading
   looks equally new once. That is one-time, and noted in the CHANGELOG.
-- It is read only when a rule without a usable `by` value needs ordering. The
-  records for the candidate systems are loaded once per run.
+- It is loaded once per run, only when `rules` is non-empty (the pipeline
+  can't know per-document ahead of ranking whether a `by` value will be
+  usable). Before ranking, it is overlaid with this run's own non-deleted
+  documents, existing records winning: a rule can match a document committed
+  in the *same* run as the owner it grounds, before that document's own
+  sidecar exists, so without the overlay it would rank as undated on this run
+  and dated on the next identical-fetch run — an unchanged world would stop
+  being a no-op. `with_first_seen` is the overlay.
 
 ## 6. Validation and the review surface
 

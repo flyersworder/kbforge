@@ -23,12 +23,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release unless the distribution its tag names was built at the tagged version and
   is absent from PyPI. `skip-existing` protects against a half-published release but
   makes a correct no-op and a forgotten version bump the same green job.
+- Grounding rules: `rules:` in the `--grounding` config ground existing concepts
+  in matching documents from another system (`for` / `from` / `match` with
+  `{field}` placeholders / `newest` / optional `by` date facet), ranked
+  newest-first and capped. Explicit grounding is unchanged and outranks rules.
+  Every rule-added citation is explained in the review summary. Takes effect
+  with `--synthesizer llm`.
 
 ### Fixed
 
 - The release tag reaches the publish job through `env:` instead of `${{ }}`
   interpolation into a `run:` block, where a tag containing a quote would have
   executed as shell — on the one job holding `id-token: write`.
+
+### Known limits
+
+- First-seen records start with this release: after upgrading, documents a
+  source republishes all look equally new once, until the next genuinely new
+  document arrives.
 
 ## [kbforge-mcp-v0.2.0] - 2026-09-18
 
