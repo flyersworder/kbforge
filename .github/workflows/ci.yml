@@ -60,9 +60,9 @@ jobs:
           cache-dependency-glob: "pyproject.toml"
       - run: uv python install ${{ matrix.python-version }}
       - run: uv sync --all-extras --dev --frozen
-      # All three workspace packages: `--cov=kbforge` alone left kbforge_mcp's
-      # ~840 lines and okfquery's ~350 lines measured by nothing.
-      - run: uv run pytest --cov=kbforge --cov=kbforge_mcp --cov=okfquery --cov-report=term-missing
+      # All four workspace packages: `--cov=kbforge` alone left the companions
+      # measured by nothing.
+      - run: uv run pytest --cov=kbforge --cov=kbforge_mcp --cov=okfquery --cov=kbforge_sql --cov-report=term-missing
 
   security:
     runs-on: ubuntu-latest

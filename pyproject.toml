@@ -68,7 +68,7 @@ llm = [
 # kbforge[dev]`. A PEP 735 dependency group is never written into wheel
 # metadata, which is exactly the scope this needs: local development only.
 [dependency-groups]
-dev = ["kbforge-mcp", "kbforge-okfquery"]
+dev = ["kbforge-mcp", "kbforge-okfquery", "kbforge-sql"]
 
 [build-system]
 requires = ["hatchling"]
@@ -91,12 +91,23 @@ exclude = [
 ]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "packages/kbforge-mcp/tests", "packages/okfquery/tests"]
+testpaths = [
+    "tests",
+    "packages/kbforge-mcp/tests",
+    "packages/okfquery/tests",
+    "packages/kbforge-sql/tests",
+]
 
 [tool.ruff]
-# All three workspace packages are first-party, so their imports group together
-# and `kbforge_mcp`/`okfquery` are not sorted in with third-party dependencies.
-src = ["src", "packages/kbforge-mcp/src", "packages/okfquery/src"]
+# All four workspace packages are first-party, so their imports group together
+# and `kbforge_mcp`/`okfquery`/`kbforge_sql` are not sorted in with third-party
+# dependencies.
+src = [
+    "src",
+    "packages/kbforge-mcp/src",
+    "packages/okfquery/src",
+    "packages/kbforge-sql/src",
+]
 target-version = "py312"
 
 [tool.ruff.lint]
@@ -117,3 +128,4 @@ members = ["packages/*"]
 kbforge = { workspace = true }
 kbforge-mcp = { workspace = true }
 kbforge-okfquery = { workspace = true }
+kbforge-sql = { workspace = true }
