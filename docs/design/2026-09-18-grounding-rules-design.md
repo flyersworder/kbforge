@@ -121,18 +121,23 @@ rules:                           # new
   needed to order it against an aware one.
 - **Explicit grounding outranks rules and keeps its own cap.** Explicit ids
   resolve under `max_grounding_docs` as today. Rule matches come on top, each
-  rule within its own `newest`, and duplicates of explicit ids are cited once. A
-  hand-picked source is never crowded out by news. The prompt stays bounded
-  because `max_source_chars` is already split across all grounding documents
+  rule within its own `newest`, deduplicated against the explicit set -- an
+  explicit id is excluded from a rule's candidates before it ranks and caps
+  them, not after, so it never consumes one of that rule's `newest` slots. A
+  hand-picked source is never crowded out by news, and a rule cites exactly
+  `newest` OTHER documents alongside it. The prompt stays bounded because
+  `max_source_chars` is already split across all grounding documents
   (`llm_synthesizer._grounding_block`).
 
 ## 4. Pipeline
 
-- `grounding.py` gains `rule_matches(owner, cfg, by_id, first_seen) ->
-  tuple[list[tuple[str, str]], list[str]]`, returning `(doc_id, reason)` pairs
-  in rank order plus notes. It is pure, over `by_id`: the mirror plus this
-  fetch, the same map resolution already builds. Patterns are compiled once
-  per owner per rule.
+- `grounding.py` gains `rule_matches(owner, cfg, by_id, first_seen, *,
+  exclude=frozenset()) -> tuple[list[tuple[str, str]], list[str]]`, returning
+  `(doc_id, reason)` pairs in rank order plus notes. It is pure, over `by_id`:
+  the mirror plus this fetch, the same map resolution already builds.
+  `exclude` is a set of `resource_key` values skipped before ranking and the
+  `newest` cap; `resolve_all` passes the owner's and the explicit set's.
+  Patterns are compiled once per owner per rule.
 - Resolution runs for **explicit ids** (`declared_ids`, unchanged, capped by
   `max_grounding_docs`) and for **rule matches** (already capped per rule),
   through the same self/tombstone/duplicate filters. The union is what the

@@ -169,12 +169,22 @@ def rule_matches(
     cfg: GroundingConfig,
     by_id: dict[str, CanonicalDocument],
     first_seen: dict[str, datetime],
+    *,
+    exclude: frozenset[str] = frozenset(),
 ) -> tuple[list[tuple[str, str]], list[str]]:
     """Rule-selected grounding for `owner`: `(doc_id, reason)` in rank order,
     plus cap and unparseable-date notes. Pure and deterministic over `by_id`.
 
     Rank is newest first by the rule's `by` facet, else first-seen; undated
-    candidates last; `doc_id` breaks every tie, so the order is total."""
+    candidates last; `doc_id` breaks every tie, so the order is total.
+
+    `exclude` is a set of `resource_key` values -- typically the owner's own
+    key plus every explicitly-grounded document's -- skipped before ranking
+    and before the `newest` cap. Deduping AFTER the cap (as `resolve_all` used
+    to) lets an explicit doc that also ranks in a rule's top N take one of its
+    `newest` slots and then get dropped as a duplicate: the rule cites one
+    fewer document than `newest` promises, and the cap note can name a doc
+    that was never really capped out."""
     path = concept_path(owner.doc_id)
     matched: list[tuple[str, str]] = []
     listed: set[str] = set()
@@ -206,6 +216,7 @@ def rule_matches(
                 doc.deleted
                 or doc.doc_id == owner.doc_id
                 or doc.anchor.system != rule.from_.system
+                or resource_key(doc.anchor) in exclude
             ):
                 continue
             haystack = _nfc(f"{doc.title}\n{doc.text}")
@@ -267,8 +278,17 @@ def resolve_all(
     )
     if not cfg.rules:
         return kept, notes
-    matched, rule_notes = rule_matches(owner, cfg, by_id, first_seen)
+    # Excludes the owner and every explicitly-kept doc BEFORE a rule ranks and
+    # caps its candidates -- not after -- so an explicit doc that would also
+    # rank in a rule's top `newest` never consumes one of its slots (§4).
     seen = {resource_key(owner.anchor)} | {resource_key(d.anchor) for d in kept}
+    matched, rule_notes = rule_matches(
+        owner, cfg, by_id, first_seen, exclude=frozenset(seen)
+    )
+    # Still needed: `rule_matches` dedups its own `matched` list by doc_id, not
+    # by resource_key, so two distinct doc_ids that happen to share one
+    # resource (e.g. the same artifact mirrored under two systems) can both
+    # come back matched here and must still collapse to one citation.
     reasons: list[str] = []
     for doc_id, reason in matched:
         doc = by_id.get(doc_id)

@@ -10,7 +10,7 @@ from kbforge.grounding import (
     problems_for,
     template_fields,
 )
-from kbforge.models import CanonicalDocument, ResourceAnchor
+from kbforge.models import CanonicalDocument, ResourceAnchor, resource_key
 
 
 def _rule(**over):
@@ -430,3 +430,51 @@ def test_rule_documents_carry_their_reason_notes():
         "concepts/IMC300/overview.md: grounded by rule 1 "
         "('{native_id}' = 'IMC300') via web:a"
     ]
+
+
+def test_exclude_is_skipped_before_ranking_and_the_cap():
+    """Without `exclude`, x's slot in the newest-2 cap is spent on a document
+    that will be discarded anyway (deduped against the explicit set one layer
+    up), so the rule cites one fewer real document than `newest` promises and
+    drops z instead of keeping it."""
+    cfg = _cfg(_rule(newest=2))
+    x, y, z = (_doc(f"web:{n}", text="IMC300") for n in "xyz")
+    seen = {
+        "web:x": datetime(2026, 3, 1, tzinfo=UTC),
+        "web:y": datetime(2026, 2, 1, tzinfo=UTC),
+        "web:z": datetime(2026, 1, 1, tzinfo=UTC),
+    }
+    by_id = _by_id(PRODUCT, x, y, z)
+
+    without_exclude = rule_matches(PRODUCT, cfg, by_id, seen)
+    assert _ids(without_exclude) == ["web:x", "web:y"]  # z wrongly capped out
+
+    excluded = frozenset({resource_key(x.anchor)})
+    with_exclude = rule_matches(PRODUCT, cfg, by_id, seen, exclude=excluded)
+    assert _ids(with_exclude) == ["web:y", "web:z"]
+    assert with_exclude[1] == []  # no cap note: only 2 candidates remained
+
+
+def test_an_explicit_doc_does_not_consume_a_rules_newest_slot():
+    """§7.1: each rule is capped at its own `newest`, deduplicated against the
+    explicit set -- not capped INCLUDING it. `x` is explicit and also the
+    newest rule match; `y` and `z` must both still be cited under newest=2,
+    and no cap note should name either as dropped."""
+    owner = _doc("sql:IMC300", structured={"type": "product"})
+    x = _doc("web:x", text="IMC300")
+    y = _doc("web:y", text="IMC300")
+    z = _doc("web:z", text="IMC300")
+    seen = {
+        "web:x": datetime(2026, 3, 1, tzinfo=UTC),
+        "web:y": datetime(2026, 2, 1, tzinfo=UTC),
+        "web:z": datetime(2026, 1, 1, tzinfo=UTC),
+    }
+    cfg = GroundingConfig.model_validate(
+        {
+            "grounding": {"sql:IMC300": ["web:x"]},
+            "rules": [_rule(newest=2)],
+        }
+    )
+    docs, notes = resolve_all(owner, cfg, _by_id(owner, x, y, z), seen)
+    assert [d.doc_id for d in docs] == ["web:x", "web:y", "web:z"]
+    assert not any("capped" in n for n in notes)
