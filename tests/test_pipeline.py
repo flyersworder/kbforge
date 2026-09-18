@@ -7,7 +7,7 @@ from kbforge import pipeline
 from kbforge.canonical import FetchContractError, content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.grounding import GroundingConfig, has_sidecars
-from kbforge.mirror import commit
+from kbforge.mirror import commit, slot_key
 from kbforge.models import (
     CanonicalDocument,
     ConceptFrontmatter,
@@ -198,6 +198,7 @@ def _doc(
     relations: list[str] | None = None,
     grounded_by: list[str] | None = None,
     text: str | None = None,
+    structured: dict | None = None,
 ) -> CanonicalDocument:
     """A fixed, clock-free CanonicalDocument keyed under `system` (default "sys")
     — deletions and referrer-relations require a fake source, since
@@ -214,6 +215,7 @@ def _doc(
         doc_id=f"{system}:{native_id}",
         title=title,
         text=text or title,
+        structured=structured or {},
         relations=relations or [],
         grounded_by=grounded_by or [],
         deleted=deleted,
@@ -565,7 +567,9 @@ def test_drift_in_another_system_reopens_the_owner_on_its_next_run(tmp_path: Pat
     )
     assert pub_a.last_change is not None
     assert concept_path("sys:a") in pub_a.last_change.files
-    assert any("another system" in n for n in pub_a.last_change.summary.grounding_notes)
+    assert any(
+        "grounding changed" in n for n in pub_a.last_change.summary.grounding_notes
+    )
 
 
 def test_an_unchanged_grounded_run_is_still_a_noop(tmp_path: Path):
@@ -995,3 +999,322 @@ def test_grounding_declared_before_a_sibling_synced_survives_an_empty_fetch(
     assert concept_path("sys:a") in pub.last_change.files
     fm = pub.last_change.concepts[concept_path("sys:a")]
     assert [s.native_id for s in fm.sources] == ["a", "b"]
+
+
+from kbforge.grounding import load_first_seen  # noqa: E402
+
+
+def _rules_cfg():
+    return GroundingConfig.model_validate(
+        {
+            "rules": [
+                {
+                    "for": {"type": "product"},
+                    "from": {"system": "web"},
+                    "match": ["{native_id}"],
+                }
+            ]
+        }
+    )
+
+
+def _product():
+    return _doc(
+        "IMC300",
+        "IMC300 motor controller",
+        system="sql",
+        structured={"type": "product"},
+    )
+
+
+def test_a_new_matching_article_regrounds_the_product_on_its_own_run(tmp_path):
+    cfg = _rules_cfg()
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+
+    article = _doc(
+        "skyworks",
+        "Skyworks gate driver",
+        system="web",
+        text="Skyworks unveils a driver that rivals the IMC300.",
+    )
+    pub_web = _run_once(
+        tmp_path,
+        [article],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    # The web run never touches the product concept.
+    assert pub_web.last_change is not None
+    assert concept_path("sql:IMC300") not in pub_web.last_change.files
+    assert "web:skyworks" in load_first_seen(tmp_path / "mirror")
+
+    synth = _GroundingSynth()
+    pub = _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert [d.doc_id for d in synth.seen["sql:IMC300"]] == ["web:skyworks"]
+    assert pub.last_change is not None
+    notes = pub.last_change.summary.grounding_notes
+    assert (
+        "concepts/IMC300/overview.md: grounded by rule 1 "
+        "('{native_id}' = 'IMC300') via web:skyworks"
+    ) in notes
+
+    result, _ = _run_result(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_a_non_matching_article_leaves_the_product_a_noop(tmp_path):
+    cfg = _rules_cfg()
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    other = _doc("other", "Other news", system="web", text="Nothing relevant.")
+    _run_once(
+        tmp_path,
+        [other],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    result, _ = _run_result(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_a_non_grounding_synthesizer_never_loads_first_seen(tmp_path, monkeypatch):
+    """`rules` alone used to gate the first-seen load, even under the stub
+    synthesizer (`grounds = False`), which never ranks anything by it. Only
+    the drift scan -- gated on `grounds` -- needs it."""
+    cfg = _rules_cfg()
+
+    def _never(mirror):
+        raise AssertionError("load_first_seen ran under a non-grounding synthesizer")
+
+    monkeypatch.setattr(pipeline, "load_first_seen", _never)
+    pub = _run_once(tmp_path, [_product()], grounding_config=cfg, connector_name="sql")
+    assert pub.last_change is not None
+
+
+def test_an_edited_matched_article_drifts_the_product(tmp_path):
+    cfg = _rules_cfg()
+    v1 = _doc("skyworks", "Skyworks", system="web", text="IMC300 rival, v1")
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    _run_once(
+        tmp_path,
+        [v1],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    v2 = _doc("skyworks", "Skyworks", system="web", text="IMC300 rival, v2")
+    _run_once(
+        tmp_path,
+        [v2],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    pub = _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert pub.last_change is not None
+    assert concept_path("sql:IMC300") in pub.last_change.files
+
+
+def test_first_seen_is_deleted_with_its_tombstone(tmp_path):
+    a = _doc("a", "A", system="web")
+    _run_once(tmp_path, [a], connector_name="web")
+    assert "web:a" in load_first_seen(tmp_path / "mirror")
+    _run_once(
+        tmp_path, [_doc("a", "A", system="web", deleted=True)], connector_name="web"
+    )
+    assert "web:a" not in load_first_seen(tmp_path / "mirror")
+
+
+def test_a_noop_run_writes_no_first_seen(tmp_path):
+    """Deleting the record after the bootstrap run, rather than snapshotting the
+    directory, is what makes this test able to fail: write-once record_first_seen
+    never touches an EXISTING record, so a directory-listing comparison passes
+    whether or not the no-op path calls it. Only an absent record exposes that."""
+    a = _doc("a", "A", system="web")
+    _run_once(tmp_path, [a], connector_name="web")
+    record = tmp_path / "mirror" / "_first_seen" / f"{slot_key('web:a')}.json"
+    record.unlink()
+    result, _ = _run_result(tmp_path, [a], connector_name="web")
+    assert isinstance(result, NoOp)
+    assert not record.exists()
+
+
+def _dated(doc: CanonicalDocument, when: datetime) -> CanonicalDocument:
+    """A same-object mutation, not a copy: `doc.anchor.content_hash` was already
+    computed by `_doc` and `content_hash` excludes `retrieved_at` (§4.3 law 2),
+    so there is nothing to recompute."""
+    doc.anchor.retrieved_at = when
+    return doc
+
+
+def test_a_document_committed_alongside_its_owner_is_dated_this_run(tmp_path):
+    """§6 permits a same-system rule, so a matching document can be committed
+    in the SAME run as its owner -- one connector emitting both -- before that
+    document's own sidecar exists. Without overlaying THIS run's own documents
+    onto `first_seen`, such a document ranks undated (last) the run it
+    arrives and dated the very next identical-fetch run, so the rule's
+    `newest` selection changes with nothing else having changed -- an
+    unchanged world stops being a no-op (§4)."""
+    cfg = GroundingConfig.model_validate(
+        {
+            "rules": [
+                {
+                    "for": {"type": "hub"},
+                    "from": {"system": "web"},
+                    "match": ["{native_id}"],
+                    "newest": 1,
+                }
+            ]
+        }
+    )
+    hub = _doc("hub", "Widget hub", system="web", structured={"type": "hub"})
+    a = _doc("a", "Widget a", system="web", text="Mentions hub.")
+    synth = _GroundingSynth()
+    _run_once(
+        tmp_path,
+        [hub, a],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="web",
+    )
+
+    b = _dated(
+        _doc("b", "Widget b", system="web", text="Mentions hub too."),
+        datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    pub = _run_once(
+        tmp_path, [b], synthesizer=synth, grounding_config=cfg, connector_name="web"
+    )
+    assert pub.last_change is not None
+    assert [d.doc_id for d in synth.seen["web:hub"]] == ["web:b"]
+
+    result, _ = _run_result(
+        tmp_path, [b], synthesizer=synth, grounding_config=cfg, connector_name="web"
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_a_document_deleted_this_run_is_excluded_from_the_owners_grounding(
+    tmp_path: Path,
+):
+    """A same-system rule (web grounds web): the run that tombstones `y` also
+    re-synthesizes `y`'s owner `hub` (hub's own content changed in the same
+    fetch). `by_id` must not keep `y`'s stale, pre-run mirror copy -- still
+    `deleted=False` -- or the `doc.deleted` guards in `rule_matches` never
+    fire and `hub` cites a document the very same review request removes."""
+    cfg = GroundingConfig.model_validate(
+        {
+            "rules": [
+                {
+                    "for": {"type": "hub"},
+                    "from": {"system": "web"},
+                    "match": ["{native_id}"],
+                }
+            ]
+        }
+    )
+    hub = _doc("hub", "Widget hub", system="web", structured={"type": "hub"})
+    y = _doc("y", "Widget y", system="web", text="Mentions hub.")
+    _run_once(
+        tmp_path,
+        [hub, y],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+
+    hub_v2 = _doc("hub", "Widget hub v2", system="web", structured={"type": "hub"})
+    y_gone = _doc("y", "Widget y", system="web", text="Mentions hub.", deleted=True)
+    synth = _GroundingSynth()
+    pub = _run_once(
+        tmp_path,
+        [hub_v2, y_gone],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    assert pub.last_change is not None
+    grounded_ids = [d.doc_id for d in synth.seen.get("web:hub", [])]
+    assert "web:y" not in grounded_ids
+
+    # `y` is gone from the mirror and from this connector's next fetch; nothing
+    # about `hub` changed since the run above committed it, so this must settle
+    # rather than drift and republish forever off the stale grounding.
+    result, _ = _run_result(
+        tmp_path,
+        [hub_v2],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_explicit_grounding_to_a_document_deleted_this_run_is_dropped(
+    tmp_path: Path,
+):
+    """Same defect, explicit path: `x` explicitly grounds in `y`, and the run
+    that deletes `y` also re-synthesizes `x`. The pre-existing `resolve` guard
+    (`doc.deleted`) must see `y` as gone, not as its stale pre-run copy."""
+    cfg = _cfg(**{"sys:x": ["sys:y"]})
+    x = _doc("x", "X")
+    y = _doc("y", "Y")
+    _run_once(tmp_path, [x, y], synthesizer=_GroundingSynth(), grounding_config=cfg)
+
+    x_v2 = _doc("x", "X v2")
+    y_gone = _doc("y", "Y", deleted=True)
+    synth = _GroundingSynth()
+    pub = _run_once(tmp_path, [x_v2, y_gone], synthesizer=synth, grounding_config=cfg)
+    assert pub.last_change is not None
+    grounded_ids = [d.doc_id for d in synth.seen.get("sys:x", [])]
+    assert "sys:y" not in grounded_ids

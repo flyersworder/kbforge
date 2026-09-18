@@ -1242,6 +1242,61 @@ No new validator law is required: `_check_sources_shape` and
 `_check_carriers_agree` already handle a multi-entry `sources`, since
 `_expected_resources` maps every anchor, not the first.
 
+**Grounding rules.** The subject map above names ids that must be known in
+advance; a rule instead grounds a concept in whatever documents in the mirror
+match a pattern, so evidence that arrives run by run — a web article naming a
+product, a market report touching an application — can ground it without ever
+being enumerated up front. Rules live in the same grounding YAML, keyed
+`rules:`, and select owners by `for` (`type`, `system`, and/or `doc`, ANDed),
+candidates by `from.system`, and relevance by `match`: phrases with `{field}`
+placeholders filled from the owner's facets or the reserved `native_id`/`title`,
+matched case-insensitively on word boundaries against a candidate's title and
+text:
+
+```yaml
+grounding:
+  local:applications/ev-traction.md: [web:@www.bosch-semiconductors.com/stories-and-events/eg120]
+rules:
+  - for:   {type: product}
+    from:  {system: web}
+    match: ["{native_id}"]
+    newest: 3
+    by: published
+  - for:   {doc: [local:applications/ev-traction.md]}
+    from:  {system: web}
+    match: ["traction inverter", "SiC MOSFET"]
+    newest: 5
+```
+
+A rule is declared by the concept it grounds and evaluated deterministically
+in the pipeline over the mirror, never by the search that found a candidate or
+the system that fetched it: a URL found by both a curated list and a search
+can only carry one system's stamp under a search-side rule, and a system-side
+rule ("newest N docs of system X") forces one system per search and collides
+two systems sharing a URL at the bundle-path abort. Selecting by rule over the
+shared mirror avoids both — a document's origin is irrelevant to whether it
+grounds something, so one `web` system keeps working under any number of
+rules.
+
+Explicit grounding still resolves first, under `max_grounding_docs` as before;
+rule matches come on top, each rule capped at its own `newest` (default 3),
+ranked newest-first and deduplicated against the explicit set — a hand-picked
+source is never crowded out by news. Rank is by the rule's `by` date facet
+when given and parseable, else by when kbforge first saw the document,
+recorded once per document in `mirror/_first_seen/` beside `mirror/_grounding/`
+— except that a document committed in the *same* run as the owner a rule is
+ranking (one connector emitting both, or a same-system rule) has no first-seen
+record yet and is dated by that run rather than left undated, so a later,
+unchanged run still ranks it the same way and stays a no-op. The drift sidecar
+under `mirror/_grounding/` does the staleness work unchanged: a newly matching
+or edited document changes the recorded set or hash and the owner
+re-synthesizes on its own run; rules need no staleness mechanism of their own.
+
+See `docs/design/2026-09-18-grounding-rules-design.md` for the full rationale
+— why matching is deterministic text rather than semantic, why recency falls
+back to first-seen, the validation rules, and what's deferred (reader-provided
+dates, more `from` keys, a semantic link proposer, system-qualified paths).
+
 ---
 
 ## 8. Connection to the agent-contracts family

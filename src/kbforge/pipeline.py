@@ -14,10 +14,14 @@ from kbforge.canonical import assert_fetch_contract, assert_stability
 from kbforge.grounding import (
     GroundingConfig,
     declared_ids,
+    delete_first_seen,
     delete_sidecar,
     drifted,
     has_sidecars,
-    resolve,
+    load_first_seen,
+    record_first_seen,
+    resolve_all,
+    with_first_seen,
     write_sidecar,
 )
 from kbforge.mirror import commit, diff, load_all
@@ -250,9 +254,12 @@ def run(
 
     # The scan is gated three ways so a deployment that declares no grounding
     # keeps today's cheap no-op: the synthesizer must ground, and there must be
-    # either something declared now or a sidecar from before (§5).
+    # either something declared now or a sidecar from before (§5). Rules make
+    # the scan unconditional, since a concept with no grounding yet must still
+    # be able to pick up its first matching document.
     scan = grounds and bool(
         grounding_cfg.grounding
+        or grounding_cfg.rules
         or any(d.grounded_by for d in docs)
         or has_sidecars(mirror_path)
     )
@@ -270,8 +277,33 @@ def run(
     # grounding drift) is not tombstone-specific — there is no cheaper subset
     # of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
+    # Recency fallback for grounding rules; loaded once, only when the drift
+    # scan runs and rules exist. Gated on `scan`, not `grounding_cfg.rules`
+    # alone: `scan` already requires `grounds`, and a synthesizer that never
+    # grounds never ranks anything by first-seen, so loading it under the
+    # stub was pure waste on every run under a rules config.
+    # Overlaid with THIS run's own documents (existing records win): a rule
+    # can match a document committed in the same run as its owner, before its
+    # sidecar exists, and without the overlay it would rank as undated on this
+    # run and dated on the next identical-fetch run -- an unchanged world would
+    # stop being a no-op.
+    first_seen = (
+        with_first_seen(load_first_seen(mirror_path), docs)
+        if scan and grounding_cfg.rules
+        else {}
+    )
     by_id = {d.doc_id: d for d in mirror_docs}
     by_id.update({d.doc_id: d for d in docs if not d.deleted})
+    # A doc this run tombstones is never in the update above (it is filtered
+    # by `not d.deleted`), so without this its *stale, pre-run* mirror copy
+    # -- still `deleted=False` -- would linger in `by_id` under its own
+    # doc_id. Every `doc.deleted` guard downstream (`resolve`, `resolve_all`,
+    # `rule_matches`) checks the copy IN `by_id`, so that guard would never
+    # fire: a rule (or an explicit declaration) could cite a document the
+    # same run is deleting, and the sidecar would record it as grounding.
+    for doc in docs:
+        if doc.deleted:
+            by_id.pop(doc.doc_id, None)
     hashes = {k: v.anchor.content_hash for k, v in by_id.items()}
 
     changed = set(changeset.added) | set(changeset.modified)
@@ -287,12 +319,7 @@ def run(
     def _resolved(doc: CanonicalDocument) -> tuple[list[CanonicalDocument], list[str]]:
         cached = _resolutions.get(doc.doc_id)
         if cached is None:
-            cached = resolve(
-                doc,
-                declared_ids(doc, grounding_cfg),
-                by_id,
-                max_docs=grounding_cfg.max_grounding_docs,
-            )
+            cached = resolve_all(doc, grounding_cfg, by_id, first_seen)
             _resolutions[doc.doc_id] = cached
         return cached
 
@@ -442,8 +469,8 @@ def run(
         path = concept_path(doc_id)
         if path in proposal.files:
             proposal.summary.grounding_notes.append(
-                f"{path}: re-synthesized because a document it is grounded in "
-                "changed in another system; its own source is unchanged"
+                f"{path}: re-synthesized because its grounding changed since "
+                "it was last published; its own source is unchanged"
             )
 
     failures = run_validators(proposal, existing)
@@ -452,6 +479,7 @@ def run(
 
     url = publisher.kbforge_publish(proposal, publish_config)
     commit(mirror_path, docs)  # advance mirror ONLY after success
+    record_first_seen(mirror_path, docs)
     for doc in changed_docs:
         if concept_path(doc.doc_id) not in proposal.files:
             # The synthesizer dropped this document, exactly as the two note
@@ -487,5 +515,6 @@ def run(
             delete_sidecar(mirror_path, doc.doc_id)
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
+        delete_first_seen(mirror_path, doc_id)
     _save_cursor(state_path, result.cursor, systems, config)
     return Published(url=url)

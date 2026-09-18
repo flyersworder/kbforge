@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-09-18
+
 ### Changed
 
 - Development status is now **Beta** (README and the PyPI classifier). The prior
@@ -23,12 +25,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   release unless the distribution its tag names was built at the tagged version and
   is absent from PyPI. `skip-existing` protects against a half-published release but
   makes a correct no-op and a forgotten version bump the same green job.
+- Grounding rules: `rules:` in the `--grounding` config ground existing concepts
+  in matching documents from another system (`for` / `from` / `match` with
+  `{field}` placeholders / `newest` / optional `by` date facet), ranked
+  newest-first and capped. Explicit grounding is unchanged and outranks rules.
+  Every rule-added citation is explained in the review summary. Takes effect
+  with `--synthesizer llm`.
 
 ### Fixed
 
 - The release tag reaches the publish job through `env:` instead of `${{ }}`
   interpolation into a `run:` block, where a tag containing a quote would have
   executed as shell — on the one job holding `id-token: write`.
+
+### Known limits
+
+- First-seen records start with this release: after upgrading, documents a
+  source republishes all look equally new once, until the next genuinely new
+  document arrives. An incremental connector that never re-fetches an old
+  document never gives it a first-seen record either, so under a rule with no
+  usable `by` facet it ranks last (undated), permanently.
+- Grounding-rule matching is O(owners × mirror docs × text) every run with
+  rules configured: measured 96s/run for 500 owners × 2,000 10KB documents.
+  No index or prefilter yet; see the design note §9.
 
 ## [kbforge-mcp-v0.2.0] - 2026-09-18
 
@@ -572,7 +591,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
 [kbforge-mcp-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-mcp-v0.2.0
 [kbforge-sql-v0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.0
 [0.9.0]: https://github.com/flyersworder/kbforge/compare/v0.8.0...v0.9.0

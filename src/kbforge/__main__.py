@@ -207,6 +207,12 @@ def main(argv: list[str] | None = None) -> int:
         print(f"grounding config: {'; '.join(problems)}")
         return 2
 
+    if grounding_config.rules and args.synthesizer == "stub":
+        print(
+            "grounding rules are validated but inactive: the stub synthesizer "
+            "does not ground; use --synthesizer llm"
+        )
+
     try:
         result = run(
             connectors[args.connector],

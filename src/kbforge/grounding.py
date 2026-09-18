@@ -1,15 +1,20 @@
 """Cross-source grounding: which documents ground which, and whether that has
 changed since the concept was last built (design note 2026-08-20).
 
-Everything here is pure except the four sidecar functions. Resolution lives on
-this side of the seam, never in a synthesizer: a synthesizer that chose its own
-sources would be choosing its own provenance."""
+Everything here is pure except the sidecar functions (`write_sidecar`,
+`read_sidecar`, `delete_sidecar`, `has_sidecars`) and the first-seen functions
+(`record_first_seen`, `load_first_seen`, `delete_first_seen`). Resolution lives
+on this side of the seam, never in a synthesizer: a synthesizer that chose its
+own sources would be choosing its own provenance."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
+import unicodedata
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import yaml
@@ -22,6 +27,37 @@ from kbforge.synthesize import concept_path
 DEFAULT_MAX_GROUNDING_DOCS = 5
 
 
+class RuleFor(BaseModel):
+    """Which concepts a rule grounds. Keys present are AND-ed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str | None = None
+    system: str | None = None
+    doc: list[str] | None = None
+
+
+class RuleFrom(BaseModel):
+    """Which documents may ground them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    system: str
+
+
+class GroundingRule(BaseModel):
+    """A templated grounding rule (design note 2026-09-18). `for`/`from` are
+    Python keywords, hence the aliases."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    for_: RuleFor = Field(alias="for")
+    from_: RuleFrom = Field(alias="from")
+    match: list[str]
+    newest: int = 3
+    by: str | None = None
+
+
 class GroundingConfig(BaseModel):
     """The operator subject map (§2.2). `extra="forbid"` so a typo'd key is an
     error rather than a silently empty map."""
@@ -30,6 +66,7 @@ class GroundingConfig(BaseModel):
 
     max_grounding_docs: int = DEFAULT_MAX_GROUNDING_DOCS
     grounding: dict[str, list[str]] = Field(default_factory=dict)
+    rules: list[GroundingRule] = Field(default_factory=list)
 
 
 def load_grounding(path: Path | None) -> GroundingConfig:
@@ -50,6 +87,223 @@ def is_qualified(value: str) -> bool:
     return bool(sep and system and native)
 
 
+# Plain `{name}` substitution, deliberately not str.format, which reads `{a.b}`
+# as an attribute and `{a:{w}}` as a nested field (the kbforge-sql url_template
+# lesson). One pattern serves validation and filling.
+_FIELD = re.compile(r"\{([^{}]*)\}")
+
+
+def template_fields(template: str) -> list[str] | None:
+    """Placeholder names in a match phrase, or None if its braces don't pair
+    up into `{name}` fields."""
+    rest = _FIELD.sub("", template)
+    if "{" in rest or "}" in rest:
+        return None
+    return _FIELD.findall(template)
+
+
+def _nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
+
+
+def _field(owner: CanonicalDocument, name: str) -> str | None:
+    if name == "title":
+        value: object = owner.title
+    elif name == "native_id":
+        value = owner.anchor.native_id
+    else:
+        value = owner.structured.get(name)
+    if value is None or isinstance(value, (list, dict)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def fill(template: str, owner: CanonicalDocument) -> str | None:
+    """A match phrase with its `{fields}` filled from `owner`, or None when any
+    field is missing or blank. Matching an empty field would match everything,
+    so such a phrase is dropped for this owner only."""
+    missing = False
+
+    def sub(m: re.Match[str]) -> str:
+        nonlocal missing
+        value = _field(owner, m.group(1))
+        if value is None:
+            missing = True
+            return ""
+        return value
+
+    out = _FIELD.sub(sub, template)
+    return None if missing or not out.strip() else out
+
+
+def _applies(rule: GroundingRule, owner: CanonicalDocument) -> bool:
+    scope = rule.for_
+    kind = str(owner.structured.get("type") or "concept")
+    if scope.type is not None and kind != scope.type:
+        return False
+    if scope.system is not None and owner.anchor.system != scope.system:
+        return False
+    return scope.doc is None or owner.doc_id in scope.doc
+
+
+def _as_time(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, date):
+        moment = datetime(value.year, value.month, value.day)
+    elif isinstance(value, str):
+        try:
+            moment = datetime.fromisoformat(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    # Naive is taken as UTC: the one assumption needed to order it against an
+    # aware value, and the convention kbforge-sql's canonical form documents.
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def rule_matches(
+    owner: CanonicalDocument,
+    cfg: GroundingConfig,
+    by_id: dict[str, CanonicalDocument],
+    first_seen: dict[str, datetime],
+    *,
+    exclude: frozenset[str] = frozenset(),
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Rule-selected grounding for `owner`: `(doc_id, reason)` in rank order,
+    plus cap and unparseable-date notes. Pure and deterministic over `by_id`.
+
+    Rank is newest first by the rule's `by` facet, else first-seen; undated
+    candidates last; `doc_id` breaks every tie, so the order is total.
+
+    `exclude` is a set of `resource_key` values -- typically the owner's own
+    key plus every explicitly-grounded document's -- skipped before ranking
+    and before the `newest` cap. Deduping AFTER the cap (as `resolve_all` used
+    to) lets an explicit doc that also ranks in a rule's top N take one of its
+    `newest` slots and then get dropped as a duplicate: the rule cites one
+    fewer document than `newest` promises, and the cap note can name a doc
+    that was never really capped out."""
+    path = concept_path(owner.doc_id)
+    matched: list[tuple[str, str]] = []
+    # Grows as each rule keeps documents, so a later rule ranks and caps only
+    # what earlier rules (and the caller's `exclude`) haven't already cited.
+    taken = set(exclude)
+    notes: list[str] = []
+    for i, rule in enumerate(cfg.rules, 1):
+        if not _applies(rule, owner):
+            continue
+        phrases = [(t, p) for t in rule.match if (p := fill(t, owner)) is not None]
+        patterns = [
+            (
+                t,
+                p,
+                re.compile(rf"(?<!\w){re.escape(_nfc(p))}(?!\w)", re.IGNORECASE),
+            )
+            for t, p in phrases
+        ]
+        if not patterns:
+            continue
+        ranked: list[tuple[datetime | None, str, str]] = []
+        # Raw unparseable `by` values, keyed by doc_id. A note is worth writing
+        # only for a candidate the cap keeps -- one per matched candidate,
+        # dropped ones included, is exactly what made the review body grow
+        # without bound (measured: 1,500 matches -> 104,048 chars, over
+        # GitHub's 65,536-char review-body limit, and nothing commits on
+        # failure, so every later run failed the same way).
+        unparseable: dict[str, object] = {}
+        for doc in by_id.values():
+            if (
+                doc.deleted
+                or doc.doc_id == owner.doc_id
+                or doc.anchor.system != rule.from_.system
+                or resource_key(doc.anchor) in taken
+            ):
+                continue
+            haystack = _nfc(f"{doc.title}\n{doc.text}")
+            hit = next(((t, p) for t, p, rx in patterns if rx.search(haystack)), None)
+            if hit is None:
+                continue
+            when = None
+            if rule.by is not None:
+                raw = doc.structured.get(rule.by)
+                when = _as_time(raw)
+                if raw is not None and when is None:
+                    unparseable[doc.doc_id] = raw
+            if when is None:
+                when = first_seen.get(doc.doc_id)
+            reason = (
+                f"{path}: grounded by rule {i} ({hit[0]!r} = {hit[1]!r}) "
+                f"via {doc.doc_id}"
+            )
+            ranked.append((when, doc.doc_id, reason))
+        ranked.sort(
+            key=lambda r: (r[0] is None, -r[0].timestamp() if r[0] else 0.0, r[1])
+        )
+        kept, dropped = ranked[: rule.newest], ranked[rule.newest :]
+        if dropped:
+            dropped_ids = [doc_id for _, doc_id, _ in dropped]
+            if len(dropped_ids) <= 5:
+                tail = ", ".join(dropped_ids)
+            else:
+                first_five = ", ".join(dropped_ids[:5])
+                tail = f"{len(dropped_ids)} (first 5: {first_five}, …)"
+            notes.append(f"{path}: rule {i} capped at {rule.newest}; dropped {tail}")
+        # In doc_id order, not rank order: rank order is an artifact of `when`,
+        # which is not what a reviewer is scanning notes by.
+        for doc_id in sorted(doc_id for _, doc_id, _ in kept):
+            raw = unparseable.get(doc_id)
+            if raw is not None:
+                notes.append(
+                    f"{path}: rule {i}: {doc_id} has an unparseable "
+                    f"{rule.by!r} value {raw!r}; ranked by first-seen"
+                )
+        for _, doc_id, reason in kept:
+            taken.add(resource_key(by_id[doc_id].anchor))
+            matched.append((doc_id, reason))
+    return matched, notes
+
+
+def resolve_all(
+    owner: CanonicalDocument,
+    cfg: GroundingConfig,
+    by_id: dict[str, CanonicalDocument],
+    first_seen: dict[str, datetime],
+) -> tuple[list[CanonicalDocument], list[str]]:
+    """Everything that grounds `owner`: explicit grounding first, resolved and
+    capped exactly as before, then rule matches on top. A hand-picked source is
+    never crowded out by news, and one artifact is cited once."""
+    kept, notes = resolve(
+        owner, declared_ids(owner, cfg), by_id, max_docs=cfg.max_grounding_docs
+    )
+    if not cfg.rules:
+        return kept, notes
+    # Excludes the owner and every explicitly-kept doc BEFORE a rule ranks and
+    # caps its candidates -- not after -- so an explicit doc that would also
+    # rank in a rule's top `newest` never consumes one of its slots (§4).
+    seen = {resource_key(owner.anchor)} | {resource_key(d.anchor) for d in kept}
+    matched, rule_notes = rule_matches(
+        owner, cfg, by_id, first_seen, exclude=frozenset(seen)
+    )
+    # Still needed: `rule_matches` dedups its own `matched` list by doc_id, not
+    # by resource_key, so two distinct doc_ids that happen to share one
+    # resource (e.g. the same artifact mirrored under two systems) can both
+    # come back matched here and must still collapse to one citation.
+    reasons: list[str] = []
+    for doc_id, reason in matched:
+        doc = by_id.get(doc_id)
+        if doc is None or doc.deleted:
+            continue
+        key = resource_key(doc.anchor)
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(doc)
+        reasons.append(reason)
+    return kept, notes + reasons + rule_notes
+
+
 def problems_for(cfg: GroundingConfig) -> list[str]:
     """Shape only ([] = ok). Whether an id *resolves* is not a shape question and
     is not fatal -- §2.2, symmetric with the unresolvable-value rule in §3."""
@@ -68,6 +322,30 @@ def problems_for(cfg: GroundingConfig) -> list[str]:
                     f"grounding value {value!r} under {key!r} must be a qualified "
                     "doc_id ('system:native_id'); bare ids are not accepted"
                 )
+    for i, rule in enumerate(cfg.rules, 1):
+        where = f"grounding rule {i}"
+        if not (rule.for_.type or rule.for_.system or rule.for_.doc):
+            problems.append(
+                f"{where}: 'for' needs at least one of 'type', 'system', 'doc'"
+            )
+        for doc_id in rule.for_.doc or []:
+            if not is_qualified(doc_id):
+                problems.append(
+                    f"{where}: 'for.doc' entry {doc_id!r} must be a qualified "
+                    "doc_id ('system:native_id')"
+                )
+        if not rule.match:
+            problems.append(f"{where}: 'match' needs at least one phrase")
+        for phrase in rule.match:
+            if not phrase.strip():
+                problems.append(f"{where}: a 'match' phrase is blank")
+            elif template_fields(phrase) is None:
+                problems.append(
+                    f"{where}: 'match' phrase {phrase!r} has unpaired braces; "
+                    "fields are {name}"
+                )
+        if rule.newest < 1:
+            problems.append(f"{where}: 'newest' must be at least 1")
     return problems
 
 
@@ -160,19 +438,18 @@ def read_sidecar(mirror: Path, doc_id: str) -> dict[str, str] | None:
         return None
 
 
-def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
-    """Written through a temp file in the same directory, so a process killed
-    mid-write leaves either the old sidecar or the new one -- never a truncated
-    file. `read_sidecar` tolerates one anyway; this keeps them from being made."""
-    path = _sidecar(mirror, doc_id)
+def _write_atomic(path: Path, payload: dict) -> None:
+    """Through a unique temp file in the same directory, so a process killed
+    mid-write leaves the old file or the new one, never a truncated one, and two
+    writers on the shared mirror never `os.replace` each other's half-written
+    file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
     # A unique temp name, not `<slot>.json.tmp`: a fixed one is the same path for
     # every writer, so two runs on the shared mirror can `os.replace` each
     # other's half-written file into the live slot — defeating the atomicity the
     # temp file is here for. The finally-unlink covers the crash-between case,
-    # which would otherwise leave an orphan invisible to both `has_sidecars`
-    # (it globs `*.json`) and `delete_sidecar`.
+    # which would otherwise leave an orphan invisible to glob queries like
+    # `*.json` used by `has_sidecars`, `load_first_seen`, and `delete_sidecar`.
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
     tmp = Path(tmp_name)
     try:
@@ -181,6 +458,13 @@ def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
+    """Written atomically (`_write_atomic`); `read_sidecar` tolerates a torn file
+    anyway, and this keeps them from being made."""
+    payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
+    _write_atomic(_sidecar(mirror, doc_id), payload)
 
 
 def delete_sidecar(mirror: Path, doc_id: str) -> None:
@@ -225,3 +509,83 @@ def drifted(
         if any(hashes.get(gid) != h for gid, h in recorded.items()):  # rule 1
             out.append(doc.doc_id)
     return sorted(out)
+
+
+FIRST_SEEN_DIR = "_first_seen"
+"""When a document first entered the mirror: the recency fallback for rules
+whose date facet is absent (design note 2026-09-18 §5). A subdirectory for the
+same reason as SIDECAR_DIR."""
+
+
+def _first_seen_path(mirror: Path, doc_id: str) -> Path:
+    return mirror / FIRST_SEEN_DIR / f"{slot_key(doc_id)}.json"
+
+
+def _read_first_seen(path: Path) -> tuple[str, datetime] | None:
+    """Tolerant like `read_sidecar`: an unreadable record reads as absent and is
+    rewritten on the document's next commit, rather than wedging every run."""
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+        moment = datetime.fromisoformat(payload["first_seen"])
+        return str(payload["doc_id"]), (
+            moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+        )
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError):
+        return None
+
+
+def first_seen_time(doc: CanonicalDocument) -> datetime:
+    """The aware moment `doc` was first seen, from its anchor's `retrieved_at`.
+    Naive is taken as UTC, the same convention `_as_time` documents. Pure --
+    shared by `record_first_seen` (what gets written) and `with_first_seen`
+    (what stands in before it has been), so the naive->UTC rule lives once."""
+    when = doc.anchor.retrieved_at
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def with_first_seen(
+    first_seen: dict[str, datetime], docs: list[CanonicalDocument]
+) -> dict[str, datetime]:
+    """`first_seen` overlaid with this run's own non-deleted documents, existing
+    records winning (`setdefault`).
+
+    A document a rule matches against can be committed in the SAME run as its
+    owner -- one connector emitting both, or a same-system rule (§6) -- and its
+    sidecar has not been written yet, so `load_first_seen` alone has never
+    heard of it and it ranks as undated (last) instead of by its real recency.
+    The next identical-fetch run then finds it dated after all, the rule's
+    `newest` selection changes, and an unchanged world stops being a no-op
+    (§4). Overlaying this run's own documents closes that: existing records
+    always win, so a document already on disk keeps the time it was actually
+    first seen, not this run's retrieval time."""
+    out = dict(first_seen)
+    for doc in docs:
+        if not doc.deleted:
+            out.setdefault(doc.doc_id, first_seen_time(doc))
+    return out
+
+
+def record_first_seen(mirror: Path, docs: list[CanonicalDocument]) -> None:
+    """Write-once, for documents a publishing run commits. Each run records only
+    its own documents, so no run writes another connector's state."""
+    for doc in docs:
+        if doc.deleted:
+            continue
+        path = _first_seen_path(mirror, doc.doc_id)
+        if _read_first_seen(path) is not None:
+            continue
+        when = first_seen_time(doc)
+        _write_atomic(path, {"doc_id": doc.doc_id, "first_seen": when.isoformat()})
+
+
+def load_first_seen(mirror: Path) -> dict[str, datetime]:
+    directory = mirror / FIRST_SEEN_DIR
+    if not directory.is_dir():
+        return {}
+    records = (_read_first_seen(p) for p in sorted(directory.glob("*.json")))
+    return dict(r for r in records if r is not None)
+
+
+def delete_first_seen(mirror: Path, doc_id: str) -> None:
+    """Idempotent; called when a document is tombstoned."""
+    _first_seen_path(mirror, doc_id).unlink(missing_ok=True)

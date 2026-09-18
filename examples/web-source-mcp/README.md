@@ -73,8 +73,22 @@ kbforge run --connector mcp --set system=web --set "transport=$T" \
 ```
 
 To feed a watched page into an application concept, add it to the grounding subject
-map (`kbforge run --grounding`). Scout results can't be grounding yet, because
-their URLs aren't known in advance. That needs a core change.
+map (`kbforge run --grounding`). A Scout result's URL isn't known in advance, so it
+can never go in that map -- but the same `--grounding` config also takes `rules:`,
+which ground a concept in whatever matching documents turn up, Scout results
+included:
+
+```yaml
+rules:
+  - for:   {type: product}
+    from:  {system: web}
+    match: ["{native_id}"]
+```
+
+grounds every `product` concept in whatever `web` document mentions its
+`native_id` -- a Watch page or a Scout hit, whichever finds it first. Rules take
+effect with `--synthesizer llm`; the stub synthesizer never grounds. See
+`docs/architecture.md` §7.1 ("Grounding rules") for the full config.
 
 ## What a live run against Firecrawl showed
 
@@ -97,8 +111,10 @@ Measured on 2026-09-18, not assumed:
 ## Limits worth knowing
 
 - **Every page is a concept.** Scout results become reviewable concepts of their
-  own. They don't update your application pages until kbforge can ground a
-  concept on a search.
+  own regardless. A grounding `rule` (above) additionally lets a matching one
+  refresh an application concept, but only under `--synthesizer llm` -- the
+  stub synthesizer never grounds, and without a matching rule a Scout result
+  stays its own concept and nothing else.
 - **Nothing is deleted.** kbforge-mcp emits no tombstones, so a URL dropped from
   the Watch list, or no longer returned by Scout, leaves its concept in place.
 - **Use kbforge-mcp ≥ 0.2.0.** In 0.1.0 a read that failed (a 404, a rate limit)
