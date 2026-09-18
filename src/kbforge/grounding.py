@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import tempfile
 from pathlib import Path
 
@@ -22,6 +23,37 @@ from kbforge.synthesize import concept_path
 DEFAULT_MAX_GROUNDING_DOCS = 5
 
 
+class RuleFor(BaseModel):
+    """Which concepts a rule grounds. Keys present are AND-ed."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: str | None = None
+    system: str | None = None
+    doc: list[str] | None = None
+
+
+class RuleFrom(BaseModel):
+    """Which documents may ground them."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    system: str
+
+
+class GroundingRule(BaseModel):
+    """A templated grounding rule (design note 2026-09-18). `for`/`from` are
+    Python keywords, hence the aliases."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    for_: RuleFor = Field(alias="for")
+    from_: RuleFrom = Field(alias="from")
+    match: list[str]
+    newest: int = 3
+    by: str | None = None
+
+
 class GroundingConfig(BaseModel):
     """The operator subject map (§2.2). `extra="forbid"` so a typo'd key is an
     error rather than a silently empty map."""
@@ -30,6 +62,7 @@ class GroundingConfig(BaseModel):
 
     max_grounding_docs: int = DEFAULT_MAX_GROUNDING_DOCS
     grounding: dict[str, list[str]] = Field(default_factory=dict)
+    rules: list[GroundingRule] = Field(default_factory=list)
 
 
 def load_grounding(path: Path | None) -> GroundingConfig:
@@ -50,6 +83,21 @@ def is_qualified(value: str) -> bool:
     return bool(sep and system and native)
 
 
+# Plain `{name}` substitution, deliberately not str.format, which reads `{a.b}`
+# as an attribute and `{a:{w}}` as a nested field (the kbforge-sql url_template
+# lesson). One pattern serves validation and filling.
+_FIELD = re.compile(r"\{([^{}]*)\}")
+
+
+def template_fields(template: str) -> list[str] | None:
+    """Placeholder names in a match phrase, or None if its braces don't pair
+    up into `{name}` fields."""
+    rest = _FIELD.sub("", template)
+    if "{" in rest or "}" in rest:
+        return None
+    return _FIELD.findall(template)
+
+
 def problems_for(cfg: GroundingConfig) -> list[str]:
     """Shape only ([] = ok). Whether an id *resolves* is not a shape question and
     is not fatal -- §2.2, symmetric with the unresolvable-value rule in §3."""
@@ -68,6 +116,30 @@ def problems_for(cfg: GroundingConfig) -> list[str]:
                     f"grounding value {value!r} under {key!r} must be a qualified "
                     "doc_id ('system:native_id'); bare ids are not accepted"
                 )
+    for i, rule in enumerate(cfg.rules, 1):
+        where = f"grounding rule {i}"
+        if not (rule.for_.type or rule.for_.system or rule.for_.doc):
+            problems.append(
+                f"{where}: 'for' needs at least one of 'type', 'system', 'doc'"
+            )
+        for doc_id in rule.for_.doc or []:
+            if not is_qualified(doc_id):
+                problems.append(
+                    f"{where}: 'for.doc' entry {doc_id!r} must be a qualified "
+                    "doc_id ('system:native_id')"
+                )
+        if not rule.match:
+            problems.append(f"{where}: 'match' needs at least one phrase")
+        for phrase in rule.match:
+            if not phrase.strip():
+                problems.append(f"{where}: a 'match' phrase is blank")
+            elif template_fields(phrase) is None:
+                problems.append(
+                    f"{where}: 'match' phrase {phrase!r} has unpaired braces; "
+                    "fields are {name}"
+                )
+        if rule.newest < 1:
+            problems.append(f"{where}: 'newest' must be at least 1")
     return problems
 
 
