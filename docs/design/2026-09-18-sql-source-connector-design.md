@@ -4,7 +4,7 @@ title: kbforge — a relational database as a source (kbforge-sql)
 description: A configuration-only SQL source connector — one scoped query per source, optional row grouping, deterministic markdown rendering, snapshot fetch with manifest-derived tombstones, and the guards that keep an empty or shrunken result from deleting the knowledge base.
 tags: [okf, connectors, sql, sqlalchemy, denodo, deletion, producer]
 generated: { by: human:flyersworder, at: 2026-09-18T00:00:00Z }
-status: shipped in kbforge-sql 0.1.0 — §9 still deferred
+status: shipped as kbforge-sql 0.1.0; the package is packages/kbforge-sql, this note keeps the rationale — §9 still deferred
 okf_version: "0.2"
 ---
 
@@ -355,9 +355,12 @@ next scheduled run starts from the same state.
   Re-running a `SELECT` is safe. `ProgrammingError` and every other error — bad
   SQL, a missing view, no permission — fail immediately: retrying a typo only
   delays the message.
-- **Messages** name the source `system` and the error class. A URL appears only
-  as `render_as_string(hide_password=True)`. The run exits non-zero, which is
-  all a scheduler needs to alert.
+- **Messages** name the source `system` and the error class. A URL value is
+  never echoed, and the password — from `password_env` or embedded in the URL —
+  is replaced with `***` wherever the driver's message repeats it; exceptions
+  are re-raised `from None` so a chained traceback cannot reprint the
+  statement's parameters. The run exits non-zero, which is all a scheduler
+  needs to alert.
 
 **Read-only is layered, and only the last layer is a guarantee.** The only
 statement executed is the configured `query`; it runs inside a transaction that
