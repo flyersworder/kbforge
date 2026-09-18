@@ -23,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   SQLAlchemy can reach a source through configuration. One scoped query per
   source defines the corpus; every run is a snapshot, so a row leaving the
   result becomes a tombstone, guarded against an empty result and a mass
-  removal.
+  removal; `KBFORGE_SQL_ALLOW_REMOVALS=<system>` lifts the mass-removal guard
+  for a deliberate cleanup.
 - A pre-publish guard (`.github/scripts/check_release_target.py`) that fails a
   release unless the distribution its tag names was built at the tagged version and
   is absent from PyPI. `skip-existing` protects against a half-published release but

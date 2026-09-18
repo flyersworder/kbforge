@@ -148,7 +148,9 @@ Every problem is reported at once, before any I/O:
 Every configured column (`id`, `title`, `text`, `facets`, `exclude`,
 `group.*`) must exist in the result. A mismatch fails the run and lists the
 columns the query actually returned, so a typo or a renamed view column is a
-one-line fix rather than a silently empty attribute.
+one-line fix rather than a silently empty attribute. A result with two columns
+of the same name (`SELECT a.id, b.id`) is refused too: the later one would
+silently shadow the earlier.
 
 ## 4. Fetch → normalize
 
@@ -157,7 +159,9 @@ one-line fix rather than a silently empty attribute.
 1. Build the URL from `url_env` (and `password_env`); `create_engine`; open one
    connection.
 2. Begin a transaction, execute `query`, fetch **all** rows, **roll back**,
-   close. There is no commit anywhere in the package.
+   close. There is no commit anywhere in the package. The statement goes to
+   the driver with `no_parameters=True`: without it, pyformat drivers
+   (psycopg, pymysql) read a literal `%` in `LIKE 'EV-%'` as a placeholder.
 3. Check columns (§3.2).
 4. Drop `exclude` columns; convert every value to canonical form (§4.3).
 5. Group rows by the `id` tuple. Without `group`, an id with more than one row
@@ -346,7 +350,8 @@ next scheduled run starts from the same state.
 
 - **Retry transient errors only.** SQLAlchemy `OperationalError` and
   `InterfaceError` (refused, dropped, timed-out connections) retry the whole
-  query up to `retries` times with exponential backoff (1s, 2s, 4s, …).
+  query up to `retries` times with exponential backoff (1s, 2s, 4s, …),
+  each wait capped at 30s.
   Re-running a `SELECT` is safe. `ProgrammingError` and every other error — bad
   SQL, a missing view, no permission — fail immediately: retrying a typo only
   delays the message.

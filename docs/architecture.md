@@ -413,7 +413,12 @@ id) becomes one canonical document. Because the fetch is a full snapshot
 rather than an incremental one, the id set kbforge already holds from the last
 published run is enough to derive deletions from this run's result — an id
 that leaves the result becomes an explicit tombstone — which makes this the
-first connector to emit them at all. Read-only here is a rolled-back
+first connector to emit them at all. Two guards keep a bad result from
+emptying the bundle: an empty result fails the run, and a removal above
+`max_removed_fraction` does too, until an operator reruns with
+`KBFORGE_SQL_ALLOW_REMOVALS=<system>` — an environment variable rather than a
+config key, because editing any config key moves the cursor slot and loses the
+id set the deletion is derived from. Read-only here is a rolled-back
 transaction plus the account's grants, not a proof: kbforge cannot tell
 whether a configured SQL string has a side effect through a function call, a
 procedure, or a dialect extension, the same limit `kbforge-mcp` has for a tool

@@ -96,6 +96,11 @@ Because `--set` values are YAML-typed, a query with its own quoted string litera
 multi-line `WHERE` clause is easier to get right in a shell variable or script than typed
 inline; quote the whole `key=value` pair once and let the query itself carry its quotes.
 
+The query reaches the driver exactly as written, with no parameter binding, so `LIKE 'EV-%'`,
+Postgres `::` casts and `'10:30'` literals are safe on every driver. On the first result
+the connector checks that every configured column exists (listing the real ones if not)
+and that no two result columns share a name; `SELECT a.id, b.id` must alias them apart.
+
 ## First run: `dry-run` and a throwaway mirror
 
 No tool proves a query executable across every dialect, so try a new source against a
@@ -130,6 +135,10 @@ belt-and-braces, since the account's grants are what really carry the guarantee.
 
 `kbforge_validate_config` also rejects a blank `title` or a blank `id` column name before
 any connection is attempted, alongside the checks in §3.1 of the design note.
+
+A dropped or refused connection is retried up to `retries` times (default 2) with
+exponential backoff capped at 30 seconds; bad SQL, a missing view, or a missing grant fails
+at once, because retrying a typo only delays the message.
 
 ## Deletions
 
@@ -183,6 +192,25 @@ on Linux CI.
 trailing-whitespace stripping (§4.3) run before the duplicate-id check, so two raw id
 values that canonicalize to the same string collapse onto one id: without `group`, that is
 the duplicate-id error; with `group`, it is a silent merge into one entity's rows.
+
+## Testing against your own database
+
+The package ships a live test that is skipped unless you ask for it. Point it at a
+read-only view and run it with your driver installed:
+
+```bash
+pip install kbforge-sql denodo-sqlalchemy pytest   # or psycopg[binary], oracledb, ...
+export KBFORGE_SQL_LIVE_URL='denodo://kb_reader@denodo.example:9996/product_vdb'
+export KBFORGE_SQL_LIVE_PASSWORD=...               # optional
+export KBFORGE_SQL_LIVE_QUERY="SELECT product_id, product_name FROM iv_product WHERE product_name LIKE '%a%'"
+export KBFORGE_SQL_LIVE_ID=product_id KBFORGE_SQL_LIVE_TITLE=product_name
+pytest packages/kbforge-sql/tests/test_sql_live.py --run-live
+```
+
+It fetches twice and requires identical content hashes, which is the check that matters
+for a new source: anything volatile in the result (a refresh timestamp, a computed
+column) fails it, and belongs in `exclude`. Without the `KBFORGE_SQL_LIVE_QUERY` variables
+it queries `information_schema`, which any PostgreSQL accepts.
 
 ## Design
 
