@@ -121,10 +121,15 @@ containing `@`, `:`, `/` or `%` needs no percent-escaping.
 
 The expected deployment is a service account, and the recommended one is a **dedicated
 read-only account** granted `SELECT` only on the views its queries use. The connector
-rolls back every transaction and never commits, but that is a bound on accidents, not a
-guarantee: kbforge cannot prove a SQL string is free of side effects through a function
-call, a procedure, or a dialect extension, so the database's grants are what actually
-prevent a write.
+rolls back every transaction and never commits — no commit exists anywhere in the
+package — but that is a bound on accidents, not a guarantee: kbforge cannot prove a SQL
+string is free of side effects through a function call, a procedure, or a dialect
+extension, so the database's grants are what actually prevent a write. (The connector
+issues an explicit rollback even though SQLAlchemy also rolls back on connection close;
+belt-and-braces, since the account's grants are what really carry the guarantee.)
+
+`kbforge_validate_config` also rejects a blank `title` or a blank `id` column name before
+any connection is attempted, alongside the checks in §3.1 of the design note.
 
 ## Deletions
 
