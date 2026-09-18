@@ -11,6 +11,8 @@ import json
 import os
 import re
 import tempfile
+import unicodedata
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import yaml
@@ -96,6 +98,141 @@ def template_fields(template: str) -> list[str] | None:
     if "{" in rest or "}" in rest:
         return None
     return _FIELD.findall(template)
+
+
+def _nfc(text: str) -> str:
+    return unicodedata.normalize("NFC", text)
+
+
+def _field(owner: CanonicalDocument, name: str) -> str | None:
+    if name == "title":
+        value: object = owner.title
+    elif name == "native_id":
+        value = owner.anchor.native_id
+    else:
+        value = owner.structured.get(name)
+    if value is None or isinstance(value, (list, dict)):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def fill(template: str, owner: CanonicalDocument) -> str | None:
+    """A match phrase with its `{fields}` filled from `owner`, or None when any
+    field is missing or blank. Matching an empty field would match everything,
+    so such a phrase is dropped for this owner only."""
+    missing = False
+
+    def sub(m: re.Match[str]) -> str:
+        nonlocal missing
+        value = _field(owner, m.group(1))
+        if value is None:
+            missing = True
+            return ""
+        return value
+
+    out = _FIELD.sub(sub, template)
+    return None if missing or not out.strip() else out
+
+
+def _applies(rule: GroundingRule, owner: CanonicalDocument) -> bool:
+    scope = rule.for_
+    kind = str(owner.structured.get("type") or "concept")
+    if scope.type is not None and kind != scope.type:
+        return False
+    if scope.system is not None and owner.anchor.system != scope.system:
+        return False
+    return scope.doc is None or owner.doc_id in scope.doc
+
+
+def _as_time(value: object) -> datetime | None:
+    if isinstance(value, datetime):
+        moment = value
+    elif isinstance(value, date):
+        moment = datetime(value.year, value.month, value.day)
+    elif isinstance(value, str):
+        try:
+            moment = datetime.fromisoformat(value.strip())
+        except ValueError:
+            return None
+    else:
+        return None
+    # Naive is taken as UTC: the one assumption needed to order it against an
+    # aware value, and the convention kbforge-sql's canonical form documents.
+    return moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+
+
+def rule_matches(
+    owner: CanonicalDocument,
+    cfg: GroundingConfig,
+    by_id: dict[str, CanonicalDocument],
+    first_seen: dict[str, datetime],
+) -> tuple[list[tuple[str, str]], list[str]]:
+    """Rule-selected grounding for `owner`: `(doc_id, reason)` in rank order,
+    plus cap and unparseable-date notes. Pure and deterministic over `by_id`.
+
+    Rank is newest first by the rule's `by` facet, else first-seen; undated
+    candidates last; `doc_id` breaks every tie, so the order is total."""
+    path = concept_path(owner.doc_id)
+    matched: list[tuple[str, str]] = []
+    listed: set[str] = set()
+    notes: list[str] = []
+    for i, rule in enumerate(cfg.rules, 1):
+        if not _applies(rule, owner):
+            continue
+        phrases = [(t, p) for t in rule.match if (p := fill(t, owner)) is not None]
+        patterns = [
+            (
+                t,
+                p,
+                re.compile(rf"(?<!\w){re.escape(_nfc(p))}(?!\w)", re.IGNORECASE),
+            )
+            for t, p in phrases
+        ]
+        if not patterns:
+            continue
+        ranked: list[tuple[datetime | None, str, str]] = []
+        for doc in by_id.values():
+            if (
+                doc.deleted
+                or doc.doc_id == owner.doc_id
+                or doc.anchor.system != rule.from_.system
+            ):
+                continue
+            haystack = _nfc(f"{doc.title}\n{doc.text}")
+            hit = next(((t, p) for t, p, rx in patterns if rx.search(haystack)), None)
+            if hit is None:
+                continue
+            when = None
+            if rule.by is not None:
+                raw = doc.structured.get(rule.by)
+                when = _as_time(raw)
+                if raw is not None and when is None:
+                    notes.append(
+                        f"{path}: rule {i}: {doc.doc_id} has an unparseable "
+                        f"{rule.by!r} value {raw!r}; ranked by first-seen"
+                    )
+            if when is None:
+                when = first_seen.get(doc.doc_id)
+            reason = (
+                f"{path}: grounded by rule {i} ({hit[0]!r} = {hit[1]!r}) "
+                f"via {doc.doc_id}"
+            )
+            ranked.append((when, doc.doc_id, reason))
+        ranked.sort(
+            key=lambda r: (r[0] is None, -r[0].timestamp() if r[0] else 0.0, r[1])
+        )
+        kept, dropped = ranked[: rule.newest], ranked[rule.newest :]
+        if dropped:
+            notes.append(
+                f"{path}: rule {i} capped at {rule.newest}; dropped "
+                + ", ".join(doc_id for _, doc_id, _ in dropped)
+            )
+        for _, doc_id, reason in kept:
+            if doc_id not in listed:
+                listed.add(doc_id)
+                matched.append((doc_id, reason))
+    return matched, notes
 
 
 def problems_for(cfg: GroundingConfig) -> list[str]:
