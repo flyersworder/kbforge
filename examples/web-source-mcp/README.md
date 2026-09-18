@@ -22,9 +22,11 @@ same rules on itself.
    `structuredContent`: `{"results": [{"url": ..., "title": ...}]}`. It may be
    non-deterministic. An agentic search (an LLM that searches and cites) is fine
    *here*, as long as only the URLs it cites come back, never its answer text.
-2. **`read(url)` returns the page's own content, never a summary.** It returns the
-   same bytes for an unchanged page, so an unchanged page is a no-op in
-   kbforge's diff. It raises on an error page rather than returning one.
+2. **`read(url)` returns the page's own content, never a summary.** It returns
+   `{"markdown": ..., "title": ...}` as `structuredContent`, with the title taken
+   from the page itself. It returns the same bytes for an unchanged page, so an
+   unchanged page is a no-op in kbforge's diff. It raises on an error page rather
+   than returning one.
 3. **Both tools are read-only** (`readOnlyHint: true`).
 
 The return annotation on `search` must be a parameterized dict
@@ -45,12 +47,12 @@ export WEB_SOURCE_ALLOWED_DOMAINS='bosch-semiconductors.com,st.com,nxp.com,ti.co
 | `WEB_SOURCE_MAX_AGE_MS` | optional. Accept a cached scrape up to this age (Firecrawl's default when unset; `0` = always live). |
 | `FIRECRAWL_API_URL` | optional; default `https://api.firecrawl.dev/v2` |
 
-**Use one `system` for Watch and Scout, and don't map `title` in Scout.** A search
+**Use one `system` for Watch and Scout, and let the reader own the title.** A search
 will find pages you already watch. Under two system names, that page would be two
 documents rendering one bundle path, and kbforge aborts the run rather than let one
-overwrite the other. Under one system it is one document, whoever found it. The
-title has to come from the same place in both configs, or it flips between runs:
-Watch has no search title to offer, so Scout must not supply one either.
+overwrite the other. Under one system it is one document, whoever found it. Its
+title must not depend on who found it either, or it flips between runs, so both
+configs read it from the page with `title_key` (kbforge-mcp ≥ 0.2.0).
 
 ```bash
 T='{kind: stdio, command: uv, args: [run, --no-project, --with, "mcp>=2", --with, httpx,
@@ -59,13 +61,13 @@ T='{kind: stdio, command: uv, args: [run, --no-project, --with, "mcp>=2", --with
 
 # Watch: the curated list
 kbforge run --connector mcp --set system=web --set "transport=$T" \
-  --set 'read={tool: read, id_arg: url}' \
+  --set 'read={tool: read, id_arg: url, text_key: markdown, title_key: title}' \
   --set 'static_ids=[https://www.bosch-semiconductors.com/stories-and-events/eg120-redefining-efficiency-safety-and-reliability/]' \
   --mirror .kbforge/mirror --state .kbforge/state --out .kbforge/out
 
 # Scout: the wider net (one config per query; tbs "qdr:m" = past month)
 kbforge run --connector mcp --set system=web --set "transport=$T" \
-  --set 'read={tool: read, id_arg: url}' \
+  --set 'read={tool: read, id_arg: url, text_key: markdown, title_key: title}' \
   --set 'select={tool: search, args: {query: "SiC traction inverter gate driver new product", limit: 10, tbs: "qdr:m"}, ids: {list: results, id: url}}' \
   --mirror .kbforge/mirror --state .kbforge/state --out .kbforge/out
 ```
@@ -99,10 +101,12 @@ Measured on 2026-09-18, not assumed:
   concept on a search.
 - **Nothing is deleted.** kbforge-mcp emits no tombstones, so a URL dropped from
   the Watch list, or no longer returned by Scout, leaves its concept in place.
-- **Failed reads are silent in kbforge-mcp 0.1.0.** A read that fails (a 404, a
-  rate limit) is skipped, and a run whose reads *all* fail reports `NoOp`. On a
-  rate-limited plan, check the server's stderr for `429` responses before trusting
-  a no-op.
+- **Use kbforge-mcp ≥ 0.2.0.** In 0.1.0 a read that failed (a 404, a rate limit)
+  was skipped silently, and a run whose reads *all* failed reported `NoOp`. Live
+  testing here found that, and 0.2.0 fixes it: a run whose reads all fail stops
+  with `ReadsFailed`, and partial failures are named on stderr. The MCP SDK
+  reports a tool error only as "Error executing tool read", so the server's own
+  stderr has the cause (the HTTP status, a `429`).
 - **One `limit`-sized result set per query.** Each query is its own source config.
   Budget Firecrawl credits as queries × limit reads per run, minus unchanged pages
   served from Firecrawl's cache.

@@ -6,7 +6,9 @@ kbforge-mcp consumes as-is.
   domain allowlist. It may be non-deterministic; kbforge only uses it to decide
   what to read.
 - `read(url)` is the **reader**. It returns the page's own content as markdown,
-  never a summary, so every concept stays traceable to the page it came from.
+  never a summary, so every concept stays traceable to the page it came from,
+  plus the page's own title, so a page's title doesn't depend on which selector
+  found it (`{"markdown": ..., "title": ...}` as `structuredContent`).
 
 Swap `_search_backend` for another search API — Azure's Responses-API web
 search, say, returning the `url_citation` URLs it cites — and nothing else
@@ -81,9 +83,10 @@ def search(
 
 
 @server.tool(annotations=_READ_ONLY)
-def read(url: str) -> str:
-    """The page's main content as markdown. Raises rather than returning an
-    error page, so kbforge records a failed read instead of a junk concept."""
+def read(url: str) -> dict[str, str]:
+    """The page's main content as markdown, and its own title. Raises rather
+    than returning an error page, so kbforge records a failed read instead of a
+    junk concept."""
     body: dict = {"url": url, "formats": ["markdown"], "onlyMainContent": True}
     if max_age := os.environ.get("WEB_SOURCE_MAX_AGE_MS"):
         body["maxAge"] = int(max_age)
@@ -94,7 +97,8 @@ def read(url: str) -> str:
     markdown = clean_markdown(data.get("markdown") or "")
     if not markdown.strip():
         raise RuntimeError(f"{url} yielded no content")
-    return markdown
+    title = str((data.get("metadata") or {}).get("title") or "").strip()
+    return {"markdown": markdown, "title": title}
 
 
 def main() -> None:
