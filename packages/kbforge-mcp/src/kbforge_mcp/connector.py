@@ -97,7 +97,7 @@ class McpConnector:
     def kbforge_connector_info(self) -> ConnectorInfo:
         return ConnectorInfo(
             name=_NAME,
-            version="0.1.0",
+            version="0.2.0",
             source_system="any MCP server with a select tool and a read-by-id tool",
             info_types=["document"],
         )

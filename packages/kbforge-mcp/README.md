@@ -86,6 +86,32 @@ links or as `structuredContent`, and otherwise you enumerate the corpus by hand 
 would close the gap — an opt-in flag to parse a text block as JSON — is not built
 (design note §10.3).
 
+## When reads fail
+
+A read that fails — the tool reports an error, or its response cannot be mapped —
+skips that one document and marks the fetch incomplete; the rest of the run
+proceeds, and a warning on stderr names each failed id. A run whose reads **all**
+fail stops with `ReadsFailed` and a non-zero exit instead: zero documents would
+otherwise reach the pipeline as "no change detected", and a scheduled job whose
+key was revoked would never alert. A selection that is simply empty — a search that
+found nothing — is still a quiet no-op.
+
+## One page, two selectors
+
+A document's title comes from its selector by default: the search hit's title, or
+the id itself for `static_ids`. So a page reached both ways — a curated list and a
+search over the same site, under one `system` — takes whichever title the last run
+supplied, and shows as modified every time the two alternate. A reader that returns
+`structuredContent` can own the title instead, so it no longer depends on who
+selected the page:
+
+```yaml
+read: {tool: read, id_arg: url, text_key: markdown, title_key: title}
+```
+
+`title_key` needs `text_key` (it reads the same structured response); a missing or
+blank title falls back to the selector's.
+
 ## What a source's own framing does to a concept
 
 This connector is a retriever: it hands kbforge the source's bytes and does not

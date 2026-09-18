@@ -30,6 +30,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interpolation into a `run:` block, where a tag containing a quote would have
   executed as shell — on the one job holding `id-token: write`.
 
+## [kbforge-mcp-v0.2.0] - 2026-09-18
+
+Found by live-testing a Firecrawl-backed web source (`examples/web-source-mcp`).
+kbforge itself is unchanged by this release.
+
+### Added
+
+- `read.title_key`, alongside `read.text_key`: the reader owns a document's title,
+  so a page reached through two selectors (a curated `static_ids` list and a search)
+  keeps one title instead of flipping between runs.
+
+### Fixed
+
+- A run whose reads **all** failed returned zero documents, which the pipeline
+  reports as `NoOp` with exit 0 — a revoked key or a rate limit looked exactly like
+  "nothing changed". It now raises `ReadsFailed`, naming the first failure.
+- Partially failed runs were silent apart from `complete=False`; each failed read
+  is now named in a warning on stderr.
+
 ## [kbforge-sql-v0.1.0] - 2026-09-18
 
 First release of `kbforge-sql`, a separate distribution: any database SQLAlchemy
@@ -554,6 +573,7 @@ production protocol.
   config, with no per-connector knowledge in the CLI.
 
 [Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.9.0...HEAD
+[kbforge-mcp-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-mcp-v0.2.0
 [kbforge-sql-v0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.0
 [0.9.0]: https://github.com/flyersworder/kbforge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/flyersworder/kbforge/compare/v0.7.0...v0.8.0
