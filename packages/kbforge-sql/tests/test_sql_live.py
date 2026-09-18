@@ -27,9 +27,12 @@ def cfg():
         "url_env": "KBFORGE_SQL_LIVE_URL",
         "query": os.environ.get(
             "KBFORGE_SQL_LIVE_QUERY",
+            # The LIKE '%s%' exercises the no_parameters fix (Important 2):
+            # a pyformat driver (psycopg/psycopg2/pymysql) would otherwise try
+            # to interpolate this literal `%` as a bind parameter.
             "SELECT table_schema || '.' || table_name AS id, table_name AS title, "
             "table_type FROM information_schema.tables "
-            "WHERE table_schema = 'information_schema'",
+            "WHERE table_schema = 'information_schema' AND table_name LIKE '%s%'",
         ),
         "id": [os.environ.get("KBFORGE_SQL_LIVE_ID", "id")],
         "title": os.environ.get("KBFORGE_SQL_LIVE_TITLE", "title"),

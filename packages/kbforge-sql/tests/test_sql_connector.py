@@ -2,6 +2,8 @@ from datetime import datetime
 
 import pytest
 from sql_testdb import execute, flat_cfg, grouped_cfg, make_db
+from sqlalchemy import event
+from sqlalchemy.engine import Engine
 
 from kbforge.canonical import assert_fetch_contract, assert_stability
 from kbforge.registry import build_registry
@@ -188,6 +190,30 @@ def test_a_statement_without_a_result_set_is_rejected(tmp_path, monkeypatch):
         CONNECTOR.kbforge_fetch(flat_cfg(query="DELETE FROM product"), None)
     _, docs = _docs(flat_cfg())
     assert len(docs) == 3  # the DELETE was rolled back
+
+
+def test_a_percent_sign_in_the_query_is_not_treated_as_a_bind_parameter(
+    tmp_path, monkeypatch
+):
+    # exec_driver_sql hands the driver an empty parameter collection; a
+    # pyformat-family driver (psycopg/psycopg2/pymysql, and Denodo's dialect)
+    # then interpolates `%` against it, so a bare `LIKE 'IMC%'` breaks unless
+    # the execution is marked no_parameters.
+    make_db(tmp_path, monkeypatch)
+    seen: list[bool] = []
+
+    def listener(conn, cursor, statement, parameters, context, executemany):
+        seen.append(context.no_parameters)
+
+    event.listen(Engine, "before_cursor_execute", listener)
+    try:
+        cfg = flat_cfg(query=flat_cfg()["query"] + " WHERE product_id LIKE 'IMC%'")
+        _, docs = _docs(cfg)
+    finally:
+        event.remove(Engine, "before_cursor_execute", listener)
+
+    assert seen and all(seen)
+    assert sorted(docs) == ["products:IMC300"]
 
 
 def test_the_cursor_carries_the_manifest_under_sql(tmp_path, monkeypatch):

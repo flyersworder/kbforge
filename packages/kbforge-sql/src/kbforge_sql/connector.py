@@ -57,7 +57,13 @@ def _query_once(url: URL, query: str) -> tuple[list[str], list[tuple]]:
     try:
         with engine.connect() as conn:
             try:
-                result = conn.exec_driver_sql(query)
+                # no_parameters: a driver's paramstyle (psycopg/psycopg2/pymysql,
+                # and Denodo's dialect, are all pyformat-family) otherwise treats
+                # `%` in the statement as a parameter marker, and a bare `LIKE
+                # 'EV-%'` breaks with an empty parameter collection to fill it.
+                result = conn.exec_driver_sql(
+                    query, execution_options={"no_parameters": True}
+                )
                 if not result.returns_rows:
                     raise SqlSourceError(
                         "the query returned no result set; a source query must "
