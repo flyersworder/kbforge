@@ -1,9 +1,11 @@
 """Cross-source grounding: which documents ground which, and whether that has
 changed since the concept was last built (design note 2026-08-20).
 
-Everything here is pure except the four sidecar functions. Resolution lives on
-this side of the seam, never in a synthesizer: a synthesizer that chose its own
-sources would be choosing its own provenance."""
+Everything here is pure except the sidecar functions (`write_sidecar`,
+`read_sidecar`, `delete_sidecar`, `has_sidecars`) and the first-seen functions
+(`record_first_seen`, `load_first_seen`, `delete_first_seen`). Resolution lives
+on this side of the seam, never in a synthesizer: a synthesizer that chose its
+own sources would be choosing its own provenance."""
 
 from __future__ import annotations
 
@@ -375,6 +377,12 @@ def _write_atomic(path: Path, payload: dict) -> None:
     writers on the shared mirror never `os.replace` each other's half-written
     file."""
     path.parent.mkdir(parents=True, exist_ok=True)
+    # A unique temp name, not `<slot>.json.tmp`: a fixed one is the same path for
+    # every writer, so two runs on the shared mirror can `os.replace` each
+    # other's half-written file into the live slot — defeating the atomicity the
+    # temp file is here for. The finally-unlink covers the crash-between case,
+    # which would otherwise leave an orphan invisible to glob queries like
+    # `*.json` used by `has_sidecars`, `load_first_seen`, and `delete_sidecar`.
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
     tmp = Path(tmp_name)
     try:
