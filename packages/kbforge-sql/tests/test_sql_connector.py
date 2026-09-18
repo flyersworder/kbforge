@@ -281,3 +281,50 @@ def test_the_cursor_carries_the_manifest_under_sql(tmp_path, monkeypatch):
     assert result.cursor.connector == "sql"
     assert result.cursor.payload == {"ids": ["IMC300", "TLE9", "XDP1"]}
     assert all(r.media_type != TOMBSTONE for r in result.records)
+
+
+def test_numeric_order_by_sorts_by_value_not_text():
+    # Canonical form turns a Decimal into text, and "10" < "100" < "9.5" as
+    # text. Children must sort on the database value.
+    from decimal import Decimal
+
+    from kbforge_sql.config import SqlSourceConfig
+    from kbforge_sql.connector import _entities
+
+    cfg = SqlSourceConfig.model_validate(
+        grouped_cfg(
+            group={"children": ["sku", "price"], "order_by": ["price"]},
+            facets=[],
+            text=None,
+        )
+    )
+    columns = ["app_id", "app_name", "segment", "sku", "price"]
+    rows = [
+        ("EV", "EV traction", "Automotive", "C", Decimal("100")),
+        ("EV", "EV traction", "Automotive", "A", Decimal("9.5")),
+        ("EV", "EV traction", "Automotive", "B", Decimal("10")),
+        ("EV", "EV traction", "Automotive", "D", None),
+    ]
+    (entity,) = _entities(cfg, columns, rows)
+    assert entity.payload["group"]["rows"] == [
+        ["A", "9.5"],
+        ["B", "10"],
+        ["C", "100"],
+        ["D", None],
+    ]
+
+
+def test_a_url_template_column_with_a_dot_renders(tmp_path, monkeypatch):
+    make_db(tmp_path, monkeypatch)
+    cfg = flat_cfg(
+        query='SELECT product_id AS "p.id", product_name FROM product',
+        id=["p.id"],
+        text=None,
+        facets=[],
+        exclude=[],
+        url_template="https://portal.example/products/{p.id}",
+    )
+    _, docs = _docs(cfg)
+    assert docs["products:IMC300"].anchor.url == (
+        "https://portal.example/products/IMC300"
+    )

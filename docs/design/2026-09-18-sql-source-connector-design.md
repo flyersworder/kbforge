@@ -142,7 +142,10 @@ Every problem is reported at once, before any I/O:
 - `group.children` does not include any `id` column; `group.order_by` is a
   subset of `group.children`.
 - `url_template` references only `id` columns. A link that interpolated any
-  other column would move whenever that column changed.
+  other column would move whenever that column changed. Fields are plain
+  `{column}` substitution, not `str.format`: format() would read `{a.b}` as an
+  attribute and `{a:{w}}` as a nested field, so a template could validate and
+  still fail mid-fetch.
 - `retries >= 0`; `0 < max_removed_fraction <= 1`.
 
 ### 3.2 Checks on the first result
@@ -252,8 +255,10 @@ row is in the text.
   stable, and the order the SQL author chose. The id is in the text because a
   grounding reader sees nothing else (§4.4).
 - The child table appears only with `group`. Its heading is `group.heading`,
-  defaulting to `system`. Rows sort by `group.order_by`, then by the whole
-  canonical row as a tiebreaker, so ties cannot reorder between runs.
+  defaulting to `system`. Rows sort by `group.order_by` on the **raw**
+  database values — numbers by value, since the canonical form of a decimal
+  is text and `"10" < "9.5"` — then by the whole canonical row as a
+  tiebreaker, so ties cannot reorder between runs.
 - A child row whose values are all NULL is dropped: that is what a `LEFT
   JOIN` returns for an entity with no children, and it is not a child.
 - `|` in a cell is escaped as `\|`; a newline in a cell becomes `<br>`.

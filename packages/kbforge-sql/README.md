@@ -43,7 +43,7 @@ text: description                # optional free-text column, placed verbatim
 facets: [family, status]         # scalar columns -> filterable frontmatter
 exclude: [last_refreshed]        # volatile columns, dropped before hashing
 type: product                    # OKF `type` for every concept; default "concept"
-url_template: https://portal.example/products/{product_id}   # optional
+url_template: https://portal.example/products/{product_id}   # optional; {column} fields, id columns only
 retries: 2                       # transient-error retries; default 2
 max_removed_fraction: 0.5        # deletion ceiling, see below; default 0.5
 ```

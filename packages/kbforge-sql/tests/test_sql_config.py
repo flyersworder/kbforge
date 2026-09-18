@@ -143,7 +143,29 @@ def test_url_template_may_only_reference_id_columns():
 
 def test_a_malformed_url_template_is_reported():
     problems = problems_for(_cfg(url_template="https://p/{product_id"))
-    assert "config 'url_template' is not a valid format string" in problems
+    assert (
+        "config 'url_template' has unpaired braces; fields are `{column}`" in problems
+    )
+
+
+@pytest.mark.parametrize(
+    "template",
+    [
+        "https://p/{product_id.real}",
+        "https://p/{product_id[0]}",
+        "https://p/{0}",
+        "https://p/{product_id:{w}}",
+        "https://p/{product_id!r}",
+    ],
+)
+def test_url_template_fields_must_be_plain_id_columns(template):
+    # str.format would read these as attribute, index, positional or nested
+    # fields and fail mid-fetch; the template is plain `{column}` substitution.
+    assert problems_for(_cfg(url_template=template)) != []
+
+
+def test_a_url_template_column_with_a_dot_renders_literally():
+    assert problems_for(_cfg(id=["a.b"], url_template="https://p/{a.b}")) == []
 
 
 @pytest.mark.parametrize(

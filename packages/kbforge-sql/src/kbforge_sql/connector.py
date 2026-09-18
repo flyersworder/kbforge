@@ -13,6 +13,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from decimal import Decimal
 from urllib.parse import quote
 
 from sqlalchemy import URL, create_engine, make_url
@@ -29,7 +30,12 @@ from kbforge.models import (
     RawRecord,
     ResourceAnchor,
 )
-from kbforge_sql.config import SqlSourceConfig, check_columns, problems_for
+from kbforge_sql.config import (
+    SqlSourceConfig,
+    check_columns,
+    problems_for,
+    render_template,
+)
 from kbforge_sql.errors import SqlSourceError
 from kbforge_sql.identity import native_id_for
 from kbforge_sql.render import render_text
@@ -143,10 +149,16 @@ def _query(cfg: SqlSourceConfig) -> tuple[list[str], list[tuple]]:
     raise AssertionError("unreachable: the loop returns or raises")
 
 
-def _sort_key(value: Scalar) -> tuple:
-    # Type name before value, so a column mixing ints and strings still sorts
-    # instead of raising TypeError; NULLs last.
-    return (value is None, type(value).__name__, 0 if value is None else value)
+def _sort_key(value: object) -> tuple:
+    """Order for a RAW database value in `group.order_by`. Raw, because the
+    canonical form is text for decimals and floats, and "10" < "9.5" as text.
+    Numbers compare by value across int/float/Decimal; other types by type name
+    first, so a column mixing types still sorts instead of raising; NULLs last."""
+    if value is None:
+        return (1,)
+    if isinstance(value, int | float | Decimal) and not isinstance(value, bool):
+        return (0, 0, Decimal(str(value)))
+    return (0, 1, type(value).__name__, value)
 
 
 def _entities(
@@ -156,16 +168,17 @@ def _entities(
     keep = [c for c in columns if c not in cfg.exclude]
     children = list(cfg.group.children) if cfg.group else []
 
-    by_id: dict[str, list[dict[str, Scalar]]] = {}
+    # Each canonical row keeps its raw tuple: group.order_by sorts on raw values.
+    by_id: dict[str, list[tuple[dict[str, Scalar], tuple]]] = {}
     for raw in rows:
         row = {c: canonical(raw[index[c]], c) for c in keep}
         nid = native_id_for([row[c] for c in cfg.id], cfg.id)
-        by_id.setdefault(nid, []).append(row)
+        by_id.setdefault(nid, []).append((row, raw))
 
     entity_cols = [c for c in keep if c not in children]
     entities: list[_Entity] = []
     for nid in sorted(by_id):
-        group_rows = by_id[nid]
+        group_rows = [row for row, _ in by_id[nid]]
         if cfg.group is None and len(group_rows) > 1:
             raise SqlSourceError(
                 f"{len(group_rows)} rows share the id {nid!r}; configure 'group' "
@@ -188,13 +201,17 @@ def _entities(
         ]
         group = None
         if cfg.group is not None:
-            child_rows = [[r[c] for c in children] for r in group_rows]
+            keyed = [
+                (
+                    [_sort_key(raw[index[c]]) for c in cfg.group.order_by],
+                    [row[c] for c in children],
+                )
+                for row, raw in by_id[nid]
+            ]
             # A LEFT JOIN's all-NULL row means "no children", not a child.
-            child_rows = [r for r in child_rows if any(v is not None for v in r)]
-            order = [children.index(c) for c in cfg.group.order_by]
-            child_rows.sort(
-                key=lambda r: ([_sort_key(r[i]) for i in order], json.dumps(r))
-            )
+            keyed = [k for k in keyed if any(v is not None for v in k[1])]
+            keyed.sort(key=lambda k: (k[0], json.dumps(k[1])))
+            child_rows = [child for _, child in keyed]
             group = {
                 "heading": cfg.group.heading or cfg.system,
                 "columns": children,
@@ -202,8 +219,8 @@ def _entities(
             }
         url = None
         if cfg.url_template is not None:
-            url = cfg.url_template.format(
-                **{c: quote(str(first[c]), safe="") for c in cfg.id}
+            url = render_template(
+                cfg.url_template, {c: quote(str(first[c]), safe="") for c in cfg.id}
             )
         entities.append(
             _Entity(

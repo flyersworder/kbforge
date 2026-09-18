@@ -7,8 +7,7 @@ from __future__ import annotations
 import os
 import re
 from collections import Counter
-from collections.abc import Sequence
-from string import Formatter
+from collections.abc import Mapping, Sequence
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -60,12 +59,24 @@ class SqlSourceConfig(_Strict):
         return list(dict.fromkeys(cols))
 
 
-def _template_fields(template: str) -> list[str] | None:
-    """Field names in a str.format template, or None if it does not parse."""
-    try:
-        return [f for _, f, _, _ in Formatter().parse(template) if f is not None]
-    except ValueError:
+# `url_template` is plain `{column}` substitution, deliberately not str.format:
+# format() would read `{a.b}` as an attribute, `{a[0]}` as an index, `{0}` as a
+# positional argument and `{a:{w}}` as a nested field, so a template could pass
+# validation and still fail mid-fetch. One pattern serves both sides.
+_TEMPLATE_FIELD = re.compile(r"\{([^{}]*)\}")
+
+
+def template_fields(template: str) -> list[str] | None:
+    """Column names a url_template references, or None if its braces don't
+    pair up into `{column}` fields."""
+    rest = _TEMPLATE_FIELD.sub("", template)
+    if "{" in rest or "}" in rest:
         return None
+    return _TEMPLATE_FIELD.findall(template)
+
+
+def render_template(template: str, values: Mapping[str, str]) -> str:
+    return _TEMPLATE_FIELD.sub(lambda m: values[m.group(1)], template)
 
 
 def problems_for(config: dict) -> list[str]:
@@ -141,9 +152,11 @@ def problems_for(config: dict) -> list[str]:
             )
 
     if cfg.url_template is not None:
-        fields = _template_fields(cfg.url_template)
+        fields = template_fields(cfg.url_template)
         if fields is None:
-            problems.append("config 'url_template' is not a valid format string")
+            problems.append(
+                "config 'url_template' has unpaired braces; fields are `{column}`"
+            )
         elif bad := sorted({f for f in fields if f not in cfg.id}):
             problems.append(
                 f"config 'url_template' may only reference id column(s): {bad}"
