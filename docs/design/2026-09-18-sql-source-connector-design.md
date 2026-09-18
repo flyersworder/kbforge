@@ -53,7 +53,9 @@ Modules, each with one job:
 | Module | Job |
 |---|---|
 | `config.py` | the pydantic config model and every offline check |
+| `errors.py` | `SqlSourceError`, the one exception the connector raises |
 | `values.py` | database value → canonical JSON-safe form |
+| `identity.py` | id column values → path-safe, injective `native_id` |
 | `render.py` | canonical entity → markdown text |
 | `connector.py` | the four hooks; the only module that does I/O |
 
@@ -177,10 +179,16 @@ result is indistinguishable from deletions.
 
 ### 4.2 Identity
 
-`native_id` is the `id` column values, each canonicalized (§4.3), with `%`
-escaped as `%25` and `/` as `%2F`, joined with `/`. Escaping makes the join
-injective: the composite `("a/b", "c")` and `("a", "b/c")` cannot meet.
-`doc_id` is `f"{system}:{native_id}"`.
+`native_id` is the `id` column values, each canonicalized (§4.3) and
+percent-escaped, joined with `/`. The escape set is `kbforge-mcp`'s (`slug.py`):
+`%`, `/`, the control characters, and `<>:"|?*\` — a native_id becomes a
+path in a repository checked out on Windows as well as Linux, and `:` is
+illegal in an NTFS filename. A trailing `.` or space is escaped too, and a
+native_id ending in `.md` has that dot escaped, because `concept_path` strips a
+`.md` suffix a second time downstream. Escaping `%` and `/` is what makes the
+join injective: the composite `("a/b", "c")` and `("a", "b/c")` cannot meet. A
+NULL or blank id value is an error naming the column. `doc_id` is
+`f"{system}:{native_id}"`.
 
 ### 4.3 Canonical values (`values.py`)
 
@@ -194,6 +202,7 @@ injective: the composite `("a/b", "c")` and `("a", "b/c")` cannot meet.
 | `date` | ISO `YYYY-MM-DD` |
 | `datetime`, tz-aware | ISO 8601 in UTC |
 | `datetime`, naive | ISO 8601, kept naive — never guessed into a timezone |
+| `UUID` | its canonical string form |
 | `bytes`, anything else | rejected, naming the column: `exclude` it or cast it in SQL |
 
 Rejecting rather than dropping is deliberate. A silently dropped column is a
@@ -239,6 +248,8 @@ row is in the text.
 - The child table appears only with `group`. Its heading is `group.heading`,
   defaulting to `system`. Rows sort by `group.order_by`, then by the whole
   canonical row as a tiebreaker, so ties cannot reorder between runs.
+- A child row whose values are all NULL is dropped: that is what a `LEFT
+  JOIN` returns for an entity with no children, and it is not a child.
 - `|` in a cell is escaped as `\|`; a newline in a cell becomes `<br>`.
 - There is no templating. Wording is the synthesizer's job; the connector's is
   to present the row faithfully and stably.
