@@ -21,6 +21,7 @@ from kbforge.grounding import (
     load_first_seen,
     record_first_seen,
     resolve_all,
+    with_first_seen,
     write_sidecar,
 )
 from kbforge.mirror import commit, diff, load_all
@@ -277,7 +278,16 @@ def run(
     # of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
     # Recency fallback for grounding rules; loaded once, only when rules exist.
-    first_seen = load_first_seen(mirror_path) if grounding_cfg.rules else {}
+    # Overlaid with THIS run's own documents (existing records win): a rule
+    # can match a document committed in the same run as its owner, before its
+    # sidecar exists, and without the overlay it would rank as undated on this
+    # run and dated on the next identical-fetch run -- an unchanged world would
+    # stop being a no-op.
+    first_seen = (
+        with_first_seen(load_first_seen(mirror_path), docs)
+        if grounding_cfg.rules
+        else {}
+    )
     by_id = {d.doc_id: d for d in mirror_docs}
     by_id.update({d.doc_id: d for d in docs if not d.deleted})
     hashes = {k: v.anchor.content_hash for k, v in by_id.items()}

@@ -7,7 +7,7 @@ from kbforge import pipeline
 from kbforge.canonical import FetchContractError, content_hash
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.grounding import GroundingConfig, has_sidecars
-from kbforge.mirror import commit
+from kbforge.mirror import commit, slot_key
 from kbforge.models import (
     CanonicalDocument,
     ConceptFrontmatter,
@@ -1160,10 +1160,69 @@ def test_first_seen_is_deleted_with_its_tombstone(tmp_path):
 
 
 def test_a_noop_run_writes_no_first_seen(tmp_path):
+    """Deleting the record after the bootstrap run, rather than snapshotting the
+    directory, is what makes this test able to fail: write-once record_first_seen
+    never touches an EXISTING record, so a directory-listing comparison passes
+    whether or not the no-op path calls it. Only an absent record exposes that."""
     a = _doc("a", "A", system="web")
     _run_once(tmp_path, [a], connector_name="web")
-    directory = tmp_path / "mirror" / "_first_seen"
-    before = sorted(p.name for p in directory.iterdir())
+    record = tmp_path / "mirror" / "_first_seen" / f"{slot_key('web:a')}.json"
+    record.unlink()
     result, _ = _run_result(tmp_path, [a], connector_name="web")
     assert isinstance(result, NoOp)
-    assert sorted(p.name for p in directory.iterdir()) == before
+    assert not record.exists()
+
+
+def _dated(doc: CanonicalDocument, when: datetime) -> CanonicalDocument:
+    """A same-object mutation, not a copy: `doc.anchor.content_hash` was already
+    computed by `_doc` and `content_hash` excludes `retrieved_at` (§4.3 law 2),
+    so there is nothing to recompute."""
+    doc.anchor.retrieved_at = when
+    return doc
+
+
+def test_a_document_committed_alongside_its_owner_is_dated_this_run(tmp_path):
+    """§6 permits a same-system rule, so a matching document can be committed
+    in the SAME run as its owner -- one connector emitting both -- before that
+    document's own sidecar exists. Without overlaying THIS run's own documents
+    onto `first_seen`, such a document ranks undated (last) the run it
+    arrives and dated the very next identical-fetch run, so the rule's
+    `newest` selection changes with nothing else having changed -- an
+    unchanged world stops being a no-op (§4)."""
+    cfg = GroundingConfig.model_validate(
+        {
+            "rules": [
+                {
+                    "for": {"type": "hub"},
+                    "from": {"system": "web"},
+                    "match": ["{native_id}"],
+                    "newest": 1,
+                }
+            ]
+        }
+    )
+    hub = _doc("hub", "Widget hub", system="web", structured={"type": "hub"})
+    a = _doc("a", "Widget a", system="web", text="Mentions hub.")
+    synth = _GroundingSynth()
+    _run_once(
+        tmp_path,
+        [hub, a],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="web",
+    )
+
+    b = _dated(
+        _doc("b", "Widget b", system="web", text="Mentions hub too."),
+        datetime(2025, 1, 1, tzinfo=UTC),
+    )
+    pub = _run_once(
+        tmp_path, [b], synthesizer=synth, grounding_config=cfg, connector_name="web"
+    )
+    assert pub.last_change is not None
+    assert [d.doc_id for d in synth.seen["web:hub"]] == ["web:b"]
+
+    result, _ = _run_result(
+        tmp_path, [b], synthesizer=synth, grounding_config=cfg, connector_name="web"
+    )
+    assert isinstance(result, NoOp)

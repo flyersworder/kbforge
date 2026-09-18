@@ -497,6 +497,37 @@ def _read_first_seen(path: Path) -> tuple[str, datetime] | None:
         return None
 
 
+def first_seen_time(doc: CanonicalDocument) -> datetime:
+    """The aware moment `doc` was first seen, from its anchor's `retrieved_at`.
+    Naive is taken as UTC, the same convention `_as_time` documents. Pure --
+    shared by `record_first_seen` (what gets written) and `with_first_seen`
+    (what stands in before it has been), so the naive->UTC rule lives once."""
+    when = doc.anchor.retrieved_at
+    return when if when.tzinfo else when.replace(tzinfo=UTC)
+
+
+def with_first_seen(
+    first_seen: dict[str, datetime], docs: list[CanonicalDocument]
+) -> dict[str, datetime]:
+    """`first_seen` overlaid with this run's own non-deleted documents, existing
+    records winning (`setdefault`).
+
+    A document a rule matches against can be committed in the SAME run as its
+    owner -- one connector emitting both, or a same-system rule (§6) -- and its
+    sidecar has not been written yet, so `load_first_seen` alone has never
+    heard of it and it ranks as undated (last) instead of by its real recency.
+    The next identical-fetch run then finds it dated after all, the rule's
+    `newest` selection changes, and an unchanged world stops being a no-op
+    (§4). Overlaying this run's own documents closes that: existing records
+    always win, so a document already on disk keeps the time it was actually
+    first seen, not this run's retrieval time."""
+    out = dict(first_seen)
+    for doc in docs:
+        if not doc.deleted:
+            out.setdefault(doc.doc_id, first_seen_time(doc))
+    return out
+
+
 def record_first_seen(mirror: Path, docs: list[CanonicalDocument]) -> None:
     """Write-once, for documents a publishing run commits. Each run records only
     its own documents, so no run writes another connector's state."""
@@ -506,8 +537,7 @@ def record_first_seen(mirror: Path, docs: list[CanonicalDocument]) -> None:
         path = _first_seen_path(mirror, doc.doc_id)
         if _read_first_seen(path) is not None:
             continue
-        when = doc.anchor.retrieved_at
-        when = when if when.tzinfo else when.replace(tzinfo=UTC)
+        when = first_seen_time(doc)
         _write_atomic(path, {"doc_id": doc.doc_id, "first_seen": when.isoformat()})
 
 

@@ -317,6 +317,33 @@ def test_grounding_rules_with_the_stub_synthesizer_prints_an_inactive_notice(
     ) in out
 
 
+def test_a_rules_free_grounding_config_prints_no_inactive_notice(
+    tmp_path: Path, capsys
+):
+    """The notice is specific to declared rules; a subject map alone -- the
+    grounding this CLI already supported -- must not trip it."""
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    g = tmp_path / "g.yaml"
+    g.write_text("grounding: {}\n", "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--grounding",
+            str(g),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 0
+    out = capsys.readouterr().out
+    assert "grounding rules are validated but inactive" not in out
+
+
 @pytest.mark.parametrize(
     ("name", "body"),
     [
