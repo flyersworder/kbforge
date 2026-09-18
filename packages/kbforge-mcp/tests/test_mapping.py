@@ -697,3 +697,26 @@ def test_a_configured_ids_mapping_falls_back_to_tier1_without_structured_content
     )
     refs = refs_from_select(result, IdsMapping(list="results", id="url"))
     assert [r.native_id for r in refs] == ["@docs.aws.amazon.com/s3/naming"]
+
+
+def test_a_tier2_read_title_key_makes_the_reader_own_the_title():
+    # One page reached through two selectors (a curated id list and a search)
+    # would otherwise take whichever title its selector supplied, and flip
+    # between runs. A reader-owned title is the same whoever selected the page.
+    ref = DocRef(raw_id="https://x/a", native_id="@x/a", url="https://x/a", title="Hit")
+    result = CallToolResult(
+        content=[], structured_content={"body": "text", "title": "Page Title"}
+    )
+    spec = ReadSpec(tool="read", id_arg="url", text_key="body", title_key="title")
+    (record,) = records_from_read(result, ref, spec, "text/markdown")
+    assert record.anchor_hint["title"] == "Page Title"
+
+
+@pytest.mark.parametrize("value", [None, "", "   ", 7])
+def test_a_missing_or_unusable_reader_title_falls_back_to_the_selector(value):
+    ref = DocRef(raw_id="https://x/a", native_id="@x/a", url="https://x/a", title="Hit")
+    structured = {"body": "text"} if value is None else {"body": "text", "title": value}
+    result = CallToolResult(content=[], structured_content=structured)
+    spec = ReadSpec(tool="read", id_arg="url", text_key="body", title_key="title")
+    (record,) = records_from_read(result, ref, spec, "text/markdown")
+    assert record.anchor_hint["title"] == "Hit"

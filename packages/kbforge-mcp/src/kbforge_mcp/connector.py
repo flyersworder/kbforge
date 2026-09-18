@@ -9,6 +9,7 @@ excludes the anchor by design -- so the guard is a test, not a convention.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
@@ -28,6 +29,13 @@ from kbforge_mcp.mapping import MappingError, records_from_read
 from kbforge_mcp.selectors import select_refs
 
 _NAME = "mcp"
+
+log = logging.getLogger("kbforge_mcp")
+
+
+class ReadsFailed(RuntimeError):
+    """Every selected document failed to read. Raised rather than returning
+    zero records, which the pipeline would report as "no change"."""
 
 
 def _unwrap(exc: BaseException) -> BaseException:
@@ -49,20 +57,38 @@ async def _fetch(cfg: McpSourceConfig) -> tuple[list[RawRecord], bool]:
         stamped = datetime.now(tz=UTC).isoformat()
         # `system` reaches normalize ONLY through anchor_hint: normalize receives
         # records, never config.
+        failed: list[str] = []
         for ref in refs:
             args = {cfg.read.id_arg: ref.raw_id, **cfg.read.static_args}
             try:
                 result = await client.call(cfg.read.tool, args)
                 got = records_from_read(result, ref, cfg.read, cfg.media_type)
-            except (ToolCallFailed, MappingError):
+            except (ToolCallFailed, MappingError) as exc:
                 # A per-document failure degrades the run; it never silently
                 # drops a document while still claiming complete coverage.
                 complete = False
+                failed.append(f"{ref.raw_id}: {exc}")
                 continue
             for rec in got:
                 rec.anchor_hint["retrieved_at"] = stamped
                 rec.anchor_hint["system"] = cfg.system
             records.extend(got)
+        # Zero records reach the pipeline as "nothing changed" -- a NoOp with
+        # exit 0 -- so a run whose every read failed (a revoked key, a rate
+        # limit) must raise, or a scheduled job never alerts. An empty
+        # selection is different: nothing was asked for, so nothing failed.
+        if failed and not records:
+            raise ReadsFailed(
+                f"{cfg.system}: all {len(failed)} reads failed; first: {failed[0]}"
+            )
+        if failed:
+            log.warning(
+                "%s: %d of %d reads failed: %s",
+                cfg.system,
+                len(failed),
+                len(refs),
+                "; ".join(failed),
+            )
         return records, complete
 
 
@@ -71,7 +97,7 @@ class McpConnector:
     def kbforge_connector_info(self) -> ConnectorInfo:
         return ConnectorInfo(
             name=_NAME,
-            version="0.1.0",
+            version="0.2.0",
             source_system="any MCP server with a select tool and a read-by-id tool",
             info_types=["document"],
         )

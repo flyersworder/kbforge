@@ -89,6 +89,10 @@ class ReadSpec(_Strict):
     """Constant arguments alongside the id -- GitHub's reader needs owner+repo."""
     text_key: str | None = None
     """Tier-2 only: the `structuredContent` key holding the document body."""
+    title_key: str | None = None
+    """Tier-2 only: the `structuredContent` key holding the document's title.
+    Makes the reader own the title, so one page reached through two selectors
+    keeps one title; a missing or blank value falls back to the selector's."""
 
 
 class McpSourceConfig(_Strict):
@@ -149,6 +153,11 @@ def problems_for(config: dict) -> list[str]:
         problems.append(
             "config 'transport.auth_env' must name an environment variable "
             f"(ALL_CAPS), not hold its value: {auth_env!r}"
+        )
+    if cfg.read.title_key and not cfg.read.text_key:
+        problems.append(
+            "config 'read.title_key' requires 'read.text_key': only a tier-2 read "
+            "consults the reader's structuredContent, so it would be ignored"
         )
     if cfg.read.id_arg in cfg.read.static_args:
         # Merged as `{id_arg: ref.raw_id, **static_args}`, so a static_args key

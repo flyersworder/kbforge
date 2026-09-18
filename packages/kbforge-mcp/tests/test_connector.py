@@ -132,3 +132,41 @@ def test_slug_collision_is_caught_by_the_0_6_0_fetch_side_law(cfg):
     docs = CONNECTOR.kbforge_normalize(result.records)
     with pytest.raises(FetchContractError, match="duplicate doc_id"):
         assert_fetch_contract(docs, complete=result.complete)
+
+
+def test_a_run_whose_reads_all_fail_is_an_error_not_a_noop(cfg):
+    # Zero records from a non-empty selection used to reach the pipeline as
+    # "nothing changed" -- a NoOp with exit 0, so a scheduled job whose every
+    # read failed (a revoked key, a rate limit) never alerted.
+    from kbforge_mcp.connector import ReadsFailed
+
+    cfg.pop("select")
+    cfg["static_ids"] = ["docs/missing.md", "docs/gone.md"]
+    with pytest.raises(ReadsFailed) as exc:
+        CONNECTOR.kbforge_fetch(cfg, None)
+    assert str(exc.value).startswith(
+        "fixture: all 2 reads failed; first: docs/missing.md: "
+    )
+
+
+def test_a_partially_failed_run_names_each_failed_read(cfg, caplog):
+    cfg.pop("select")
+    cfg["static_ids"] = ["docs/missing.md", "docs/retention.md"]
+    with caplog.at_level("WARNING", logger="kbforge_mcp"):
+        result = CONNECTOR.kbforge_fetch(cfg, None)
+    assert len(result.records) == 1
+    assert any(
+        r.getMessage().startswith("fixture: 1 of 2 reads failed: docs/missing.md: ")
+        for r in caplog.records
+    )
+
+
+def test_an_empty_selection_is_still_a_quiet_noop(cfg, monkeypatch):
+    # Nothing selected is not a failure: a search that found nothing new.
+    import kbforge_mcp.connector as mod
+
+    async def nothing(client, cfg):
+        return [], False
+
+    monkeypatch.setattr(mod, "select_refs", nothing)
+    assert CONNECTOR.kbforge_fetch(cfg, None).records == []
