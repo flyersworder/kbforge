@@ -14,10 +14,13 @@ from kbforge.canonical import assert_fetch_contract, assert_stability
 from kbforge.grounding import (
     GroundingConfig,
     declared_ids,
+    delete_first_seen,
     delete_sidecar,
     drifted,
     has_sidecars,
-    resolve,
+    load_first_seen,
+    record_first_seen,
+    resolve_all,
     write_sidecar,
 )
 from kbforge.mirror import commit, diff, load_all
@@ -250,9 +253,12 @@ def run(
 
     # The scan is gated three ways so a deployment that declares no grounding
     # keeps today's cheap no-op: the synthesizer must ground, and there must be
-    # either something declared now or a sidecar from before (§5).
+    # either something declared now or a sidecar from before (§5). Rules make
+    # the scan unconditional, since a concept with no grounding yet must still
+    # be able to pick up its first matching document.
     scan = grounds and bool(
         grounding_cfg.grounding
+        or grounding_cfg.rules
         or any(d.grounded_by for d in docs)
         or has_sidecars(mirror_path)
     )
@@ -270,6 +276,8 @@ def run(
     # grounding drift) is not tombstone-specific — there is no cheaper subset
     # of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
+    # Recency fallback for grounding rules; loaded once, only when rules exist.
+    first_seen = load_first_seen(mirror_path) if grounding_cfg.rules else {}
     by_id = {d.doc_id: d for d in mirror_docs}
     by_id.update({d.doc_id: d for d in docs if not d.deleted})
     hashes = {k: v.anchor.content_hash for k, v in by_id.items()}
@@ -287,12 +295,7 @@ def run(
     def _resolved(doc: CanonicalDocument) -> tuple[list[CanonicalDocument], list[str]]:
         cached = _resolutions.get(doc.doc_id)
         if cached is None:
-            cached = resolve(
-                doc,
-                declared_ids(doc, grounding_cfg),
-                by_id,
-                max_docs=grounding_cfg.max_grounding_docs,
-            )
+            cached = resolve_all(doc, grounding_cfg, by_id, first_seen)
             _resolutions[doc.doc_id] = cached
         return cached
 
@@ -452,6 +455,7 @@ def run(
 
     url = publisher.kbforge_publish(proposal, publish_config)
     commit(mirror_path, docs)  # advance mirror ONLY after success
+    record_first_seen(mirror_path, docs)
     for doc in changed_docs:
         if concept_path(doc.doc_id) not in proposal.files:
             # The synthesizer dropped this document, exactly as the two note
@@ -487,5 +491,6 @@ def run(
             delete_sidecar(mirror_path, doc.doc_id)
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
+        delete_first_seen(mirror_path, doc_id)
     _save_cursor(state_path, result.cursor, systems, config)
     return Published(url=url)

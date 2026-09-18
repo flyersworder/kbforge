@@ -198,6 +198,7 @@ def _doc(
     relations: list[str] | None = None,
     grounded_by: list[str] | None = None,
     text: str | None = None,
+    structured: dict | None = None,
 ) -> CanonicalDocument:
     """A fixed, clock-free CanonicalDocument keyed under `system` (default "sys")
     — deletions and referrer-relations require a fake source, since
@@ -214,6 +215,7 @@ def _doc(
         doc_id=f"{system}:{native_id}",
         title=title,
         text=text or title,
+        structured=structured or {},
         relations=relations or [],
         grounded_by=grounded_by or [],
         deleted=deleted,
@@ -995,3 +997,173 @@ def test_grounding_declared_before_a_sibling_synced_survives_an_empty_fetch(
     assert concept_path("sys:a") in pub.last_change.files
     fm = pub.last_change.concepts[concept_path("sys:a")]
     assert [s.native_id for s in fm.sources] == ["a", "b"]
+
+
+from kbforge.grounding import load_first_seen  # noqa: E402
+
+
+def _rules_cfg():
+    return GroundingConfig.model_validate(
+        {
+            "rules": [
+                {
+                    "for": {"type": "product"},
+                    "from": {"system": "web"},
+                    "match": ["{native_id}"],
+                }
+            ]
+        }
+    )
+
+
+def _product():
+    return _doc(
+        "IMC300",
+        "IMC300 motor controller",
+        system="sql",
+        structured={"type": "product"},
+    )
+
+
+def test_a_new_matching_article_regrounds_the_product_on_its_own_run(tmp_path):
+    cfg = _rules_cfg()
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+
+    article = _doc(
+        "skyworks",
+        "Skyworks gate driver",
+        system="web",
+        text="Skyworks unveils a driver that rivals the IMC300.",
+    )
+    pub_web = _run_once(
+        tmp_path,
+        [article],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    # The web run never touches the product concept.
+    assert pub_web.last_change is not None
+    assert concept_path("sql:IMC300") not in pub_web.last_change.files
+    assert "web:skyworks" in load_first_seen(tmp_path / "mirror")
+
+    synth = _GroundingSynth()
+    pub = _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert [d.doc_id for d in synth.seen["sql:IMC300"]] == ["web:skyworks"]
+    assert pub.last_change is not None
+    notes = pub.last_change.summary.grounding_notes
+    assert (
+        "concepts/IMC300/overview.md: grounded by rule 1 "
+        "('{native_id}' = 'IMC300') via web:skyworks"
+    ) in notes
+
+    result, _ = _run_result(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_a_non_matching_article_leaves_the_product_a_noop(tmp_path):
+    cfg = _rules_cfg()
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    other = _doc("other", "Other news", system="web", text="Nothing relevant.")
+    _run_once(
+        tmp_path,
+        [other],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    result, _ = _run_result(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_an_edited_matched_article_drifts_the_product(tmp_path):
+    cfg = _rules_cfg()
+    v1 = _doc("skyworks", "Skyworks", system="web", text="IMC300 rival, v1")
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    _run_once(
+        tmp_path,
+        [v1],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    v2 = _doc("skyworks", "Skyworks", system="web", text="IMC300 rival, v2")
+    _run_once(
+        tmp_path,
+        [v2],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    pub = _run_once(
+        tmp_path,
+        [_product()],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="sql",
+    )
+    assert pub.last_change is not None
+    assert concept_path("sql:IMC300") in pub.last_change.files
+
+
+def test_first_seen_is_deleted_with_its_tombstone(tmp_path):
+    a = _doc("a", "A", system="web")
+    _run_once(tmp_path, [a], connector_name="web")
+    assert "web:a" in load_first_seen(tmp_path / "mirror")
+    _run_once(
+        tmp_path, [_doc("a", "A", system="web", deleted=True)], connector_name="web"
+    )
+    assert "web:a" not in load_first_seen(tmp_path / "mirror")
+
+
+def test_a_noop_run_writes_no_first_seen(tmp_path):
+    a = _doc("a", "A", system="web")
+    _run_once(tmp_path, [a], connector_name="web")
+    directory = tmp_path / "mirror" / "_first_seen"
+    before = sorted(p.name for p in directory.iterdir())
+    result, _ = _run_result(tmp_path, [a], connector_name="web")
+    assert isinstance(result, NoOp)
+    assert sorted(p.name for p in directory.iterdir()) == before
