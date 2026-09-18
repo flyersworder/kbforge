@@ -8,13 +8,15 @@ record -- it never sees config."""
 from __future__ import annotations
 
 import json
+import os
 import time
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from urllib.parse import quote
 
-from sqlalchemy import URL, create_engine
+from sqlalchemy import URL, create_engine, make_url
+from sqlalchemy.exc import ArgumentError, DBAPIError, InterfaceError, OperationalError
 from sqlalchemy.pool import NullPool
 
 from kbforge.canonical import content_hash, is_blank
@@ -75,16 +77,61 @@ def _query_once(url: URL, query: str) -> tuple[list[str], list[tuple]]:
     return columns, rows
 
 
-def _query(cfg: SqlSourceConfig) -> tuple[list[str], list[tuple]]:
-    """Task 6 replaces this with URL building, retry and error hygiene."""
-    import os
+# Retried: the connection failed, not the statement. Re-running a SELECT is
+# safe. Everything else -- bad SQL, a missing view, no permission -- fails at
+# once, because retrying a typo only delays the message.
+_TRANSIENT = (OperationalError, InterfaceError)
 
-    from sqlalchemy import make_url
 
-    url = make_url(os.environ[cfg.url_env])
+def _url(cfg: SqlSourceConfig) -> URL:
+    try:
+        url = make_url(os.environ[cfg.url_env])
+    except ArgumentError:
+        # Never echo the value: it may carry a password.
+        raise SqlSourceError(
+            f"the value of {cfg.url_env} is not a SQLAlchemy URL"
+        ) from None
     if cfg.password_env:
+        # URL.set takes the raw password: no percent-escaping for `@:/%`.
         url = url.set(password=os.environ[cfg.password_env])
-    return _query_once(url, cfg.query)
+    return url
+
+
+def _redact(message: str, url: URL) -> str:
+    secret = url.password
+    return message.replace(str(secret), "***") if secret else message
+
+
+def _query(cfg: SqlSourceConfig) -> tuple[list[str], list[tuple]]:
+    url = _url(cfg)
+    attempts = cfg.retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return _query_once(url, cfg.query)
+        except _TRANSIENT as exc:
+            if attempt == attempts:
+                raise SqlSourceError(
+                    _redact(
+                        f"{type(exc).__name__} after {attempts} attempt(s): {exc.orig}",
+                        url,
+                    )
+                ) from None
+            _sleep(2 ** (attempt - 1))
+        except DBAPIError as exc:
+            raise SqlSourceError(
+                _redact(f"{type(exc).__name__}: {exc.orig}", url)
+            ) from None
+        except (ArgumentError, ImportError) as exc:
+            # NoSuchModuleError is an ArgumentError; a dialect whose DBAPI
+            # module is absent raises ImportError from create_engine.
+            raise SqlSourceError(
+                _redact(
+                    "no SQLAlchemy dialect or driver for this URL is installed "
+                    f"({exc}); install the driver for your database",
+                    url,
+                )
+            ) from None
+    raise AssertionError("unreachable: the loop returns or raises")
 
 
 def _sort_key(value: Scalar) -> tuple:
