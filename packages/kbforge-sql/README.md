@@ -143,16 +143,29 @@ database:
   rather than reading "the source is empty" as "delete every concept". An intentionally
   empty source is rare enough to be handled by removing its config instead.
 - **Deletion ceiling.** If the tombstones would exceed `max_removed_fraction` (default
-  `0.5`) of the prior manifest, the run fails and states the count and the fraction. Set
-  it to `1.0` for a deliberate large cleanup.
+  `0.5`) of the prior manifest, the run fails and states the count and the fraction. For a
+  deliberate large cleanup, rerun with `KBFORGE_SQL_ALLOW_REMOVALS` set (see below) rather
+  than raising `max_removed_fraction` — see "Known limits" for why.
 
 ## Known limits
 
-**Editing the query resets deletion memory.** Cursor slots are keyed by a digest of the
-whole connector config, so editing `query` — narrowing its `WHERE`, say — means the next
-run finds no prior cursor, and rows the new query no longer returns leave stale concepts
-with no tombstone. The connector cannot fix this; it is deliberately mirror-blind. After
-narrowing a query, remove the stale concepts by hand in the review repository.
+**Editing ANY config key resets deletion memory, not just the query.** Cursor slots are
+keyed by a digest of the *whole* connector config (`pipeline._instance_key`), so editing
+`query` — narrowing its `WHERE`, say — or any other key, including `max_removed_fraction`
+itself, means the next run finds no prior cursor: `NoOp`, no tombstones, and the old slot
+trips the ceiling again if the edit is ever reverted. The connector cannot fix this; it is
+deliberately mirror-blind. After narrowing a query, remove the stale concepts by hand in
+the review repository.
+
+**A tripped deletion ceiling is cleared with `KBFORGE_SQL_ALLOW_REMOVALS`, not by raising
+`max_removed_fraction`.** Raising the fraction is a config edit, so it hits the limit
+above: it resets deletion memory instead of performing the cleanup, and the old cursor
+slot trips the ceiling again once the fraction is reverted. Instead, set the environment
+variable `KBFORGE_SQL_ALLOW_REMOVALS` to a comma-separated list of source `system` names
+(for example `KBFORGE_SQL_ALLOW_REMOVALS=products`) and rerun with the config unchanged —
+it is read at fetch time, out of band from the config, so the cursor slot and the rest of
+`max_removed_fraction`'s guard stay intact. The empty-result guard always applies, even
+with the override set.
 
 **Ids can collide with another source's.** `concept_path` drops the system prefix, so a
 product id `42` and an application id `42` render the same file, and the pipeline aborts

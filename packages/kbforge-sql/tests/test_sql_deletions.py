@@ -95,8 +95,10 @@ def test_the_deletion_ceiling_stops_a_mass_removal(tmp_path, monkeypatch):
     with pytest.raises(SqlSourceError) as exc:
         CONNECTOR.kbforge_fetch(flat_cfg(), prior)
     assert str(exc.value) == (
-        "sql source 'products': 4 of 7 previously seen ids (57%) are missing, "
-        "above max_removed_fraction=0.5; raise it for a deliberate cleanup"
+        "sql source 'products': 4 of 7 previously seen ids (57.1%) are missing, "
+        "above max_removed_fraction=0.5; for a deliberate cleanup, rerun with "
+        "KBFORGE_SQL_ALLOW_REMOVALS=products (editing the config resets deletion "
+        "memory instead)"
     )
 
 
@@ -107,11 +109,53 @@ def test_the_ceiling_is_inclusive(tmp_path, monkeypatch):
     assert len([r for r in result.records if r.media_type == TOMBSTONE]) == 3
 
 
+def test_the_empty_result_guard_still_fires_with_the_override_set(
+    tmp_path, monkeypatch
+):
+    db = make_db(tmp_path, monkeypatch)
+    execute(db, "DELETE FROM product;")
+    monkeypatch.setenv("KBFORGE_SQL_ALLOW_REMOVALS", "products")
+    with pytest.raises(SqlSourceError) as exc:
+        CONNECTOR.kbforge_fetch(
+            flat_cfg(max_removed_fraction=1.0), _prior("IMC300", "TLE9", "XDP1")
+        )
+    assert str(exc.value) == (
+        "sql source 'products': the query returned no rows, but the last "
+        "published run saw 3; refusing to delete every concept. If the source "
+        "is meant to be empty, remove its config instead"
+    )
+
+
 def test_a_raised_ceiling_permits_the_cleanup(tmp_path, monkeypatch):
-    make_db(tmp_path, monkeypatch)
-    prior = _prior("IMC300", "TLE9", "XDP1", "A", "B", "C", "D")
-    result = CONNECTOR.kbforge_fetch(flat_cfg(max_removed_fraction=1.0), prior)
-    assert len([r for r in result.records if r.media_type == TOMBSTONE]) == 4
+    # Raising max_removed_fraction (or editing any other config key) is a
+    # trap: pipeline._instance_key hashes the whole config into the cursor
+    # slot name, so the edit makes the next run find no prior manifest --
+    # NoOp, no tombstones, and the old slot trips the ceiling again if the
+    # config is reverted. KBFORGE_SQL_ALLOW_REMOVALS is the actual cleanup
+    # path: it clears a tripped ceiling with the config, and the cursor slot,
+    # untouched. This test goes through the real pipeline.run so a change
+    # that only fixed the unit-level `_removed` helper would not pass it.
+    db = make_db(tmp_path, monkeypatch)
+    cfg = flat_cfg()
+    assert isinstance(_run(tmp_path, cfg), Published)
+
+    execute(db, "DELETE FROM product WHERE product_id IN ('TLE9', 'XDP1');")
+
+    with pytest.raises(SqlSourceError) as exc:
+        _run(tmp_path, cfg)
+    assert str(exc.value) == (
+        "sql source 'products': 2 of 3 previously seen ids (66.7%) are missing, "
+        "above max_removed_fraction=0.5; for a deliberate cleanup, rerun with "
+        "KBFORGE_SQL_ALLOW_REMOVALS=products (editing the config resets deletion "
+        "memory instead)"
+    )
+
+    monkeypatch.setenv("KBFORGE_SQL_ALLOW_REMOVALS", "products")
+    result = _run(tmp_path, cfg)  # config is unchanged -- same cursor slot
+    assert isinstance(result, Published)
+    assert not _concept(tmp_path, "TLE9").exists()
+    assert not _concept(tmp_path, "XDP1").exists()
+    assert _concept(tmp_path, "IMC300").exists()
 
 
 def test_an_aborted_run_re_emits_its_tombstone(tmp_path, monkeypatch):

@@ -304,21 +304,30 @@ correct pipeline should not depend on a reviewer noticing.
 
 - **Empty result with a non-empty prior manifest → the run fails**, naming the
   source, and emits no tombstones. An intentionally empty source is rare enough
-  to be handled by removing its config.
+  to be handled by removing its config. This guard applies unconditionally,
+  even with the override below set.
 - **Deletion ceiling.** If the tombstones would exceed `max_removed_fraction` of
-  the prior manifest, the run fails and states the count and the fraction. Set
-  it to `1.0` for a deliberate large cleanup.
+  the prior manifest, the run fails and states the count and the fraction. Do
+  **not** clear this by raising `max_removed_fraction` — that is a config edit,
+  and §6.4 means it resets deletion memory instead of performing the cleanup.
+  Instead, set the environment variable `KBFORGE_SQL_ALLOW_REMOVALS` to a
+  comma-separated list of source `system` names and rerun with the config
+  unchanged; the connector reads it at fetch time, out of band from the
+  config, so it clears a tripped ceiling without touching the cursor slot.
 
 Both guards run before any tombstone is emitted.
 
 ### 6.4 Known limit: editing the config resets deletion memory
 
 Cursor slots are keyed by a digest of the whole connector config
-(`pipeline._instance_key`). Editing `query` — narrowing its `WHERE`, say — means
-the next run finds no prior cursor, and rows the new query no longer returns
-leave stale concepts with no tombstone. The connector cannot fix this; it is
-deliberately mirror-blind. After narrowing a query, remove the stale concepts by
-hand in the review repository. The root fix is in core (§9).
+(`pipeline._instance_key`). Editing **any** config key — not only `query` —
+means the next run finds no prior cursor: no tombstones, a silent `NoOp`, and
+the old slot trips the ceiling again if the edit is ever reverted. This is why
+raising `max_removed_fraction` is not the cleanup path (§6.3): it is itself a
+config edit, so it resets the very manifest the ceiling reads. Narrowing a
+query, say, still leaves rows the new query no longer returns as stale
+concepts with no tombstone; remove them by hand in the review repository. The
+root fix is in core (§9).
 
 ### 6.5 Known limit: path collisions with other sources
 

@@ -215,13 +215,30 @@ def _entities(
     return entities
 
 
+_ALLOW_REMOVALS_ENV = "KBFORGE_SQL_ALLOW_REMOVALS"
+
+
+def _removals_allowed(system: str) -> bool:
+    """`KBFORGE_SQL_ALLOW_REMOVALS` is a comma-separated list of source
+    `system` names, out of band from the config on purpose:
+    `pipeline._instance_key` hashes the *whole* connector config into the
+    cursor slot name, so raising `max_removed_fraction` -- or editing any
+    other config key -- makes the next run find no prior manifest at all
+    (no tombstones, a silent NoOp) rather than performing the cleanup. This
+    is read here, at fetch time; `normalize` never reads the environment."""
+    raw = os.environ.get(_ALLOW_REMOVALS_ENV, "")
+    return system in {name.strip() for name in raw.split(",") if name.strip()}
+
+
 def _removed(cfg: SqlSourceConfig, prior: list[str], current: list[str]) -> list[str]:
     """Ids seen at the last published run and missing now (spec §6).
 
-    Both guards run before any tombstone exists. An empty result is refused
-    even at max_removed_fraction=1.0: a view mid-refresh returns zero rows
-    without an error, and 'delete the knowledge base' must never be the
-    default reading of that."""
+    The empty-result guard always applies. The deletion ceiling is skipped
+    when the source's `system` is listed in `KBFORGE_SQL_ALLOW_REMOVALS`,
+    the deliberate-cleanup override (spec §6.3). An empty result is refused
+    even at max_removed_fraction=1.0 or with the override set: a view
+    mid-refresh returns zero rows without an error, and 'delete the
+    knowledge base' must never be the default reading of that."""
     if not prior:
         return []
     if not current:
@@ -231,12 +248,15 @@ def _removed(cfg: SqlSourceConfig, prior: list[str], current: list[str]) -> list
             "is meant to be empty, remove its config instead"
         )
     gone = sorted(set(prior) - set(current))
+    if _removals_allowed(cfg.system):
+        return gone
     fraction = len(gone) / len(prior)
     if fraction > cfg.max_removed_fraction:
         raise SqlSourceError(
-            f"{len(gone)} of {len(prior)} previously seen ids ({fraction:.0%}) "
+            f"{len(gone)} of {len(prior)} previously seen ids ({fraction:.1%}) "
             f"are missing, above max_removed_fraction={cfg.max_removed_fraction}; "
-            "raise it for a deliberate cleanup"
+            f"for a deliberate cleanup, rerun with {_ALLOW_REMOVALS_ENV}={cfg.system} "
+            "(editing the config resets deletion memory instead)"
         )
     return gone
 
