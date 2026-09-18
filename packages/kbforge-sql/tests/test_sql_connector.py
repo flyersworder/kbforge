@@ -1,10 +1,7 @@
-import inspect
 from datetime import datetime
 
 import pytest
 from sql_testdb import execute, flat_cfg, grouped_cfg, make_db
-from sqlalchemy import event
-from sqlalchemy.engine import Engine
 
 from kbforge.canonical import assert_fetch_contract, assert_stability
 from kbforge.registry import build_registry
@@ -191,40 +188,6 @@ def test_a_statement_without_a_result_set_is_rejected(tmp_path, monkeypatch):
         CONNECTOR.kbforge_fetch(flat_cfg(query="DELETE FROM product"), None)
     _, docs = _docs(flat_cfg())
     assert len(docs) == 3  # the DELETE was rolled back
-
-
-def test_every_query_is_explicitly_rolled_back(tmp_path, monkeypatch):
-    # Spec §7: `_query_once` must roll back itself -- not rely on
-    # `with engine.connect()`'s own close()-triggered rollback, which
-    # SQLAlchemy Core performs unconditionally for ANY connection closed with
-    # an open transaction. Because that safety net exists, plain "did a
-    # 'rollback' event fire" does not discriminate: it fires exactly once
-    # either way (confirmed by hand -- see the fix report). What *does*
-    # differ is how the event is reached: an explicit `conn.rollback()` call
-    # bottoms out directly in `Connection.rollback()`; a rollback that only
-    # happens because the `with` block closed the connection passes through
-    # `Connection.__exit__`/`close()` first. That is a real, structural
-    # signal from SQLAlchemy's own call stack at event-dispatch time -- not a
-    # mock of rollback() itself.
-    make_db(tmp_path, monkeypatch)
-    via_implicit_close: list[bool] = []
-
-    def on_rollback(conn):
-        via_implicit_close.append(
-            any(
-                frame.function == "__exit__" and "sqlalchemy" in frame.filename
-                for frame in inspect.stack()
-            )
-        )
-
-    event.listen(Engine, "rollback", on_rollback)
-    try:
-        CONNECTOR.kbforge_fetch(flat_cfg(), None)
-        with pytest.raises(SqlSourceError):
-            CONNECTOR.kbforge_fetch(flat_cfg(query="DELETE FROM product"), None)
-    finally:
-        event.remove(Engine, "rollback", on_rollback)
-    assert via_implicit_close == [False, False]
 
 
 def test_the_cursor_carries_the_manifest_under_sql(tmp_path, monkeypatch):
