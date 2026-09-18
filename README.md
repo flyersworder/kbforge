@@ -3,6 +3,7 @@
 [![kbforge](https://img.shields.io/pypi/v/kbforge.svg?label=kbforge)](https://pypi.org/project/kbforge/)
 [![kbforge-mcp](https://img.shields.io/pypi/v/kbforge-mcp.svg?label=kbforge-mcp)](https://pypi.org/project/kbforge-mcp/)
 [![kbforge-okfquery](https://img.shields.io/pypi/v/kbforge-okfquery.svg?label=kbforge-okfquery)](https://pypi.org/project/kbforge-okfquery/)
+[![kbforge-sql](https://img.shields.io/pypi/v/kbforge-sql.svg?label=kbforge-sql)](https://pypi.org/project/kbforge-sql/)
 [![CI](https://github.com/flyersworder/kbforge/actions/workflows/ci.yml/badge.svg)](https://github.com/flyersworder/kbforge/actions/workflows/ci.yml)
 [![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -41,8 +42,11 @@ checked against a real service has a live suite (`--run-live`) rather than a moc
 - **Sources** — `local_files` and `git_commits` built in, no credentials. Any MCP
   server with a select tool and a read-by-id tool becomes a source through
   configuration alone via [`kbforge-mcp`](packages/kbforge-mcp), live-tested
-  against AWS Documentation and GitHub. Third-party connectors are discovered
-  through an entry point with no change to kbforge.
+  against AWS Documentation and GitHub. Any database SQLAlchemy can reach
+  becomes a source through configuration alone via
+  [`kbforge-sql`](packages/kbforge-sql), one scoped query per source.
+  Third-party connectors are discovered through an entry point with no change
+  to kbforge.
 - **Core** — canonicalization under a stability law, a replay-safe mirror and diff,
   change detection, the no-op rule, incremental sync via a real cursor, and
   cross-source grounding: one owning document per concept, cited alongside
@@ -65,13 +69,14 @@ ServiceNow, or their kin.
 
 ## Companion distributions
 
-This repo is a uv workspace and ships three distributions, versioned independently.
-Neither companion is required to use kbforge, and neither is installed with it.
+This repo is a uv workspace and ships four distributions, versioned independently.
+No companion is required to use kbforge, and none is installed with it.
 
 | Distribution | Import | What it does |
 |---|---|---|
 | [`kbforge`](https://pypi.org/project/kbforge/) | `kbforge` | the production protocol — this README |
 | [`kbforge-mcp`](https://pypi.org/project/kbforge-mcp/) ([src](packages/kbforge-mcp)) | `kbforge_mcp` | makes any MCP server with a select tool and a read-by-id tool a kbforge **source**, through configuration alone |
+| [`kbforge-sql`](https://pypi.org/project/kbforge-sql/) ([src](packages/kbforge-sql)) | `kbforge_sql` | makes any database SQLAlchemy can reach a kbforge **source**, one scoped query per source |
 | [`kbforge-okfquery`](https://pypi.org/project/kbforge-okfquery/) ([src](packages/okfquery)) | `okfquery` | reads a published bundle **back**: `okfquery query "SELECT ..."` over concepts, sources, links, and parse problems |
 
 They sit on opposite sides of the pipeline. `kbforge-mcp` is an ingest-side plugin

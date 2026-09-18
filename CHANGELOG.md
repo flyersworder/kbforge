@@ -30,6 +30,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   interpolation into a `run:` block, where a tag containing a quote would have
   executed as shell — on the one job holding `id-token: write`.
 
+## [kbforge-sql-v0.1.0] - 2026-09-18
+
+First release of `kbforge-sql`, a separate distribution: any database SQLAlchemy
+can reach becomes a kbforge source through configuration alone. kbforge itself
+is unchanged by this release.
+
+### Added
+
+- The `sql` connector. One scoped `SELECT` per source defines the corpus; each
+  row, or each set of rows sharing an id when `group` is configured, becomes one
+  canonical document rendered as fixed-format markdown, so it serves as both an
+  owning and a grounding document. `facets` become filterable frontmatter,
+  `exclude` drops volatile columns before hashing, `url_template` gives each
+  concept a clickable citation.
+- Deletions from a full snapshot: the cursor keeps the id set of the last
+  published run, and an id that leaves the result becomes an explicit
+  tombstone — the first connector to emit them. An empty result fails the run
+  rather than deleting everything, and a removal above `max_removed_fraction`
+  (default 0.5) fails until rerun with `KBFORGE_SQL_ALLOW_REMOVALS=<system>`.
+- Read-only by construction as far as kbforge can reach: the query runs in a
+  transaction that is always rolled back and never committed, and is sent to
+  the driver literally (`no_parameters`), so `%` and `:name` in SQL are safe.
+  The account's grants are what actually prevent a write; a dedicated
+  read-only account is the recommended deployment.
+- Credentials by env var name only (`url_env`, optional `password_env`,
+  injected unescaped); no error message echoes a URL or password. Connection
+  errors are retried with capped backoff; bad SQL fails at once.
+- No database driver is a dependency: install the one your engine needs
+  (`denodo-sqlalchemy`, `psycopg`, `oracledb`, `pyodbc`, ...).
+
+### Known limits
+
+- Editing any config key moves the cursor slot and resets deletion memory, so
+  rows a narrowed query drops leave stale concepts to remove by hand.
+- Ids from different sources that render the same bundle path abort the run;
+  prefix ids by kind in the query until bundle paths are system-qualified.
+
 ## [0.9.0] - 2026-08-23
 
 ### Added
@@ -517,6 +554,7 @@ production protocol.
   config, with no per-connector knowledge in the CLI.
 
 [Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.9.0...HEAD
+[kbforge-sql-v0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.0
 [0.9.0]: https://github.com/flyersworder/kbforge/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/flyersworder/kbforge/compare/v0.7.0...v0.8.0
 [0.7.0]: https://github.com/flyersworder/kbforge/compare/v0.6.0...v0.7.0
