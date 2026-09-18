@@ -369,19 +369,12 @@ def read_sidecar(mirror: Path, doc_id: str) -> dict[str, str] | None:
         return None
 
 
-def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
-    """Written through a temp file in the same directory, so a process killed
-    mid-write leaves either the old sidecar or the new one -- never a truncated
-    file. `read_sidecar` tolerates one anyway; this keeps them from being made."""
-    path = _sidecar(mirror, doc_id)
+def _write_atomic(path: Path, payload: dict) -> None:
+    """Through a unique temp file in the same directory, so a process killed
+    mid-write leaves the old file or the new one, never a truncated one, and two
+    writers on the shared mirror never `os.replace` each other's half-written
+    file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
-    # A unique temp name, not `<slot>.json.tmp`: a fixed one is the same path for
-    # every writer, so two runs on the shared mirror can `os.replace` each
-    # other's half-written file into the live slot — defeating the atomicity the
-    # temp file is here for. The finally-unlink covers the crash-between case,
-    # which would otherwise leave an orphan invisible to both `has_sidecars`
-    # (it globs `*.json`) and `delete_sidecar`.
     fd, tmp_name = tempfile.mkstemp(dir=path.parent, prefix=path.name, suffix=".tmp")
     tmp = Path(tmp_name)
     try:
@@ -390,6 +383,13 @@ def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
         os.replace(tmp, path)
     finally:
         tmp.unlink(missing_ok=True)
+
+
+def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
+    """Written atomically (`_write_atomic`); `read_sidecar` tolerates a torn file
+    anyway, and this keeps them from being made."""
+    payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
+    _write_atomic(_sidecar(mirror, doc_id), payload)
 
 
 def delete_sidecar(mirror: Path, doc_id: str) -> None:
@@ -434,3 +434,53 @@ def drifted(
         if any(hashes.get(gid) != h for gid, h in recorded.items()):  # rule 1
             out.append(doc.doc_id)
     return sorted(out)
+
+
+FIRST_SEEN_DIR = "_first_seen"
+"""When a document first entered the mirror: the recency fallback for rules
+whose date facet is absent (design note 2026-09-18 §5). A subdirectory for the
+same reason as SIDECAR_DIR."""
+
+
+def _first_seen_path(mirror: Path, doc_id: str) -> Path:
+    return mirror / FIRST_SEEN_DIR / f"{slot_key(doc_id)}.json"
+
+
+def _read_first_seen(path: Path) -> tuple[str, datetime] | None:
+    """Tolerant like `read_sidecar`: an unreadable record reads as absent and is
+    rewritten on the document's next commit, rather than wedging every run."""
+    try:
+        payload = json.loads(path.read_text("utf-8"))
+        moment = datetime.fromisoformat(payload["first_seen"])
+        return str(payload["doc_id"]), (
+            moment if moment.tzinfo else moment.replace(tzinfo=UTC)
+        )
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError):
+        return None
+
+
+def record_first_seen(mirror: Path, docs: list[CanonicalDocument]) -> None:
+    """Write-once, for documents a publishing run commits. Each run records only
+    its own documents, so no run writes another connector's state."""
+    for doc in docs:
+        if doc.deleted:
+            continue
+        path = _first_seen_path(mirror, doc.doc_id)
+        if _read_first_seen(path) is not None:
+            continue
+        when = doc.anchor.retrieved_at
+        when = when if when.tzinfo else when.replace(tzinfo=UTC)
+        _write_atomic(path, {"doc_id": doc.doc_id, "first_seen": when.isoformat()})
+
+
+def load_first_seen(mirror: Path) -> dict[str, datetime]:
+    directory = mirror / FIRST_SEEN_DIR
+    if not directory.is_dir():
+        return {}
+    records = (_read_first_seen(p) for p in sorted(directory.glob("*.json")))
+    return dict(r for r in records if r is not None)
+
+
+def delete_first_seen(mirror: Path, doc_id: str) -> None:
+    """Idempotent; called when a document is tombstoned."""
+    _first_seen_path(mirror, doc_id).unlink(missing_ok=True)

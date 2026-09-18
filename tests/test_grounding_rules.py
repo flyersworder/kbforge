@@ -272,3 +272,61 @@ def test_a_rule_with_only_missing_fields_matches_nothing():
     cfg = _cfg(_rule(match=["{missing}"]))
     hit = _doc("web:a", text="whatever will match everything")
     assert _ids(rule_matches(owner, cfg, _by_id(owner, hit), {})) == []
+
+
+from kbforge.grounding import (  # noqa: E402
+    FIRST_SEEN_DIR,
+    delete_first_seen,
+    load_first_seen,
+    record_first_seen,
+)
+from kbforge.mirror import load_all, slot_key  # noqa: E402
+
+
+def _stamped(doc_id, when):
+    doc = _doc(doc_id)
+    doc.anchor.retrieved_at = when
+    return doc
+
+
+def test_first_seen_is_written_once_and_kept(tmp_path: Path):
+    t1 = datetime(2026, 1, 1, tzinfo=UTC)
+    t2 = datetime(2026, 6, 1, tzinfo=UTC)
+    record_first_seen(tmp_path, [_stamped("web:a", t1)])
+    record_first_seen(tmp_path, [_stamped("web:a", t2), _stamped("web:b", t2)])
+    assert load_first_seen(tmp_path) == {"web:a": t1, "web:b": t2}
+
+
+def test_tombstones_are_not_recorded_and_delete_is_idempotent(tmp_path: Path):
+    dead = _doc("web:a", deleted=True)
+    record_first_seen(tmp_path, [dead])
+    assert load_first_seen(tmp_path) == {}
+    record_first_seen(tmp_path, [_doc("web:b")])
+    delete_first_seen(tmp_path, "web:b")
+    delete_first_seen(tmp_path, "web:b")
+    assert load_first_seen(tmp_path) == {}
+
+
+def test_a_naive_retrieved_at_is_recorded_as_utc(tmp_path: Path):
+    record_first_seen(tmp_path, [_stamped("web:a", datetime(2026, 1, 1))])
+    assert load_first_seen(tmp_path)["web:a"] == datetime(2026, 1, 1, tzinfo=UTC)
+
+
+def test_an_unreadable_record_reads_as_absent_and_is_rewritten(tmp_path: Path):
+    path = tmp_path / FIRST_SEEN_DIR / f"{slot_key('web:a')}.json"
+    path.parent.mkdir(parents=True)
+    path.write_text("{not json", "utf-8")
+    assert load_first_seen(tmp_path) == {}
+    when = datetime(2026, 2, 2, tzinfo=UTC)
+    record_first_seen(tmp_path, [_stamped("web:a", when)])
+    assert load_first_seen(tmp_path) == {"web:a": when}
+
+
+def test_first_seen_is_invisible_to_load_all(tmp_path: Path):
+    record_first_seen(tmp_path, [_doc("web:a")])
+    assert load_all(tmp_path) == []
+
+
+def test_first_seen_writes_leave_no_temp_files(tmp_path: Path):
+    record_first_seen(tmp_path, [_doc("web:a")])
+    assert [p.suffix for p in (tmp_path / FIRST_SEEN_DIR).iterdir()] == [".json"]
