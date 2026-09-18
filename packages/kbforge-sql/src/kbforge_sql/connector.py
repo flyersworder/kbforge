@@ -169,8 +169,29 @@ def _entities(
 
 
 def _removed(cfg: SqlSourceConfig, prior: list[str], current: list[str]) -> list[str]:
-    """Task 5 implements deletions and their guards."""
-    return []
+    """Ids seen at the last published run and missing now (spec §6).
+
+    Both guards run before any tombstone exists. An empty result is refused
+    even at max_removed_fraction=1.0: a view mid-refresh returns zero rows
+    without an error, and 'delete the knowledge base' must never be the
+    default reading of that."""
+    if not prior:
+        return []
+    if not current:
+        raise SqlSourceError(
+            "the query returned no rows, but the last published run saw "
+            f"{len(prior)}; refusing to delete every concept. If the source "
+            "is meant to be empty, remove its config instead"
+        )
+    gone = sorted(set(prior) - set(current))
+    fraction = len(gone) / len(prior)
+    if fraction > cfg.max_removed_fraction:
+        raise SqlSourceError(
+            f"{len(gone)} of {len(prior)} previously seen ids ({fraction:.0%}) "
+            f"are missing, above max_removed_fraction={cfg.max_removed_fraction}; "
+            "raise it for a deliberate cleanup"
+        )
+    return gone
 
 
 class SqlConnector:
