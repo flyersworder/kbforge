@@ -174,6 +174,16 @@ give ids a kind prefix in the query itself (`'product-' || product_id AS kb_id`,
 `CONCAT` your dialect prefers) and use that column as `id`. No connector config is needed
 for this.
 
+**Ids differing only in case are one directory on a case-insensitive checkout.** `Foo` and
+`foo` render distinct `native_id`s but the same path on the default macOS or Windows
+filesystem, so a case-only id pair collides in a local checkout even though it would not
+on Linux CI.
+
+**Canonicalization can fold two raw ids into one entity.** NFC normalization and
+trailing-whitespace stripping (§4.3) run before the duplicate-id check, so two raw id
+values that canonicalize to the same string collapse onto one id: without `group`, that is
+the duplicate-id error; with `group`, it is a silent merge into one entity's rows.
+
 ## Design
 
 The [design note](https://github.com/flyersworder/kbforge/blob/main/docs/design/2026-09-18-sql-source-connector-design.md)

@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import os
 import re
+from collections import Counter
 from collections.abc import Sequence
 from string import Formatter
 
@@ -147,10 +148,18 @@ def problems_for(config: dict) -> list[str]:
 
 
 def check_columns(cfg: SqlSourceConfig, columns: Sequence[str]) -> None:
-    """Spec §3.2: every configured column must be in the result."""
+    """Spec §3.2: every configured column must be in the result, and the
+    result must not name one column twice -- a duplicate makes 'which one did
+    the config mean' ambiguous, silently picking whichever `result.keys()`
+    binds a lookup to."""
     missing = [c for c in cfg.configured_columns() if c not in columns]
     if missing:
         raise SqlSourceError(
             f"configured column(s) {missing} are not in the query result; "
             f"the query returned: {list(columns)}"
+        )
+    dupes = sorted(c for c, n in Counter(columns).items() if n > 1)
+    if dupes:
+        raise SqlSourceError(
+            f"the query returned duplicate column name(s) {dupes}; alias them apart"
         )

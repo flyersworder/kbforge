@@ -49,6 +49,19 @@ def test_transient_errors_exhaust_the_retries(tmp_path, monkeypatch, sleeps):
     assert sleeps == [1, 2]
 
 
+def test_the_retry_backoff_is_capped_at_30_seconds(tmp_path, monkeypatch, sleeps):
+    make_db(tmp_path, monkeypatch)
+
+    def down(url, query):
+        raise _operational("connection refused")
+
+    monkeypatch.setattr(mod, "_query_once", down)
+    with pytest.raises(SqlSourceError):
+        CONNECTOR.kbforge_fetch(flat_cfg(retries=8), None)
+    assert sleeps == [1, 2, 4, 8, 16, 30, 30, 30]
+    assert sleeps[-1] == 30
+
+
 def test_a_programming_error_is_not_retried(tmp_path, monkeypatch, sleeps):
     make_db(tmp_path, monkeypatch)
 

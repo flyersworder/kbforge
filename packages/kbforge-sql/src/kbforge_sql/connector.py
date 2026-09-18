@@ -122,7 +122,7 @@ def _query(cfg: SqlSourceConfig) -> tuple[list[str], list[tuple]]:
                         url,
                     )
                 ) from None
-            _sleep(2 ** (attempt - 1))
+            _sleep(min(2 ** (attempt - 1), 30))
         except DBAPIError as exc:
             raise SqlSourceError(
                 _redact(f"{type(exc).__name__}: {exc.orig}", url)

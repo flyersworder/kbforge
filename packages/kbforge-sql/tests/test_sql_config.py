@@ -176,3 +176,12 @@ def test_check_columns_lists_what_the_query_returned():
 def test_check_columns_passes_when_all_present():
     cfg = SqlSourceConfig.model_validate(_cfg())
     check_columns(cfg, ["product_id", "product_name"])
+
+
+def test_check_columns_rejects_a_duplicate_column_name():
+    cfg = SqlSourceConfig.model_validate(_cfg())
+    with pytest.raises(SqlSourceError) as exc:
+        check_columns(cfg, ["product_id", "product_name", "product_name"])
+    assert str(exc.value) == (
+        "the query returned duplicate column name(s) ['product_name']; alias them apart"
+    )

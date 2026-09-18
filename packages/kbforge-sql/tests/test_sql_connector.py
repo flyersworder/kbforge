@@ -48,6 +48,27 @@ def test_a_null_text_column_leaves_no_lead(tmp_path, monkeypatch):
     assert docs["products:XDP1"].text.startswith("## Attributes\n")
 
 
+def test_a_null_title_falls_back_to_the_native_id(tmp_path, monkeypatch):
+    db = make_db(tmp_path, monkeypatch)
+    execute(db, "UPDATE product SET product_name = NULL WHERE product_id = 'XDP1';")
+    _, docs = _docs(flat_cfg())
+    assert docs["products:XDP1"].title == "XDP1"
+
+
+def test_url_template_percent_quotes_special_characters_in_the_id(
+    tmp_path, monkeypatch
+):
+    db = make_db(tmp_path, monkeypatch)
+    execute(
+        db,
+        "INSERT INTO product VALUES ('A/B%C', 'weird id product', 'MOTIX', "
+        "'active', NULL, 'x');",
+    )
+    _, docs = _docs(flat_cfg())
+    doc = docs["products:A%2FB%25C"]
+    assert doc.anchor.url == "https://portal.example/products/A%2FB%25C"
+
+
 def test_a_grouped_source_folds_rows_into_one_document(tmp_path, monkeypatch):
     make_db(tmp_path, monkeypatch)
     _, docs = _docs(grouped_cfg())
@@ -94,6 +115,44 @@ def test_a_duplicate_id_without_group_is_an_error(tmp_path, monkeypatch):
     assert str(exc.value) == (
         "sql source 'products': 2 rows share the id 'TLE9'; configure 'group' "
         "to fold them, or make the id unique"
+    )
+
+
+def test_byte_identical_duplicate_rows_still_trip_the_duplicate_id_check(
+    tmp_path, monkeypatch
+):
+    # Two rows that agree on every column could slip past an entity-column
+    # disagreement check (nothing to disagree about) if that check ran
+    # instead of the duplicate-id count. Only the count check catches this.
+    db = make_db(tmp_path, monkeypatch)
+    execute(
+        db,
+        "INSERT INTO product VALUES ('IMC300', 'IMC300 motor controller', "
+        "'MOTIX', 'active', 'Motor controller for EV pumps.', "
+        "'2026-09-18T01:00:00');",
+    )
+    with pytest.raises(SqlSourceError) as exc:
+        CONNECTOR.kbforge_fetch(flat_cfg(), None)
+    assert str(exc.value) == (
+        "sql source 'products': 2 rows share the id 'IMC300'; configure 'group' "
+        "to fold them, or make the id unique"
+    )
+
+
+def test_a_query_with_duplicate_column_names_is_rejected(tmp_path, monkeypatch):
+    make_db(tmp_path, monkeypatch)
+    cfg = flat_cfg(
+        query="SELECT product_id, product_name, product_name FROM product",
+        text=None,
+        facets=[],
+        exclude=[],
+        url_template=None,
+    )
+    with pytest.raises(SqlSourceError) as exc:
+        CONNECTOR.kbforge_fetch(cfg, None)
+    assert str(exc.value) == (
+        "sql source 'products': the query returned duplicate column name(s) "
+        "['product_name']; alias them apart"
     )
 
 
