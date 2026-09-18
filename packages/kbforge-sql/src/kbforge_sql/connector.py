@@ -65,7 +65,10 @@ def _query_once(url: URL, query: str) -> tuple[list[str], list[tuple]]:
                 rows = [tuple(r) for r in result.fetchall()]
             finally:
                 # No commit exists anywhere in this package. Whatever the
-                # statement did, this discards it (spec §7).
+                # statement did, this discards it (spec §7). SQLAlchemy also
+                # rolls back on close, so this line is belt-and-braces; no
+                # test can observe it, and the property tests pin is that
+                # nothing is ever committed.
                 conn.rollback()
     finally:
         engine.dispose()
