@@ -138,7 +138,8 @@ any connection is attempted, alongside the checks in §3.1 of the design note.
 
 A dropped or refused connection is retried up to `retries` times (default 2) with
 exponential backoff capped at 30 seconds; bad SQL, a missing view, or a missing grant fails
-at once, because retrying a typo only delays the message.
+at once, because retrying a typo only delays the message — on drivers that classify it that
+way (see "Known limits").
 
 ## Deletions
 
@@ -157,6 +158,15 @@ database:
   than raising `max_removed_fraction` — see "Known limits" for why.
 
 ## Known limits
+
+**Whether an error is retried is the driver's call.** The connector retries SQLAlchemy's
+`OperationalError` and `InterfaceError`, which most drivers reserve for connection
+failures. Some also raise `OperationalError` for statement errors — sqlite3 for a missing
+table or a syntax error, pymysql for access denied and unmapped server errors — so on those
+drivers a bad query is retried before it fails, and the message reads "OperationalError
+after N attempt(s)". That costs time, never correctness. PostgreSQL (psycopg) reports these
+as `ProgrammingError` and fails at once; check your driver with a deliberately misspelled
+view on a first run, and set `retries: 0` if it misclassifies.
 
 **Editing ANY config key resets deletion memory, not just the query.** Cursor slots are
 keyed by a digest of the *whole* connector config (`pipeline._instance_key`), so editing

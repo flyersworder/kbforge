@@ -85,7 +85,10 @@ def _query_once(url: URL, query: str) -> tuple[list[str], list[tuple]]:
 
 # Retried: the connection failed, not the statement. Re-running a SELECT is
 # safe. Everything else -- bad SQL, a missing view, no permission -- fails at
-# once, because retrying a typo only delays the message.
+# once, because retrying a typo only delays the message. The classification is
+# the driver's: sqlite3 and pymysql raise OperationalError for some statement
+# errors too, so on those a bad query is retried before it fails. That costs
+# time, never correctness; `retries: 0` opts out.
 _TRANSIENT = (OperationalError, InterfaceError)
 
 

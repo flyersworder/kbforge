@@ -109,6 +109,10 @@ def problems_for(config: dict) -> list[str]:
     used = {*cfg.id, cfg.title, *cfg.facets}
     if cfg.text:
         used.add(cfg.text)
+    if cfg.group is not None:
+        # Excluded columns are dropped from every row before grouping, so a
+        # child or order_by column in `exclude` would fail mid-fetch instead.
+        used |= {*cfg.group.children, *cfg.group.order_by}
     if clash := used & set(cfg.exclude):
         problems.append(
             f"config 'exclude' names column(s) the source also uses: {sorted(clash)}"

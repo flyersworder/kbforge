@@ -85,6 +85,18 @@ def test_used_columns_must_not_be_excluded():
     ) in problems
 
 
+def test_group_columns_must_not_be_excluded():
+    # An excluded column is dropped from every row before grouping, so a child
+    # or order_by column in `exclude` would crash the fetch with a bare KeyError.
+    problems = problems_for(
+        _cfg(
+            group={"children": ["size", "x"], "order_by": ["size"]},
+            exclude=["size"],
+        )
+    )
+    assert "config 'exclude' names column(s) the source also uses: ['size']" in problems
+
+
 def test_a_facet_named_like_an_okf_key_is_rejected():
     problems = problems_for(_cfg(facets=["type", "status"]))
     assert any(

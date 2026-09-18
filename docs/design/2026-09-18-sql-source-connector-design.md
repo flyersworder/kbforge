@@ -133,7 +133,9 @@ Every problem is reported at once, before any I/O:
 - `system`, `url_env`, `query`, `id`, `title` present and non-blank; `id`
   non-empty.
 - The env vars named by `url_env` and `password_env` are set.
-- `id`, `title`, `text` and `facets` do not appear in `exclude`.
+- `id`, `title`, `text`, `facets`, `group.children` and `group.order_by` do
+  not appear in `exclude`: an excluded column is dropped from every row
+  before grouping, so a group column there would fail mid-fetch.
 - No facet is named like an OKF-owned key (`type`, `title`, `description`,
   `generated`, `sources`, `links`). `synthesize._facets` would silently drop it;
   rejecting it here says so.
@@ -354,7 +356,10 @@ next scheduled run starts from the same state.
   each wait capped at 30s.
   Re-running a `SELECT` is safe. `ProgrammingError` and every other error — bad
   SQL, a missing view, no permission — fail immediately: retrying a typo only
-  delays the message.
+  delays the message. The classification is the driver's, not kbforge's:
+  sqlite3 and pymysql raise `OperationalError` for some statement errors, so
+  on those a bad query is retried before failing — slower, never wrong;
+  `retries: 0` opts out. psycopg classifies them as `ProgrammingError`.
 - **Messages** name the source `system` and the error class. A URL value is
   never echoed, and the password — from `password_env` or embedded in the URL —
   is replaced with `***` wherever the driver's message repeats it; exceptions
