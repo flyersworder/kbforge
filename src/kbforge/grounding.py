@@ -187,7 +187,9 @@ def rule_matches(
     that was never really capped out."""
     path = concept_path(owner.doc_id)
     matched: list[tuple[str, str]] = []
-    listed: set[str] = set()
+    # Grows as each rule keeps documents, so a later rule ranks and caps only
+    # what earlier rules (and the caller's `exclude`) haven't already cited.
+    taken = set(exclude)
     notes: list[str] = []
     for i, rule in enumerate(cfg.rules, 1):
         if not _applies(rule, owner):
@@ -216,7 +218,7 @@ def rule_matches(
                 doc.deleted
                 or doc.doc_id == owner.doc_id
                 or doc.anchor.system != rule.from_.system
-                or resource_key(doc.anchor) in exclude
+                or resource_key(doc.anchor) in taken
             ):
                 continue
             haystack = _nfc(f"{doc.title}\n{doc.text}")
@@ -258,9 +260,8 @@ def rule_matches(
                     f"{rule.by!r} value {raw!r}; ranked by first-seen"
                 )
         for _, doc_id, reason in kept:
-            if doc_id not in listed:
-                listed.add(doc_id)
-                matched.append((doc_id, reason))
+            taken.add(resource_key(by_id[doc_id].anchor))
+            matched.append((doc_id, reason))
     return matched, notes
 
 

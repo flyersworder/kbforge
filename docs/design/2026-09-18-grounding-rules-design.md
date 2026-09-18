@@ -121,11 +121,12 @@ rules:                           # new
   needed to order it against an aware one.
 - **Explicit grounding outranks rules and keeps its own cap.** Explicit ids
   resolve under `max_grounding_docs` as today. Rule matches come on top, each
-  rule within its own `newest`, deduplicated against the explicit set -- an
-  explicit id is excluded from a rule's candidates before it ranks and caps
+  rule within its own `newest`, deduplicated against the explicit set and
+  against earlier rules -- an explicit id, or a document an earlier rule
+  already cites, is excluded from a rule's candidates before it ranks and caps
   them, not after, so it never consumes one of that rule's `newest` slots. A
-  hand-picked source is never crowded out by news, and a rule cites exactly
-  `newest` OTHER documents alongside it. The prompt stays bounded because
+  hand-picked source is never crowded out by news, and a rule cites up to
+  `newest` documents nothing before it cites. The prompt stays bounded because
   `max_source_chars` is already split across all grounding documents
   (`llm_synthesizer._grounding_block`).
 

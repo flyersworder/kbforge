@@ -267,6 +267,22 @@ def test_a_document_matched_by_two_rules_is_listed_once():
     assert _ids(rule_matches(PRODUCT, cfg, _by_id(PRODUCT, hit), {})) == ["web:a"]
 
 
+def test_a_document_one_rule_cited_does_not_consume_a_later_rules_slot():
+    """Each rule cites up to `newest` documents the earlier rules didn't: a
+    document rule 1 kept is excluded before rule 2 ranks and caps, not deduped
+    after it, or rule 2 would cite fewer than `newest` and its cap note would
+    name the very documents it should have cited."""
+    by_published = _rule(newest=2, by="published")
+    cfg = _cfg(by_published, by_published)
+    docs = [
+        _doc(f"web:a{n}", text="IMC300", structured={"published": f"2026-0{n}-01"})
+        for n in range(1, 5)
+    ]
+    ids, notes = rule_matches(PRODUCT, cfg, _by_id(PRODUCT, *docs), {})
+    assert [d for d, _ in ids] == ["web:a4", "web:a3", "web:a2", "web:a1"]
+    assert [n for n in notes if "rule 2 capped" in n] == []
+
+
 def test_a_rule_with_only_missing_fields_matches_nothing():
     owner = _doc("sql:A", structured={"type": "product"})
     cfg = _cfg(_rule(match=["{missing}"]))
