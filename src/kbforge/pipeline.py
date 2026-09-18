@@ -294,6 +294,16 @@ def run(
     )
     by_id = {d.doc_id: d for d in mirror_docs}
     by_id.update({d.doc_id: d for d in docs if not d.deleted})
+    # A doc this run tombstones is never in the update above (it is filtered
+    # by `not d.deleted`), so without this its *stale, pre-run* mirror copy
+    # -- still `deleted=False` -- would linger in `by_id` under its own
+    # doc_id. Every `doc.deleted` guard downstream (`resolve`, `resolve_all`,
+    # `rule_matches`) checks the copy IN `by_id`, so that guard would never
+    # fire: a rule (or an explicit declaration) could cite a document the
+    # same run is deleting, and the sidecar would record it as grounding.
+    for doc in docs:
+        if doc.deleted:
+            by_id.pop(doc.doc_id, None)
     hashes = {k: v.anchor.content_hash for k, v in by_id.items()}
 
     changed = set(changeset.added) | set(changeset.modified)

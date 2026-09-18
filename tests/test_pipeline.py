@@ -1242,3 +1242,79 @@ def test_a_document_committed_alongside_its_owner_is_dated_this_run(tmp_path):
         tmp_path, [b], synthesizer=synth, grounding_config=cfg, connector_name="web"
     )
     assert isinstance(result, NoOp)
+
+
+def test_a_document_deleted_this_run_is_excluded_from_the_owners_grounding(
+    tmp_path: Path,
+):
+    """A same-system rule (web grounds web): the run that tombstones `y` also
+    re-synthesizes `y`'s owner `hub` (hub's own content changed in the same
+    fetch). `by_id` must not keep `y`'s stale, pre-run mirror copy -- still
+    `deleted=False` -- or the `doc.deleted` guards in `rule_matches` never
+    fire and `hub` cites a document the very same review request removes."""
+    cfg = GroundingConfig.model_validate(
+        {
+            "rules": [
+                {
+                    "for": {"type": "hub"},
+                    "from": {"system": "web"},
+                    "match": ["{native_id}"],
+                }
+            ]
+        }
+    )
+    hub = _doc("hub", "Widget hub", system="web", structured={"type": "hub"})
+    y = _doc("y", "Widget y", system="web", text="Mentions hub.")
+    _run_once(
+        tmp_path,
+        [hub, y],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+
+    hub_v2 = _doc("hub", "Widget hub v2", system="web", structured={"type": "hub"})
+    y_gone = _doc("y", "Widget y", system="web", text="Mentions hub.", deleted=True)
+    synth = _GroundingSynth()
+    pub = _run_once(
+        tmp_path,
+        [hub_v2, y_gone],
+        synthesizer=synth,
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    assert pub.last_change is not None
+    grounded_ids = [d.doc_id for d in synth.seen.get("web:hub", [])]
+    assert "web:y" not in grounded_ids
+
+    # `y` is gone from the mirror and from this connector's next fetch; nothing
+    # about `hub` changed since the run above committed it, so this must settle
+    # rather than drift and republish forever off the stale grounding.
+    result, _ = _run_result(
+        tmp_path,
+        [hub_v2],
+        synthesizer=_GroundingSynth(),
+        grounding_config=cfg,
+        connector_name="web",
+    )
+    assert isinstance(result, NoOp)
+
+
+def test_explicit_grounding_to_a_document_deleted_this_run_is_dropped(
+    tmp_path: Path,
+):
+    """Same defect, explicit path: `x` explicitly grounds in `y`, and the run
+    that deletes `y` also re-synthesizes `x`. The pre-existing `resolve` guard
+    (`doc.deleted`) must see `y` as gone, not as its stale pre-run copy."""
+    cfg = _cfg(**{"sys:x": ["sys:y"]})
+    x = _doc("x", "X")
+    y = _doc("y", "Y")
+    _run_once(tmp_path, [x, y], synthesizer=_GroundingSynth(), grounding_config=cfg)
+
+    x_v2 = _doc("x", "X v2")
+    y_gone = _doc("y", "Y", deleted=True)
+    synth = _GroundingSynth()
+    pub = _run_once(tmp_path, [x_v2, y_gone], synthesizer=synth, grounding_config=cfg)
+    assert pub.last_change is not None
+    grounded_ids = [d.doc_id for d in synth.seen.get("sys:x", [])]
+    assert "sys:y" not in grounded_ids
