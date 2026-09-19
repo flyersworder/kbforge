@@ -16,6 +16,7 @@ from kbforge.chunking import (
     ChunkRecord,
     admit,
     read_record,
+    restore,
     snapshot,
     write_record,
 )
@@ -100,6 +101,15 @@ class Waiting:
 
 class ConfigError(RuntimeError):
     """A connector rejected its config before any I/O."""
+
+
+class RedoRefused(RuntimeError):
+    """`kbforge redo` found nothing it may safely roll back."""
+
+
+@dataclass(frozen=True)
+class Redone:
+    admitted: list[str]
 
 
 def _instance_key(config: dict) -> str:
@@ -673,3 +683,46 @@ def run(
             ),
         )
     return Published(url=url)
+
+
+def redo(
+    connector: ConnectorProtocol,
+    publisher: PublisherProtocol,
+    *,
+    config: dict,
+    mirror: str,
+    state_dir: str,
+    publish_config: dict,
+) -> Redone:
+    """Roll the last chunk out of the mirror so the next run proposes it again
+    (design/2026-09-19 §7). One level deep: waiting guarantees every earlier
+    chunk was merged or closed before this one was synthesized. Closing a
+    request still means discard; this is the only way to re-propose."""
+    info = connector.kbforge_connector_info()
+    problems = connector.kbforge_validate_config(config)
+    if problems:
+        raise ConfigError(f"{info.name}: {'; '.join(problems)}")
+    open_request = getattr(publisher, "kbforge_open_request", None)
+    if open_request is None:
+        raise ConfigError(
+            f"{publisher.kbforge_publisher_info().name}: redo needs a publisher "
+            "that implements kbforge_open_request; this one does not"
+        )
+    state_path = Path(state_dir)
+    slot = _chunk_slot(state_path, info.name, config)
+    record = read_record(slot)
+    if record is None:
+        raise RedoRefused(
+            f"{info.name}: no chunk to redo (no chunk record in {state_path}; "
+            "only a run with --chunking writes one)"
+        )
+    for hint in record.branch_hints:
+        request = open_request(hint, publish_config)
+        if request is not None:
+            raise RedoRefused(
+                f"review request {request} on {hint} is still open; close it "
+                "first, or the redone chunk would be appended to it"
+            )
+    restore(record, Path(mirror), _cursor_slot(state_path, info.name, config))
+    slot.unlink()
+    return Redone(admitted=record.admitted)

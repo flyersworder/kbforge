@@ -3,6 +3,7 @@ Helpers are local rather than imported from test_pipeline: tests/ is not a
 package, so cross-test imports depend on pytest's import mode."""
 
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -21,9 +22,12 @@ from kbforge.models import (
 from kbforge.pipeline import (
     ConfigError,
     Published,
+    Redone,
+    RedoRefused,
     Waiting,
     _chunk_slot,
     _cursor_slot,
+    redo,
     run,
 )
 from kbforge.synthesize import assemble, concept_path
@@ -343,3 +347,59 @@ def test_a_publisher_without_the_hook_is_refused_under_chunking(tmp_path):
         "kbforge_open_request",
     ):
         _run(tmp_path, [_doc("a")], cap=1, publisher=_Hookless())
+
+
+def _tree(*roots: Path) -> dict[str, bytes]:
+    return {
+        f"{root.name}/{p.relative_to(root).as_posix()}": p.read_bytes()
+        for root in roots
+        for p in sorted(root.rglob("*"))
+        if p.is_file()
+    }
+
+
+def _redo(tmp_path, publisher=None, name="fake"):
+    return redo(
+        _Connector([], name=name),
+        publisher or _Publisher(),
+        config={},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={},
+    )
+
+
+def test_redo_restores_mirror_first_seen_and_cursor_byte_for_byte(tmp_path):
+    connector = _Connector([])
+    _run(tmp_path, [_doc("a")], connector=connector)  # unchunked baseline
+    before = _tree(tmp_path / "mirror", tmp_path / "state")
+
+    _run(tmp_path, [_doc("a", text="a2"), _doc("b")], cap=5, connector=connector)
+    assert _tree(tmp_path / "mirror", tmp_path / "state") != before
+
+    result = _redo(tmp_path)
+    assert result == Redone(admitted=["sys:a", "sys:b"])
+    assert _tree(tmp_path / "mirror", tmp_path / "state") == before
+
+
+def test_after_redo_the_next_run_proposes_the_same_chunk_again(tmp_path):
+    docs = [_doc("a"), _doc("b")]
+    _, pub1, _ = _run(tmp_path, docs, cap=1)
+    _redo(tmp_path)
+    _, pub2, _ = _run(tmp_path, docs, cap=1)
+    assert set(pub2.changes[0].files) == set(pub1.changes[0].files)
+
+
+def test_redo_refuses_without_a_record(tmp_path):
+    with pytest.raises(RedoRefused, match="fake: no chunk to redo"):
+        _redo(tmp_path)
+
+
+def test_redo_refuses_while_the_request_is_open_and_touches_nothing(tmp_path):
+    _run(tmp_path, [_doc("a"), _doc("b")], cap=1)
+    before = _tree(tmp_path / "mirror", tmp_path / "state")
+    with pytest.raises(
+        RedoRefused, match="review request 7 on sync/sys is still open; close it first"
+    ):
+        _redo(tmp_path, publisher=_Publisher(open_request="7"))
+    assert _tree(tmp_path / "mirror", tmp_path / "state") == before
