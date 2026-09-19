@@ -1,6 +1,6 @@
 [project]
 name = "kbforge-okfquery"
-version = "0.1.0"
+version = "0.2.0"
 description = "SQL over an OKF v0.2 bundle, via DuckDB"
 readme = "README.md"
 requires-python = ">=3.12"

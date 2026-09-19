@@ -2,8 +2,9 @@
 
 SQL over an [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
 bundle, via DuckDB. `okfquery` loads a published bundle into an in-memory DuckDB
-connection and hands the connection back — no daemon, no cache, no committed
-artifact. It depends on no kbforge code at runtime, so it reads any OKF v0.2
+connection and hands the connection back — no daemon, no cache, and no
+committed artifact except the navigation `index.md` you opt into with
+`okfquery index`. It depends on no kbforge code at runtime, so it reads any OKF v0.2
 bundle, kbforge-built or not.
 
 ## Install and use
@@ -17,6 +18,68 @@ okfquery shell --bundle path/to/bundle
 `query` runs one SQL statement and prints the result (`--format table|json|csv`).
 `shell` writes a temporary `.duckdb` file, opens the `duckdb` CLI on it, and
 deletes the file when the shell exits.
+
+## `index`: a front door for agents
+
+```bash
+okfquery index --bundle path/to/bundle             # writes path/to/bundle/index.md
+okfquery index --bundle . --group-by owner         # sections by a facet, not by type
+okfquery index --bundle . --check                  # writes nothing; exit 1 if stale
+```
+
+An agent reading a bundle cold starts at the root `index.md` (OKF §8, progressive
+disclosure): one line per concept, `* [Title](path) - description`, grouped under
+one heading per `type` (or per `--group-by` facet; concepts without it go last).
+It then opens only the concepts it needs. Without an index, its first step is
+listing `concepts/*/overview.md` and opening files to learn what they are.
+
+- **Derived, never edited.** The file starts with a generated-by marker; a
+  hand-written `index.md` is refused unless you pass `--force`.
+- **Deterministic.** No timestamps, total ordering: rerunning on an unchanged
+  bundle rewrites nothing, so CI commits only when a listing changed.
+- **No frontmatter**, not even the optional root `okf_version`: a reserved name
+  that opens a fence is a concept, and the index would count itself.
+
+**Run it after merge, not per kbforge run.** Each kbforge system publishes on its
+own sync branch; a whole-bundle file on several branches would collide. Generate
+it on the bundle repo's default branch instead. The sync branches never touch
+it, so they inherit the latest one.
+
+GitHub Actions (commits made with `GITHUB_TOKEN` do not retrigger workflows):
+
+```yaml
+on: { push: { branches: [main] } }
+permissions: { contents: write }
+jobs:
+  index:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uvx --from kbforge-okfquery okfquery index --bundle .
+      - run: |
+          git add index.md && git diff --cached --quiet && exit 0
+          git config user.name "okfquery" && git config user.email "okfquery@users.noreply.github.com"
+          git commit -m "chore: regenerate index.md" && git push
+```
+
+GitLab CI (needs a project access token with `write_repository`, here `KB_TOKEN`):
+
+```yaml
+index:
+  image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
+  rules: [{ if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]
+  script:
+    - apt-get update -qq && apt-get install -yqq git
+    - uvx --from kbforge-okfquery okfquery index --bundle .
+    - git add index.md && git diff --cached --quiet && exit 0
+    - git -c user.name=okfquery -c user.email=okfquery@example.invalid commit -m "chore: regenerate index.md [skip ci]"
+    - git push "https://oauth2:${KB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_BRANCH}"
+```
+
+If the default branch is protected against bot pushes, run
+`okfquery index --check` in the merge-request pipeline instead and regenerate by
+hand when it fails.
 
 ## Schema
 
