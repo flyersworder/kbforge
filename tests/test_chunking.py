@@ -5,7 +5,17 @@ import pytest
 from pydantic import ValidationError
 
 from kbforge.canonical import content_hash
-from kbforge.chunking import ChunkingConfig, admit, load_chunking
+from kbforge.chunking import (
+    ChunkingConfig,
+    ChunkRecord,
+    admit,
+    load_chunking,
+    owned_paths,
+    read_record,
+    restore,
+    snapshot,
+    write_record,
+)
 from kbforge.models import CanonicalDocument, ResourceAnchor
 
 
@@ -98,3 +108,69 @@ def test_config_rejects_a_cap_below_one():
 
 def test_no_path_means_no_chunking():
     assert load_chunking(None) is None
+
+
+def test_owned_paths_are_where_the_three_writers_actually_write(tmp_path: Path):
+    """Guards drift: if the mirror, the sidecar or the first-seen writer ever
+    renames its file, redo would silently restore the wrong path."""
+    from kbforge.grounding import record_first_seen, write_sidecar
+    from kbforge.mirror import commit
+
+    mirror = tmp_path / "mirror"
+    doc = _doc("a")
+    commit(mirror, [doc])
+    write_sidecar(mirror, doc.doc_id, {})
+    record_first_seen(mirror, [doc])
+    written = {p.relative_to(mirror).as_posix() for p in mirror.rglob("*.json")}
+    assert written == set(owned_paths(doc.doc_id))
+
+
+def test_snapshot_keeps_present_files_verbatim_and_absent_ones_as_none(tmp_path):
+    mirror = tmp_path / "mirror"
+    slot, sidecar, first_seen = owned_paths("sys:a")
+    mirror.mkdir()
+    (mirror / slot).write_text("OLD", "utf-8")
+    assert snapshot(mirror, {"sys:a"}) == {
+        slot: "OLD",
+        sidecar: None,
+        first_seen: None,
+    }
+
+
+def test_restore_puts_contents_back_and_removes_what_did_not_exist(tmp_path):
+    mirror = tmp_path / "mirror"
+    cursor = tmp_path / "state" / "cursor-fake-0.json"
+    slot, sidecar, _ = owned_paths("sys:a")
+    (mirror / "_grounding").mkdir(parents=True)
+    (mirror / slot).write_text("NEW", "utf-8")
+    (mirror / sidecar).write_text("NEW", "utf-8")
+    cursor.parent.mkdir()
+    cursor.write_text("C2", "utf-8")
+    record = ChunkRecord(
+        branch_hints=["sync/sys"],
+        pending=False,
+        admitted=["sys:a"],
+        mirror={slot: "OLD", sidecar: None},
+        cursor=None,
+    )
+    restore(record, mirror, cursor)
+    assert (mirror / slot).read_text("utf-8") == "OLD"
+    assert not (mirror / sidecar).exists()
+    assert not cursor.exists()
+
+
+def test_a_record_round_trips(tmp_path: Path):
+    path = tmp_path / "state" / "chunk-fake-0.json"
+    record = ChunkRecord(
+        branch_hints=["sync/sys"],
+        pending=True,
+        admitted=["sys:a"],
+        mirror={"k.json": None},
+        cursor="{}",
+    )
+    write_record(path, record)
+    assert read_record(path) == record
+
+
+def test_no_record_reads_as_none(tmp_path: Path):
+    assert read_record(tmp_path / "nope.json") is None

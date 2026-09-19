@@ -11,6 +11,8 @@ from pathlib import Path
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from kbforge.grounding import FIRST_SEEN_DIR, SIDECAR_DIR
+from kbforge.mirror import slot_key
 from kbforge.models import CanonicalDocument
 
 
@@ -63,3 +65,63 @@ def admit(
             admitted = group[: max(room, 0)]
         break
     return admitted, len(admitted) < len(docs)
+
+
+class ChunkRecord(BaseModel):
+    """The last chunk a connector instance published (§5): enough to wait on
+    its review request and to roll it back."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    branch_hints: list[str]
+    pending: bool
+    """True when that publish left a backlog, so the next run must wait."""
+    admitted: list[str]
+    mirror: dict[str, str | None]
+    """Mirror-relative path -> content before the chunk's commit; None = absent."""
+    cursor: str | None
+    """The cursor slot's content before the chunk; None = absent."""
+
+
+def owned_paths(doc_id: str) -> list[str]:
+    """Every mirror-relative file a run writes or deletes on behalf of `doc_id`:
+    its slot, its grounding sidecar, its first-seen record."""
+    name = f"{slot_key(doc_id)}.json"
+    return [name, f"{SIDECAR_DIR}/{name}", f"{FIRST_SEEN_DIR}/{name}"]
+
+
+def _read(path: Path) -> str | None:
+    return path.read_text("utf-8") if path.exists() else None
+
+
+def _put(path: Path, content: str | None) -> None:
+    if content is None:
+        path.unlink(missing_ok=True)
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, "utf-8")
+
+
+def snapshot(mirror: Path, doc_ids: set[str]) -> dict[str, str | None]:
+    return {
+        rel: _read(mirror / rel)
+        for doc_id in sorted(doc_ids)
+        for rel in owned_paths(doc_id)
+    }
+
+
+def restore(record: ChunkRecord, mirror: Path, cursor_slot: Path) -> None:
+    for rel, content in sorted(record.mirror.items()):
+        _put(mirror / rel, content)
+    _put(cursor_slot, record.cursor)
+
+
+def read_record(path: Path) -> ChunkRecord | None:
+    if not path.exists():
+        return None
+    return ChunkRecord.model_validate_json(path.read_text("utf-8"))
+
+
+def write_record(path: Path, record: ChunkRecord) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(record.model_dump_json(), "utf-8")
