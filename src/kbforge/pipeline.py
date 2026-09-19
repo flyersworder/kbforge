@@ -770,9 +770,9 @@ def redo(
         )
     opened = _open_chunk_request(open_request, record, publish_config)
     if opened is not None:
-        request, hint = opened
+        request, _ = opened  # the hint is not the resolved branch; see the CLI
         raise RedoRefused(
-            f"review request {request} on {hint} is still open; close it "
+            f"review request {request} is still open; close it "
             "first, or the redone chunk would be appended to it"
         )
     restore(record, Path(mirror), _cursor_slot(state_path, info.name, config))

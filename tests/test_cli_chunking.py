@@ -203,3 +203,27 @@ def test_a_torn_chunk_record_exits_2_on_redo(tmp_path, capsys):
     out = capsys.readouterr().out
     assert out.startswith(f"chunk record {record}: "), out
     assert "Invalid JSON" in out, out
+
+
+def test_waiting_names_the_request_not_the_unresolved_branch_hint(
+    tmp_path, capsys, monkeypatch
+):
+    """The hook resolves a configured `branch` override, but `Waiting` only
+    carries the synthesizer's hint (`sync/<system>`). Printing that hint named
+    a branch the request was not on, so the message names the request alone."""
+    from kbforge.publishers.dry_run import DryRunPublisher
+
+    src = _source(tmp_path, ["a", "b"])
+    cfg = _chunking(tmp_path, "max_concepts: 1\n")
+    args = ["run", "--connector", "local_files", "--set", f"path={src}",
+            "--chunking", str(cfg), *_plumbing(tmp_path)]  # fmt: skip
+    assert main(args) == 0
+    capsys.readouterr()
+
+    monkeypatch.setattr(
+        DryRunPublisher, "kbforge_open_request", lambda self, hint, config: "7"
+    )
+    assert main(args) == 0
+    out = capsys.readouterr().out
+    assert "Waiting: review request 7 is still open;" in out, out
+    assert "sync/" not in out, f"the unresolved branch hint leaked: {out!r}"

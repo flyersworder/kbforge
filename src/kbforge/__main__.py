@@ -321,8 +321,11 @@ def main(argv: list[str] | None = None) -> int:
         return 1
     if isinstance(result, Waiting):
         print(
-            f"Waiting: review request {result.request} on {result.branch_hint} is "
-            "still open; the next chunk follows once it is merged or closed."
+            # The request, not `branch_hint`: the hint is the synthesizer's
+            # `sync/<system>`, and a configured `branch` override puts the
+            # request somewhere else.
+            f"Waiting: review request {result.request} is still open; the next "
+            "chunk follows once it is merged or closed."
         )
         return 0
     return 2

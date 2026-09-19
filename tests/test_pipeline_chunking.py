@@ -400,7 +400,7 @@ def test_redo_refuses_while_the_request_is_open_and_touches_nothing(tmp_path):
     _run(tmp_path, [_doc("a"), _doc("b")], cap=1)
     before = _tree(tmp_path / "mirror", tmp_path / "state")
     with pytest.raises(
-        RedoRefused, match="review request 7 on sync/sys is still open; close it first"
+        RedoRefused, match="review request 7 is still open; close it first"
     ):
         _redo(tmp_path, publisher=_Publisher(open_request="7"))
     assert _tree(tmp_path / "mirror", tmp_path / "state") == before
