@@ -10,6 +10,7 @@ from kbforge.chunking import (
     ChunkRecord,
     admit,
     load_chunking,
+    merge_records,
     owned_paths,
     read_record,
     restore,
@@ -174,3 +175,35 @@ def test_a_record_round_trips(tmp_path: Path):
 
 def test_no_record_reads_as_none(tmp_path: Path):
     assert read_record(tmp_path / "nope.json") is None
+
+
+def _rec(**kw) -> ChunkRecord:
+    base = dict(
+        branch_hints=["sync/sys"], pending=False, admitted=[], mirror={}, cursor=None
+    )
+    return ChunkRecord.model_validate(base | kw)
+
+
+def test_merging_keeps_the_earliest_prior_state_of_every_path():
+    older = _rec(admitted=["sys:a"], mirror={"a.json": None, "c.json": "C0"})
+    newer = _rec(admitted=["sys:b"], mirror={"a.json": "A1", "b.json": None})
+    merged = merge_records(older, newer)
+    assert merged.mirror == {"a.json": None, "b.json": None, "c.json": "C0"}, (
+        "a path the older run touched must restore to its state before that run"
+    )
+
+
+def test_merging_keeps_the_older_cursor_and_the_newer_pending_flag():
+    older = _rec(cursor="C0", pending=False)
+    newer = _rec(cursor="C1", pending=True)
+    merged = merge_records(older, newer)
+    assert merged.cursor == "C0", "redo must rewind the cursor to before the first run"
+    assert merged.pending is True, "whether a backlog remains is the newer run's"
+
+
+def test_merging_unions_admitted_sorted_and_branch_hints_in_order():
+    older = _rec(branch_hints=["sync/b", "sync/a"], admitted=["sys:c", "sys:a"])
+    newer = _rec(branch_hints=["sync/a", "sync/z"], admitted=["sys:b", "sys:a"])
+    merged = merge_records(older, newer)
+    assert merged.admitted == ["sys:a", "sys:b", "sys:c"]
+    assert merged.branch_hints == ["sync/b", "sync/a", "sync/z"]

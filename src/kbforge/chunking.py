@@ -83,6 +83,22 @@ class ChunkRecord(BaseModel):
     """The cursor slot's content before the chunk; None = absent."""
 
 
+def merge_records(older: ChunkRecord, newer: ChunkRecord) -> ChunkRecord:
+    """One record for two runs published into the same still-open request, so
+    redo rolls back everything a reviewer discards by closing it (§7).
+
+    Rolling back means reaching the state before the OLDER run: a path both
+    runs touched keeps the older record's prior content, and the cursor is the
+    older one. Whether a backlog remains is the newer run's to say."""
+    return ChunkRecord(
+        branch_hints=list(dict.fromkeys(older.branch_hints + newer.branch_hints)),
+        pending=newer.pending,
+        admitted=sorted(set(older.admitted) | set(newer.admitted)),
+        mirror=dict(newer.mirror) | older.mirror,
+        cursor=older.cursor,
+    )
+
+
 def owned_paths(doc_id: str) -> list[str]:
     """Every mirror-relative file a run writes or deletes on behalf of `doc_id`:
     its slot, its grounding sidecar, its first-seen record."""

@@ -403,3 +403,87 @@ def test_redo_refuses_while_the_request_is_open_and_touches_nothing(tmp_path):
     ):
         _redo(tmp_path, publisher=_Publisher(open_request="7"))
     assert _tree(tmp_path / "mirror", tmp_path / "state") == before
+
+
+def test_redo_rolls_back_every_run_published_into_the_still_open_request(tmp_path):
+    """Run A's final chunk leaves its request open; run B appends to it. Closing
+    that request discards both, so redo must roll back both, not just B."""
+    connector = _Connector([])
+    publisher = _Publisher()
+    _run(tmp_path, [_doc("z")], connector=connector)  # unchunked baseline cursor
+    before = _tree(tmp_path / "mirror", tmp_path / "state")
+
+    _run(
+        tmp_path,
+        [_doc("z"), _doc("a")],
+        cap=5,
+        connector=connector,
+        publisher=publisher,
+    )
+    publisher.open = "7"
+    result, _, _ = _run(
+        tmp_path,
+        [_doc("z"), _doc("a"), _doc("b")],
+        cap=5,
+        connector=connector,
+        publisher=publisher,
+    )
+    assert isinstance(result, Published), "a small follow-up appends"
+
+    publisher.open = None  # the reviewer closes the request
+    assert _redo(tmp_path, publisher=publisher) == Redone(admitted=["sys:a", "sys:b"])
+    ids = {d.doc_id for d in load_all(tmp_path / "mirror")}
+    assert "sys:a" not in ids, "run A's concept was discarded, not rolled back"
+    assert "sys:b" not in ids, "run B's concept was not rolled back"
+    assert _record(tmp_path) is None, "redo must delete the record"
+    assert _tree(tmp_path / "mirror", tmp_path / "state") == before, (
+        "redo must restore the mirror and the cursor to before run A"
+    )
+
+
+def test_a_small_follow_up_into_an_open_final_chunk_merges_the_record(tmp_path):
+    publisher = _Publisher()
+    _run(tmp_path, [_doc("a")], cap=5, publisher=publisher)
+    first = _record(tmp_path)
+    assert first is not None
+    publisher.open = "7"
+    result, _, _ = _run(
+        tmp_path, [_doc("a", text="a2"), _doc("b")], cap=5, publisher=publisher
+    )
+    assert isinstance(result, Published)
+    record = _record(tmp_path)
+    assert record is not None
+    assert record.admitted == ["sys:a", "sys:b"], "the record was replaced, not merged"
+    assert record.mirror[owned_paths("sys:a")[0]] is None, (
+        "sys:a must restore to its state before the first run, not after it"
+    )
+    assert record.cursor == first.cursor
+    assert record.pending is False
+
+
+def test_a_follow_up_after_the_request_closed_replaces_the_record(tmp_path):
+    publisher = _Publisher()
+    _run(tmp_path, [_doc("a")], cap=5, publisher=publisher)
+    result, _, _ = _run(tmp_path, [_doc("a"), _doc("b")], cap=5, publisher=publisher)
+    assert isinstance(result, Published)
+    record = _record(tmp_path)
+    assert record is not None
+    assert record.admitted == ["sys:b"], (
+        "a request that was merged or closed must not be merged into"
+    )
+
+
+def test_an_oversized_change_waits_while_a_final_chunk_request_is_open(tmp_path):
+    publisher = _Publisher()
+    _run(tmp_path, [_doc("a")], cap=2, publisher=publisher)
+    publisher.open = "7"
+    docs = [_doc("a"), _doc("b"), _doc("c"), _doc("d")]
+    before = _tree(tmp_path / "mirror", tmp_path / "state")
+    result, _, _ = _run(tmp_path, docs, cap=2, publisher=publisher)
+    assert result == Waiting(request="7", branch_hint="sync/sys"), (
+        "an oversized change must not start chunking into an open request"
+    )
+    assert len(publisher.changes) == 1, "a waiting run must not publish"
+    assert _tree(tmp_path / "mirror", tmp_path / "state") == before, (
+        "a waiting run must not touch the mirror, the cursor or the record"
+    )

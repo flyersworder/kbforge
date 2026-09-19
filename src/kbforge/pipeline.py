@@ -15,6 +15,7 @@ from kbforge.chunking import (
     ChunkingConfig,
     ChunkRecord,
     admit,
+    merge_records,
     read_record,
     restore,
     snapshot,
@@ -295,6 +296,8 @@ def run(
         raise ConfigError(f"{info.name}: {'; '.join(problems)}")
 
     # Before the fetch, so a waiting run costs one read-only forge call (§6).
+    open_request: Callable[[str, dict], str | None] | None = None
+    record: ChunkRecord | None = None
     if chunking is not None:
         open_request = _open_request_hook(
             publisher,
@@ -363,6 +366,16 @@ def run(
         )
         backlog = changed - {d.doc_id for d in chunk}
         changed -= backlog
+        # A change too big for one request must not start chunking into a
+        # request the last chunk left open: the final chunk's request stays
+        # open to small follow-ups, but the first of several chunks appended
+        # to it rebuilds the unbounded request chunking exists to prevent
+        # (§6). Before the drift scan and synthesis, so waiting costs no tokens.
+        if backlog and record is not None and open_request is not None:
+            opened = _open_chunk_request(open_request, record, publish_config)
+            if opened is not None:
+                request, hint = opened
+                return Waiting(request=request, branch_hint=hint)
     admitted_docs = [d for d in docs if d.doc_id not in backlog]
     # Recency fallback for grounding rules; loaded once, only when the drift
     # scan runs and rules exist. Gated on `scan`, not `grounding_cfg.rules`
@@ -636,6 +649,15 @@ def run(
     if failures:
         return Aborted(failures=failures)
 
+    # Asked before publishing, since afterwards the answer is always "open".
+    # If this publish appends to the request the recorded chunk opened, redo
+    # must roll back both runs, because closing that request discards both.
+    appends = (
+        record is not None
+        and open_request is not None
+        and proposal.branch_hint in record.branch_hints
+        and open_request(proposal.branch_hint, publish_config) is not None
+    )
     url = publisher.kbforge_publish(proposal, publish_config)
     cursor_slot = _cursor_slot(state_path, info.name, config)
     touched: set[str] = set()
@@ -695,16 +717,16 @@ def run(
     if not pending:
         _save_cursor(state_path, result.cursor, systems, config)
     if chunking is not None:
-        write_record(
-            _chunk_slot(state_path, info.name, config),
-            ChunkRecord(
-                branch_hints=[proposal.branch_hint],
-                pending=pending,
-                admitted=sorted(touched),
-                mirror=prior_mirror,
-                cursor=prior_cursor,
-            ),
+        new_record = ChunkRecord(
+            branch_hints=[proposal.branch_hint],
+            pending=pending,
+            admitted=sorted(touched),
+            mirror=prior_mirror,
+            cursor=prior_cursor,
         )
+        if appends and record is not None:
+            new_record = merge_records(record, new_record)
+        write_record(_chunk_slot(state_path, info.name, config), new_record)
     return Published(url=url)
 
 

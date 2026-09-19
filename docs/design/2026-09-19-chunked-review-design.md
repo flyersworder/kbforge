@@ -14,7 +14,7 @@ okf_version: "0.2"
 one chunk of it, synthesizes and publishes only that, and commits only that to
 the mirror. The rest stays visible to `diff`, so the next run finds it again.
 While a non-final chunk's review request is open, runs return `Waiting` before
-synthesis. A reviewer who rejects a chunk closes the request and runs
+synthesis, and so does an oversized change while any chunk's request is open. A reviewer who rejects a chunk closes the request and runs
 `kbforge redo`, which rolls that chunk out of the mirror so it is proposed
 again under whatever taxonomy or exemplars changed in between.
 
@@ -169,6 +169,12 @@ including one-chunk runs:
   drifted documents: slot, sidecar and first-seen record each) to its content
   *before* the commit. `null` means the file did not exist. `cursor` does the
   same for the cursor slot.
+- A publish that appends to a request still open on a recorded branch (a
+  small follow-up after a final chunk) **merges** into the record rather than
+  replacing it: a path already recorded keeps its earlier content, the cursor
+  stays the earlier one, `admitted` and `branch_hints` are unioned, and
+  `pending` is the new run's. Closing that request discards every run in it,
+  so the record must roll back every run in it.
 
 ## 6. Waiting
 
@@ -182,6 +188,14 @@ stays bounded. The CLI prints the request and exits 0.
 
 A merged request and a closed one both release the next chunk. Closing still
 means discard.
+
+Second, after admission: a change too big for one chunk also waits while a
+request is open on any recorded branch, even when the record is not
+`pending`. A final chunk's request stays open to small follow-ups, which
+append as they always have, but the first of several chunks appended to it
+would rebuild the unbounded request. This check runs after the fetch and
+diff (only they can tell the change is oversized) and still before the drift
+scan and synthesis.
 
 ### 6.1 The publisher seam
 
@@ -215,7 +229,9 @@ reason, nothing touched) when:
   chunk would append to it).
 
 Otherwise it writes every `restore` entry back (`null` deletes), restores the
-cursor slot, and deletes the record. The next `run` re-diffs and admits the same
+cursor slot, and deletes the record. Because the record merges every run
+published into a still-open request (§5), this rolls back everything the
+closed request carried, not only the last run. The next `run` re-diffs and admits the same
 documents. Redo is one level deep: waiting guarantees every earlier chunk was
 merged or closed. Redoing a *merged* chunk is allowed. It re-proposes the chunk
 as updates, which is a legitimate "regenerate".
