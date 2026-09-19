@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from kbforge.canonical import FetchContractError, StabilityError
 from kbforge.chunking import ChunkRecordError, load_chunking
 from kbforge.grounding import load_grounding, problems_for
+from kbforge.llm_synthesizer import SynthesisError
 from kbforge.pipeline import (
     Aborted,
     ConfigError,
@@ -297,6 +298,10 @@ def main(argv: list[str] | None = None) -> int:
         # for the newer law would leave the older one worse for no reason.
         print(f"Connector contract violation ({args.connector}): {exc}")
         return 2
+    except SynthesisError as exc:
+        # Raised before the publish, so the mirror and cursor never moved.
+        print(f"Synthesis failed: {exc} (nothing was published; the next run retries)")
+        return 1
     except (PublishError, PathError) as exc:
         # The mirror never advanced, so the next run retries this same change.
         # Catching the PublishError base rather than ForgeError specifically:

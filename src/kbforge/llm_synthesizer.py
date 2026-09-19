@@ -17,6 +17,13 @@ if TYPE_CHECKING:
     # kbforge[llm] stays optional. `from __future__ import annotations` (above)
     # means these names are never evaluated outside a type checker.
     from pydantic_ai import Agent
+    from pydantic_ai.models import Model
+
+
+class SynthesisError(RuntimeError):
+    """The model gave no usable concept for one document. Raised before anything
+    is published, so the mirror and cursor stay put and the next run retries."""
+
 
 _INSTRUCTIONS = (
     "You turn one source document into a knowledge-base concept. Write ONLY from "
@@ -64,10 +71,16 @@ class LLMConfig:
     model: str = "deepseek/deepseek-v4-flash"
     api_base: str = "https://openrouter.ai/api/v1"
     api_key_env: str = "OPENROUTER_API_KEY"
-    max_tokens: int = 1500
+    # Output tokens per concept. 1500 truncated the tool call inside `body` for
+    # a long source (~1,800 needed at max_source_chars), and the provider still
+    # reported finish_reason=tool_call, so nothing said why (#35).
+    max_tokens: int = 4096
     temperature: float = 0.0
     max_source_chars: int = 24000
     output_mode: str = "tool"
+    # Extra attempts after an output fails validation: for a genuinely flaky
+    # model. They do not help a truncated one, which fails the same way again.
+    output_retries: int = 2
 
     def validate_env(self) -> list[str]:
         problems: list[str] = []
@@ -77,6 +90,8 @@ class LLMConfig:
             problems.append(f"env var {self.api_key_env} is not set")
         if self.max_tokens <= 0 or self.max_source_chars <= 0:
             problems.append("max_tokens and max_source_chars must be positive")
+        if self.output_retries < 0:
+            problems.append("output_retries must be >= 0")
         if self.output_mode not in ("tool", "native", "prompted"):
             problems.append("output_mode must be tool, native, or prompted")
         return problems
@@ -116,7 +131,9 @@ class LLMSynthesizer:
         )
 
     @staticmethod
-    def _build_agent(config: LLMConfig) -> Agent[Any, Any]:
+    def _build_agent(config: LLMConfig, model: Model | None = None) -> Agent[Any, Any]:
+        """`model` is for tests: a scripted model exercises the real agent,
+        retries included, without a network call."""
         try:
             from pydantic_ai import Agent
             from pydantic_ai.models.openai import OpenAIChatModel
@@ -126,16 +143,18 @@ class LLMSynthesizer:
             raise ImportError(
                 "LLMSynthesizer requires the LLM extra: pip install 'kbforge[llm]'"
             ) from exc
-        model = OpenAIChatModel(
-            config.model,
-            provider=LiteLLMProvider(
-                api_base=config.api_base,
-                api_key=os.environ.get(config.api_key_env),
-            ),
-        )
+        if model is None:
+            model = OpenAIChatModel(
+                config.model,
+                provider=LiteLLMProvider(
+                    api_base=config.api_base,
+                    api_key=os.environ.get(config.api_key_env),
+                ),
+            )
         return Agent(
             model,
             output_type=_wrap_output(config.output_mode),
+            retries=config.output_retries,
             instructions=_INSTRUCTIONS,
             model_settings=ModelSettings(
                 temperature=config.temperature, max_tokens=config.max_tokens
@@ -187,6 +206,34 @@ class LLMSynthesizer:
             f"{joined}"
         )
 
+    def _run(self, doc: CanonicalDocument, prompt: str) -> SynthesizedConcept:
+        from pydantic_ai import capture_run_messages
+        from pydantic_ai.exceptions import UnexpectedModelBehavior
+        from pydantic_ai.messages import ModelResponse
+
+        with capture_run_messages() as messages:
+            try:
+                return self.agent.run_sync(prompt).output
+            except UnexpectedModelBehavior as exc:
+                attempts = [m for m in messages if isinstance(m, ModelResponse)]
+                where = f"{concept_path(doc.doc_id)} ({self.config.model})"
+                last = attempts[-1].usage.output_tokens if attempts else 0
+                # The provider reports finish_reason=tool_call even when it cut
+                # the output off, so a response that used the whole budget is
+                # the only reliable sign of truncation.
+                if last >= self.config.max_tokens:
+                    reason = (
+                        f"model output hit max_tokens={self.config.max_tokens} "
+                        "and was cut off; raise it with "
+                        f"--llm-set max_tokens={2 * self.config.max_tokens}"
+                    )
+                else:
+                    reason = (
+                        f"model returned invalid output in {len(attempts)} "
+                        f"attempts: {exc}"
+                    )
+                raise SynthesisError(f"{where}: {reason}") from exc
+
     def synthesize(
         self,
         changed_docs: list[CanonicalDocument],
@@ -208,8 +255,7 @@ class LLMSynthesizer:
             block = self._grounding_block(
                 grounding.get(doc.doc_id, []), notes, doc.doc_id
             )
-            result = self.agent.run_sync(self._prompt(doc, text) + block)
-            c = result.output
+            c = self._run(doc, self._prompt(doc, text) + block)
             body = _strip_title_heading(c.body, c.title)
             items.append((doc, c.title, c.description, body))
         proposal = assemble(
