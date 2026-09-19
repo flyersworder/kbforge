@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from urllib.parse import quote
 
 from okfquery.load import load
 from okfquery.parse import OKF_OWNED
@@ -30,12 +31,18 @@ class HandWrittenIndexError(Exception):
 
 
 def _link_text(text: str) -> str:
-    return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+    # Backslash first, so the escapes added after it are not doubled. A backtick
+    # would open a code span that outranks the link, and `<` inline HTML.
+    for char in "\\[]`<":
+        text = text.replace(char, "\\" + char)
+    return text
 
 
 def _target(path: str) -> str:
-    # CommonMark: a destination with spaces or parentheses must be <bracketed>.
-    return f"<{path}>" if any(c in path for c in " ()<>") else path
+    # Percent-encoded: `#` and `?` would otherwise start a fragment or a query,
+    # and space, parentheses and angle brackets end or break the destination.
+    # kbforge paths are slugs and pass through unchanged; any OKF bundle may not.
+    return quote(path, safe="/")
 
 
 def _one_line(text: str | None) -> str:
@@ -119,6 +126,14 @@ def write_index(bundle: Path, group_by: str | None = None, force: bool = False) 
             return False
     target.write_text(text, "utf-8")
     return True
+
+
+def is_generated(bundle: Path) -> bool:
+    """False for a hand-written `index.md`, which `write_index` refuses."""
+    target = bundle / INDEX
+    return not target.exists() or target.read_text(
+        "utf-8", errors="replace"
+    ).startswith(MARKER)
 
 
 def is_current(bundle: Path, group_by: str | None = None) -> bool:
