@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from urllib.parse import quote
 
 from okfquery.load import load
 from okfquery.parse import OKF_OWNED
@@ -38,11 +37,22 @@ def _link_text(text: str) -> str:
     return text
 
 
+_UNSAFE = frozenset(' #?%()<>[]\\"`{}|^')
+"""What would end, redirect or garble a CommonMark link destination: space and
+parentheses end it, `#` and `?` start a fragment or a query, `%` would read as
+an escape, the rest are not allowed bare. Everything else stays as written."""
+
+
 def _target(path: str) -> str:
-    # Percent-encoded: `#` and `?` would otherwise start a fragment or a query,
-    # and space, parentheses and angle brackets end or break the destination.
-    # kbforge paths are slugs and pass through unchanged; any OKF bundle may not.
-    return quote(path, safe="/")
+    # Encode only what would break the link, not everything `quote` would: an
+    # agent reads index.md as text and opens the path it sees, and a URL-derived
+    # path like `concepts/@en.wikipedia.org/...` must not come out as `%40`.
+    return "".join(
+        "".join(f"%{b:02X}" for b in c.encode("utf-8"))
+        if c in _UNSAFE or ord(c) < 0x21 or ord(c) == 0x7F
+        else c
+        for c in path
+    )
 
 
 def _one_line(text: str | None) -> str:
