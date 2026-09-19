@@ -18,6 +18,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `gitlab`); third-party publishers without it keep working, but cannot be used
   with `--chunking`.
 
+### Fixed
+
+- A concept published before the target of one of its relations existed lost
+  that link under the link-resolvability law, and nothing rebuilt it when the
+  target arrived, so the link stayed missing until the concept's own source
+  changed (#32). Every run now rebuilds such referrers when their target is
+  added, as it already did for referrers of a deleted concept. Unchunked runs
+  may therefore propose a few more rebuilt concepts than before, each with a
+  review note saying why.
+
 ## [0.10.0] - 2026-09-18
 
 ### Changed

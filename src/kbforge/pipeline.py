@@ -501,24 +501,25 @@ def run(
         ]
         changed_docs += referrers
 
-    # Arrival referrers (§4.1), chunked runs only: a published concept whose
-    # relation names a document this chunk adds lost that link under law 2
-    # when it was built, because the target was still backlog. Rebuilt so the
-    # link comes back. Scoped and filtered exactly like `referrers`. Unchunked
-    # runs keep today's behaviour (spec §10).
+    # Arrival referrers, the mirror image of `referrers` (#32): a published
+    # concept whose relation names a document this run adds lost that link
+    # under law 2 when it was built, because the target did not exist yet -- a
+    # chunked run's backlog (§4.1 of the chunked-review note), or simply a
+    # target the source created later. Nothing else rebuilds it, so the link
+    # would stay missing until its own source changed. Scoped and filtered
+    # exactly like `referrers`.
     arrivals: list[CanonicalDocument] = []
-    if chunking is not None:
-        arrived = set(changeset.added) - backlog
-        if arrived:
-            arrivals = [
-                d
-                for d in mirror_docs
-                if d.anchor.system in systems
-                and d.doc_id not in changed
-                and d.doc_id not in removed_ids
-                and arrived.intersection(d.relations)
-            ]
-            changed_docs += arrivals
+    arrived = set(changeset.added) - backlog
+    if arrived:
+        arrivals = [
+            d
+            for d in mirror_docs
+            if d.anchor.system in systems
+            and d.doc_id not in changed
+            and d.doc_id not in removed_ids
+            and arrived.intersection(d.relations)
+        ]
+        changed_docs += arrivals
 
     # A deferred-drift document is not exempt from law 2: if it also links to a
     # concept this run removes, or itself gains a link to a concept this chunk
@@ -641,7 +642,7 @@ def run(
         if path in proposal.files:
             proposal.summary.grounding_notes.append(
                 f"{path}: re-synthesized to restore a link to a concept added in "
-                "this chunk; its own source is unchanged"
+                "this run; its own source is unchanged"
             )
 
     pending = bool(backlog or deferred_drift)

@@ -435,6 +435,31 @@ def test_a_concept_linking_to_a_deleted_one_is_pulled_into_scope(tmp_path):
     assert change.concepts["concepts/referrer/overview.md"].links == []
 
 
+def test_a_concept_whose_link_target_arrives_later_gets_the_link_back(tmp_path):
+    """The mirror image of the deletion referrer (#32). The referrer published
+    before its target existed, so law 2 dropped the link; when the target
+    arrives, nothing else would rebuild the referrer, and the link would stay
+    missing until the referrer's own source changed."""
+    referrer = _doc("referrer.md", "Ref", relations=["sys:later.md"])
+    first = _run_once(tmp_path, [referrer])
+    assert first.last_change is not None
+    assert first.last_change.concepts["concepts/referrer/overview.md"].links == []
+
+    publisher = _run_once(tmp_path, [referrer, _doc("later.md", "Later")])
+    change = publisher.last_change
+    assert change is not None
+    assert "concepts/referrer/overview.md" in change.files, (
+        "the referrer was not rebuilt when its link target arrived"
+    )
+    assert change.concepts["concepts/referrer/overview.md"].links == [
+        "concepts/later/overview.md"
+    ]
+    assert any(
+        n.startswith("concepts/referrer/overview.md") and "restore a link" in n
+        for n in change.summary.grounding_notes
+    ), change.summary.grounding_notes
+
+
 def test_pipeline_rejects_a_duplicate_doc_id_before_it_reaches_the_mirror(tmp_path):
     """Without the law this run publishes happily and silently drops a document:
     diff appends the id to `added` twice, assemble collapses both onto one
