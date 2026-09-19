@@ -436,3 +436,27 @@ def test_cli_reports_a_fetch_contract_violation_as_a_message(tmp_path, capsys):
     out = capsys.readouterr().out
     assert "Connector contract violation (local_files):" in out
     assert "duplicate doc_id in fetch output: sys:a.md" in out
+
+
+def test_a_synthesis_failure_is_one_line_not_a_traceback(tmp_path, capsys, monkeypatch):
+    """#35: an invalid model output used to escape as a ~150-line traceback."""
+    pytest.importorskip("pydantic_ai")
+    from kbforge import __main__ as cli
+    from kbforge.llm_synthesizer import SynthesisError
+
+    def boom(*args, **kwargs):
+        raise SynthesisError("concepts/x/overview.md: model output hit max_tokens=1500")
+
+    monkeypatch.setattr(cli, "run", boom)
+    monkeypatch.setenv("OPENROUTER_API_KEY", "k")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(["run", "--connector", "local_files", "--set", f"path={src}",
+                 "--synthesizer", "llm", *_plumbing(tmp_path)])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 1
+    assert out.strip() == (
+        "Synthesis failed: concepts/x/overview.md: model output hit max_tokens=1500"
+        " (nothing was published; the next run retries)"
+    ), out

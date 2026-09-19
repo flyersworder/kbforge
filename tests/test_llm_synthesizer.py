@@ -270,3 +270,74 @@ def test_grounding_documents_share_one_budget():
     )
     assert seen[0].count("Q") == 300  # the owning source keeps the full budget
     assert seen[0].count("Z") == 300  # the three grounding documents share one
+
+
+# --- #35: a truncated or invalid model output --------------------------------
+
+from pydantic_ai.usage import RequestUsage  # noqa: E402
+
+from kbforge.llm_synthesizer import SynthesisError  # noqa: E402
+
+_GOOD = {
+    "title": "X",
+    "description": "About X.",
+    "body": "## Overview\n\nX does things.",
+}
+_EMPTY_BODY = {"title": "X", "description": "About X.", "body": ""}
+
+
+def _scripted(outputs: list[tuple[dict, int]]) -> FunctionModel:
+    """Answers each attempt with the next (tool args, output_tokens) pair."""
+    calls = iter(outputs)
+
+    def fn(messages, info: AgentInfo):
+        args, tokens = next(calls)
+        return ModelResponse(
+            parts=[ToolCallPart(info.output_tools[0].name, args)],
+            usage=RequestUsage(output_tokens=tokens),
+        )
+
+    return FunctionModel(fn)
+
+
+def _synth_with(outputs, **cfg) -> LLMSynthesizer:
+    config = LLMConfig(**cfg)
+    return LLMSynthesizer(
+        config, agent=LLMSynthesizer._build_agent(config, model=_scripted(outputs))
+    )
+
+
+def test_the_default_output_budget_fits_a_long_source():
+    """The root cause of #35: a 24,000-char source needed ~1,800 output tokens,
+    and the 1,500 default truncated the tool call inside `body` every time."""
+    assert LLMConfig().max_tokens >= 4096
+
+
+def test_output_truncated_at_max_tokens_is_named_as_such():
+    synth = _synth_with([(_EMPTY_BODY, 1500)] * 3, max_tokens=1500)
+    with pytest.raises(SynthesisError) as err:
+        synth.synthesize([_doc()], ChangeSet(added=["local_files:apps/x.md"]))
+    message = str(err.value)
+    assert concept_path("local_files:apps/x.md") in message
+    assert "deepseek/deepseek-v4-flash" in message
+    assert "max_tokens=1500" in message and "--llm-set max_tokens=" in message, message
+
+
+def test_invalid_output_below_the_budget_says_invalid_not_truncated():
+    synth = _synth_with([(_EMPTY_BODY, 200)] * 3, max_tokens=1500)
+    with pytest.raises(SynthesisError) as err:
+        synth.synthesize([_doc()], ChangeSet(added=["local_files:apps/x.md"]))
+    message = str(err.value)
+    assert "invalid output" in message and "3 attempts" in message, message
+    assert "max_tokens" not in message
+
+
+def test_a_bad_output_is_retried_within_the_budget():
+    synth = _synth_with([(_EMPTY_BODY, 200), (_EMPTY_BODY, 200), (_GOOD, 200)])
+    change = synth.synthesize([_doc()], ChangeSet(added=["local_files:apps/x.md"]))
+    assert "X does things." in change.files[concept_path("local_files:apps/x.md")]
+
+
+def test_output_retries_is_configurable_and_positive():
+    assert LLMConfig().output_retries == 2
+    assert "output_retries must be >= 0" in LLMConfig(output_retries=-1).validate_env()
