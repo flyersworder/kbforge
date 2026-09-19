@@ -174,6 +174,35 @@ discards the chunk, and a run after closing moves on to the next one. Keep a
 connector instance either always chunked or never; redo after an unchunked run
 would roll back a stale record. See `docs/architecture.md` §7.2.
 
+## Consuming a bundle
+
+A merged bundle needs no server: OKF is markdown with frontmatter, meant to be
+read by agents without an SDK. Point the agent at the bundle repo's **default
+branch** (it holds only reviewed, merged concepts), through whichever access it
+has:
+
+| Agent | Access |
+|---|---|
+| has a shell (Claude Code, an Agent SDK app) | a checkout; its own read, glob and grep tools |
+| has no filesystem | the GitHub or GitLab MCP server, reading files on the default branch |
+| needs aggregate answers (who owns what, what is stale, what is built on source X) | [`okfquery query`](packages/okfquery) over a checkout |
+
+Give it a front door: run [`okfquery index`](packages/okfquery#index-a-front-door-for-agents)
+after each merge, so the root `index.md` lists every concept in one line
+(`* [Title](path) - description`) and the agent opens only what it needs. The
+okfquery README has the CI job. Then tell the agent how to read it, for example:
+
+> Answer from the knowledge base at `<path or repo>`. Start at `index.md`, open
+> only the concepts you need, and follow their links. Cite each claim with the
+> concept path and its `sources` ids, and check `generated.at`: say when a
+> concept is old. If the knowledge base does not cover something, say so rather
+> than guessing.
+
+In a trial on a five-concept bundle, a small model given only that prompt read
+`index.md` and four concepts, answered with owners and freshness, and said
+plainly that the refund procedure it was asked about was not in the bundle,
+which was true: that concept's review request had not merged.
+
 ## Design stance
 
 The core ships **zero credentialed connectors and zero CI logic.** The two built-in

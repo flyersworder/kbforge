@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [kbforge-okfquery-v0.2.0] - 2026-09-19
+
+### Added
+
+- `okfquery index` writes the OKF §8 root `index.md`: one line per concept
+  (`* [Title](path) - description`), sectioned by `type` or by `--group-by
+  FACET`, so an agent reading a bundle cold starts there and opens only what it
+  needs. Deterministic, so a rerun on an unchanged bundle rewrites nothing;
+  `--check` writes nothing and exits 1 when the index is missing or stale; a
+  hand-written `index.md` (no generated-by marker) is refused without `--force`.
+  Meant to run after merge on the bundle repo's default branch: the README has
+  GitHub Actions and GitLab CI jobs. kbforge itself cannot emit it, because each
+  system publishes on its own sync branch.
+
 ## [0.11.0] - 2026-09-19
 
 ### Added
@@ -617,6 +631,7 @@ production protocol.
 [Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.0...HEAD
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
+[kbforge-okfquery-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.0
 [kbforge-mcp-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-mcp-v0.2.0
 [kbforge-sql-v0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.0
 [0.9.0]: https://github.com/flyersworder/kbforge/compare/v0.8.0...v0.9.0
