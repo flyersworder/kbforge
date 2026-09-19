@@ -4,7 +4,7 @@ title: kbforge — chunked review for oversized runs
 description: A per-run admission cap that splits any change too large to review — a cold start, a new source, a widened scope, a bulk upstream edit, a grounding sweep — into chunks published one review request at a time, waits for each to merge before synthesizing the next, and lets a reviewer redo a rejected chunk.
 tags: [okf, bootstrap, review, pipeline, mirror, cursor, publisher]
 generated: { by: human:flyersworder, at: 2026-09-19T00:00:00Z }
-status: design — not built
+status: shipped — unreleased; folded into architecture.md §7.2; this note keeps the rationale and §10
 okf_version: "0.2"
 ---
 
@@ -119,7 +119,9 @@ merges*. Nothing about an unadmitted document may reach the bundle.
   admitted, are re-synthesized so the link dropped in an earlier chunk comes
   back. They do not count toward the cap, and each gets a note in the review
   body: `re-synthesized to restore a link to a concept added in this chunk; its
-  own source is unchanged`.
+  own source is unchanged`. A deferred grounding-drift document that is rebuilt
+  as a deletion or arrival referrer is promoted out of the deferred set in the
+  same run, so it carries its drift note and does not leave the chunk pending.
 
 ### 4.2 Commit
 

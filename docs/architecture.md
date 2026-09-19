@@ -736,7 +736,7 @@ mirror). Deleting the mirror alone is not enough for an
 incremental connector: the surviving cursor still bounds `kbforge_fetch` to
 records past it, so the next run can fetch few or no records, `ChangeSet.is_noop`
 fires, and nothing is re-proposed. Only deleting both re-proposes everything
-from scratch.
+from scratch. `kbforge redo` (§7.2) is the one exception: it rolls the last chunk of a chunked run back so the next run re-proposes it.
 
 Deletions travel
 as `ProposedChange.files_removed`, assigned by the pipeline rather than by a
@@ -1296,6 +1296,26 @@ See `docs/design/2026-09-18-grounding-rules-design.md` for the full rationale
 — why matching is deterministic text rather than semantic, why recency falls
 back to first-seen, the validation rules, and what's deferred (reader-provided
 dates, more `from` keys, a semantic link proposer, system-qualified paths).
+
+### 7.2 Chunked review
+
+`kbforge run --chunking <file>` (`max_concepts`, optional `group_by`) caps how
+many concepts one review request carries. When a run's added, modified and
+drifted documents exceed the cap, `run` admits one chunk (whole `group_by`
+groups in key order, split by `doc_id` only when one group exceeds the cap),
+synthesizes and publishes only that, and commits only that to the mirror; the
+rest stays visible to `diff`. Added and modified documents are admitted first
+against the full cap; grounding-drift documents then fill the remaining room.
+Removals are always admitted. Everything past admission sees the world as it
+will be once the chunk merges: a link to a backlog concept is dropped under
+§4.4 law 2, and restored when its target is admitted by rebuilding the
+published referrer. The cursor is held until the final chunk. While a
+non-final chunk's request is open, `run` returns `Waiting` before fetching,
+using the publisher's optional read-only `kbforge_open_request` hook; a
+publisher without it is refused under `--chunking`. `<state>/chunk-<connector>-<digest>.json`
+records the last chunk, and `kbforge redo` restores the mirror files and
+cursor it recorded, so a closed request can be re-proposed. Rationale:
+[`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
 
 ---
 

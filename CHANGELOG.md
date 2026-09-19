@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- Chunked review: `kbforge run --chunking <file>` splits a change larger than
+  `max_concepts` into one review request per chunk (optional `group_by` keeps
+  groups together), holds the cursor until the final chunk, and returns
+  `Waiting` while a chunk's request is open. `kbforge redo` rolls the last chunk
+  back so a closed request can be re-proposed. Publishers gain an optional
+  read-only `kbforge_open_request` hook (implemented by `dry-run`, `github`,
+  `gitlab`); third-party publishers without it keep working, but cannot be used
+  with `--chunking`.
+
 ## [0.10.0] - 2026-09-18
 
 ### Changed

@@ -160,6 +160,14 @@ PR/MR rather than opening a second one. Three consequences worth knowing:
 
 kbforge never merges. No publisher has a merge method.
 
+**Large first runs.** A cold start, a new source, or a bulk upstream edit can
+produce hundreds of concepts in one review request. `--chunking chunking.yaml`
+(`max_concepts: 40`, optional `group_by: <field>`) publishes one chunk at a
+time and waits for each request to be merged or closed before the next. To
+redo a chunk after fixing the taxonomy or exemplars, close its request and run
+`kbforge redo` with the same `--connector`, `--set`, `--publisher`,
+`--mirror` and `--state`. See `docs/architecture.md` §7.2.
+
 ## Design stance
 
 The core ships **zero credentialed connectors and zero CI logic.** The two built-in
