@@ -11,7 +11,14 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from kbforge.canonical import assert_fetch_contract, assert_stability
-from kbforge.chunking import ChunkingConfig, ChunkRecord, admit, snapshot, write_record
+from kbforge.chunking import (
+    ChunkingConfig,
+    ChunkRecord,
+    admit,
+    read_record,
+    snapshot,
+    write_record,
+)
 from kbforge.grounding import (
     GroundingConfig,
     declared_ids,
@@ -80,6 +87,15 @@ class Aborted:
 @dataclass(frozen=True)
 class Published:
     url: str
+
+
+@dataclass(frozen=True)
+class Waiting:
+    """The last chunk's review request is still open, so this run did nothing:
+    nothing fetched, nothing synthesized, no review request touched."""
+
+    request: str
+    branch_hint: str
 
 
 class ConfigError(RuntimeError):
@@ -237,11 +253,27 @@ def run(
     synthesizer: Synthesizer | None = None,
     grounding_config: GroundingConfig | None = None,
     chunking: ChunkingConfig | None = None,
-) -> NoOp | Aborted | Published:
+) -> NoOp | Aborted | Published | Waiting:
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
     if problems:
         raise ConfigError(f"{info.name}: {'; '.join(problems)}")
+
+    # Before the fetch, so a waiting run costs one read-only forge call (§6).
+    open_request = getattr(publisher, "kbforge_open_request", None)
+    if chunking is not None:
+        if open_request is None:
+            raise ConfigError(
+                f"{publisher.kbforge_publisher_info().name}: --chunking needs a "
+                "publisher that implements kbforge_open_request, to wait between "
+                "chunks; this one does not"
+            )
+        record = read_record(_chunk_slot(Path(state_dir), info.name, config))
+        if record is not None and record.pending:
+            for hint in record.branch_hints:
+                request = open_request(hint, publish_config)
+                if request is not None:
+                    return Waiting(request=request, branch_hint=hint)
 
     synthesizer = synthesizer or StubSynthesizer()
 

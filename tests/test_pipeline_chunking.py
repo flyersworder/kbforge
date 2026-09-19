@@ -4,6 +4,8 @@ package, so cross-test imports depend on pytest's import mode."""
 
 from datetime import UTC, datetime
 
+import pytest
+
 from kbforge.canonical import content_hash
 from kbforge.chunking import ChunkingConfig, owned_paths, read_record
 from kbforge.grounding import GroundingConfig
@@ -16,7 +18,14 @@ from kbforge.models import (
     ProposedChange,
     ResourceAnchor,
 )
-from kbforge.pipeline import Published, _chunk_slot, _cursor_slot, run
+from kbforge.pipeline import (
+    ConfigError,
+    Published,
+    Waiting,
+    _chunk_slot,
+    _cursor_slot,
+    run,
+)
 from kbforge.synthesize import assemble, concept_path
 
 
@@ -287,3 +296,50 @@ def test_a_deferred_drift_document_rebuilt_as_a_referrer_is_not_left_pending(
 def test_without_chunking_no_record_is_written(tmp_path):
     _run(tmp_path, [_doc("a"), _doc("b")])
     assert _record(tmp_path) is None
+
+
+def test_an_open_chunk_request_makes_the_next_run_wait_before_fetching(tmp_path):
+    docs = [_doc("a"), _doc("b")]
+    connector = _Connector(docs)
+    publisher = _Publisher()
+    _run(tmp_path, docs, cap=1, connector=connector, publisher=publisher)
+
+    publisher.open = "7"
+    result, _, _ = _run(tmp_path, docs, cap=1, connector=connector, publisher=publisher)
+    assert result == Waiting(request="7", branch_hint="sync/sys")
+    assert len(connector.cursors) == 1, "a waiting run must not fetch"
+    assert len(publisher.changes) == 1, "a waiting run must not publish"
+
+
+def test_a_merged_or_closed_request_releases_the_next_chunk(tmp_path):
+    docs = [_doc("a"), _doc("b")]
+    publisher = _Publisher()
+    _run(tmp_path, docs, cap=1, publisher=publisher)
+    publisher.open = None
+    result, _, _ = _run(tmp_path, docs, cap=1, publisher=publisher)
+    assert isinstance(result, Published)
+    assert set(publisher.changes[1].files) == {concept_path("sys:b")}
+
+
+def test_a_final_chunk_does_not_make_later_runs_wait(tmp_path):
+    publisher = _Publisher()
+    _run(tmp_path, [_doc("a")], cap=5, publisher=publisher)
+    publisher.open = "7"
+    result, _, _ = _run(tmp_path, [_doc("a", text="a2")], cap=5, publisher=publisher)
+    assert isinstance(result, Published), "small follow-ups append as they do today"
+
+
+def test_a_publisher_without_the_hook_is_refused_under_chunking(tmp_path):
+    class _Hookless:
+        def kbforge_publisher_info(self):
+            return ConnectorInfo(name="hookless", version="0", source_system="t")
+
+        def kbforge_publish(self, change, config):
+            raise AssertionError("must be refused before publishing")
+
+    with pytest.raises(
+        ConfigError,
+        match="hookless: --chunking needs a publisher that implements "
+        "kbforge_open_request",
+    ):
+        _run(tmp_path, [_doc("a")], cap=1, publisher=_Hookless())
