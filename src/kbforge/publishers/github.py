@@ -13,7 +13,12 @@ from kbforge.publishers._http import (
     TreeListingTruncatedError,
     request,
 )
-from kbforge.publishers.forge import ForgeConfig, build_config, publish_to_forge
+from kbforge.publishers.forge import (
+    ForgeConfig,
+    build_config,
+    open_request,
+    publish_to_forge,
+)
 
 DEFAULTS = {"api_base": "https://api.github.com", "token_env": "GITHUB_TOKEN"}
 
@@ -213,3 +218,8 @@ class GitHubPublisher:
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         cfg = build_config(config, DEFAULTS)
         return publish_to_forge(GitHubClient(cfg), change, cfg)
+
+    @hookimpl
+    def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
+        cfg = build_config(config, DEFAULTS)
+        return open_request(GitHubClient(cfg), branch_hint, cfg)

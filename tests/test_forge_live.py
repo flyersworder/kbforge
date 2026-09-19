@@ -654,3 +654,64 @@ def test_grounding_drift_republishes_into_the_same_request(tmp_path):
     # And it settles: the fourth run has nothing left to do.
     assert isinstance(_run(_Conn("wiki", [page]), branch_a), NoOp)
     assert len(_gh_open_prs(repo, branch_a)) == 1
+
+
+@pytest.mark.live
+def test_gitlab_chunks_wait_for_merge_and_redo_reproposes(tmp_path):
+    """The whole chunk loop against a real forge: chunk 1 opens a request, the
+    next run waits, merging releases chunk 2, closing plus redo re-proposes it."""
+    from kbforge.chunking import ChunkingConfig
+    from kbforge.connectors.local_files import LocalFilesConnector
+    from kbforge.pipeline import Published, Waiting, redo, run
+
+    repo = _require("KBFORGE_LIVE_GITLAB_REPO")
+    _require("GITLAB_TOKEN")
+    branch = f"sync/live-{RUN_ID}-chunks"
+    base_path = f"live/{RUN_ID}-chunks"
+    src = tmp_path / "src"
+    src.mkdir()
+    for n in ["a", "b", "c", "d"]:
+        (src / f"{n}.md").write_text(
+            f"---\ntype: application\ntitle: {n}\n---\n{n}.\n", "utf-8"
+        )
+    common: dict[str, Any] = dict(
+        config={"path": str(src)},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={"repo": repo, "base_path": base_path, "branch": branch},
+    )
+    connector, publisher = LocalFilesConnector(), GitLabPublisher()
+    chunking = ChunkingConfig(max_concepts=2)
+
+    def concept_files() -> set[str]:
+        prefix = f"{base_path}/concepts/"
+        return {p for p in _gl_tree(repo, branch) if p.startswith(prefix)}
+
+    assert isinstance(run(connector, publisher, chunking=chunking, **common), Published)
+    assert len(concept_files()) == 2
+    [mr] = _gl_open_mrs(repo, branch)
+
+    waiting = run(connector, publisher, chunking=chunking, **common)
+    assert isinstance(waiting, Waiting), f"expected Waiting, got {waiting!r}"
+    assert waiting.request == str(mr["iid"])
+
+    _gl_merge(repo, mr["iid"])
+    assert isinstance(run(connector, publisher, chunking=chunking, **common), Published)
+    [mr2] = _gl_open_mrs(repo, branch)
+    chunk2 = concept_files()
+
+    project = quote(repo, safe="")
+    _cli(
+        "glab",
+        "api",
+        "-X",
+        "PUT",
+        f"projects/{project}/merge_requests/{mr2['iid']}",
+        "-f",
+        "state_event=close",
+    )
+    redo(connector, publisher, **common)
+    assert isinstance(run(connector, publisher, chunking=chunking, **common), Published)
+    [mr3] = _gl_open_mrs(repo, branch)
+    assert mr3["iid"] != mr2["iid"], "redo must open a fresh request"
+    assert concept_files() == chunk2, "the redone chunk must carry the same concepts"

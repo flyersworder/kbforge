@@ -78,3 +78,10 @@ def test_a_traversing_file_key_cannot_write_outside_the_output_directory(tmp_pat
         )
 
     assert not (tmp_path / "pwned.md").exists()
+
+
+def test_dry_run_never_has_an_open_request(tmp_path):
+    publisher = DryRunPublisher()
+    assert (
+        publisher.kbforge_open_request("sync/sys", {"out_dir": str(tmp_path)}) is None
+    )

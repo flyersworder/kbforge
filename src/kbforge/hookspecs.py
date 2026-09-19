@@ -75,3 +75,10 @@ class PublisherSpec(ABC):
     @abstractmethod
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         """Open a review request; return its URL/path. Never merges."""
+
+    @hookspec
+    def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
+        """The id of the review request open on `branch_hint`'s branch, or None.
+        Read-only. Optional: only chunked runs (`--chunking`) and `kbforge redo`
+        call it, and both refuse a publisher without it, because appending the
+        next chunk to an open request is what chunking exists to prevent."""

@@ -284,10 +284,12 @@ agent is a `fetch` transport, and bootstrap is a `fetch` mode.
   lives (deployment config, likely) and how it is enforced at the retriever.
 - **Partition function for chunking.** Whether core ships a default partition strategy
   (by source / type) with the deployment overriding it, or leaves partitioning
-  entirely to the deployment. Interacts with the §6.1 review posture.
+  entirely to the deployment. Interacts with the §6.1 review posture. Resolved by
+  [2026-09-19-chunked-review-design.md](2026-09-19-chunked-review-design.md).
 - **Bootstrap review posture as a first-class flow.** Chunked-iterative import may
   warrant explicit tooling (chunk boundaries, per-chunk accept/reject/refine,
   exemplar injection) rather than being expressed only as repeated pipeline runs.
+  Resolved by [2026-09-19-chunked-review-design.md](2026-09-19-chunked-review-design.md).
 - **Conflict-resolution proposal mechanics.** §3.3 settles that `synthesize` *may*
   attach a proposed resolution for human ratification; what is open is the *how* —
   `ChangeSummary.conflicts_flagged` is `list[str]` today (§3), so carrying a structured

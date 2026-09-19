@@ -441,3 +441,21 @@ def test_publisher_validate_accepts_good_config(monkeypatch):
 def test_publisher_has_no_merge_method():
     assert not hasattr(GitLabPublisher(), "merge")
     assert not hasattr(GitLabClient, "merge")
+
+
+def test_publisher_open_request_resolves_the_branch_and_asks_the_client(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    seen: list[str] = []
+
+    class _Client:
+        def __init__(self, cfg):
+            pass
+
+        def find_open_pr(self, branch):
+            seen.append(branch)
+            return "9"
+
+    monkeypatch.setattr(gitlab_module, "GitLabClient", _Client)
+    config = {"repo": "acme/kb", "branch": "kb/sync"}
+    assert GitLabPublisher().kbforge_open_request("sync/sys", config) == "9"
+    assert seen == ["kb/sync"]

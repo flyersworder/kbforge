@@ -1,5 +1,6 @@
 import pytest
 
+from kbforge.publishers import github as github_module
 from kbforge.publishers._http import ForgeError, TreeListingTruncatedError
 from kbforge.publishers.forge import ForgeConfig
 from kbforge.publishers.github import DEFAULTS, GitHubClient, GitHubPublisher
@@ -549,3 +550,22 @@ def test_ordinary_publish_makes_no_tree_listing_call(monkeypatch):
     client.put_files("b", "main", {"a.md": "A"}, [], "msg")
 
     assert not any(c["url"].endswith("recursive=1") for c in transport.calls)
+
+
+def test_publisher_open_request_resolves_the_branch_and_asks_the_client(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    seen: list[str] = []
+
+    class _Client:
+        def __init__(self, cfg):
+            pass
+
+        def find_open_pr(self, branch):
+            seen.append(branch)
+            return None
+
+    monkeypatch.setattr(github_module, "GitHubClient", _Client)
+    assert (
+        GitHubPublisher().kbforge_open_request("sync/sys", {"repo": "acme/kb"}) is None
+    )
+    assert seen == ["sync/sys"]

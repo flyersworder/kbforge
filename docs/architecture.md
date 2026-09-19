@@ -689,10 +689,20 @@ class PublisherSpec:
     def kbforge_publisher_info(self) -> ConnectorInfo: ...
 
     @hookspec
+    def kbforge_validate_publish_config(self, config: dict) -> list[str]:
+        """Problems with the publisher config ([] = ok). No network I/O."""
+
+    @hookspec
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         """Open a review request (MR/PR). Returns its URL.
         MUST NOT merge. Must be idempotent per (branch_hint, content-hash):
         re-running a failed pipeline updates the same MR, never opens twins."""
+
+    @hookspec
+    def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
+        """Optional, read-only: the id of the review request open on
+        branch_hint's branch, or None. Only --chunking and redo call it (§7.2);
+        a publisher that does not override it cannot be used with either."""
 ```
 
 Three publishers ship in core: `dry-run` (default; writes to a directory),
@@ -736,7 +746,8 @@ mirror). Deleting the mirror alone is not enough for an
 incremental connector: the surviving cursor still bounds `kbforge_fetch` to
 records past it, so the next run can fetch few or no records, `ChangeSet.is_noop`
 fires, and nothing is re-proposed. Only deleting both re-proposes everything
-from scratch.
+from scratch. `kbforge redo` (§7.2) is the one exception: it rolls the
+last chunk of a chunked run back so the next run re-proposes it.
 
 Deletions travel
 as `ProposedChange.files_removed`, assigned by the pipeline rather than by a
@@ -1297,6 +1308,33 @@ See `docs/design/2026-09-18-grounding-rules-design.md` for the full rationale
 back to first-seen, the validation rules, and what's deferred (reader-provided
 dates, more `from` keys, a semantic link proposer, system-qualified paths).
 
+### 7.2 Chunked review
+
+`kbforge run --chunking <file>` (`max_concepts`, optional `group_by`) caps how
+many concepts one review request carries. When a run's added, modified and
+drifted documents exceed the cap, `run` admits one chunk (whole `group_by`
+groups in key order, split by `doc_id` only when one group exceeds the cap),
+synthesizes and publishes only that, and commits only that to the mirror; the
+rest stays visible to `diff`. Added and modified documents are admitted first
+against the full cap; grounding-drift documents then fill the remaining room.
+Removals are always admitted. Everything past admission sees the world as it
+will be once the chunk merges: a link to a backlog concept is dropped under
+§4.4 law 2, and restored when its target is admitted by rebuilding the
+published referrer. The cursor is held until the final chunk. While a
+non-final chunk's request is open, `run` returns `Waiting` before fetching,
+using the publisher's optional read-only `kbforge_open_request` hook; a
+publisher without it is refused under `--chunking`. A final chunk's request
+stays open to small follow-ups, but a change that would leave a backlog also
+returns `Waiting` (after the diff, before synthesis) while any recorded
+request is open. `<state>/chunk-<connector>-<digest>.json` records the last
+chunk, merged with every earlier run published into the same still-open
+request, and `kbforge redo` restores the mirror files and cursor it recorded,
+so a closed request can be re-proposed. Redo must run before the next `run`:
+a run after closing proceeds to the next chunk, and closing alone discards.
+Do not mix chunked and unchunked runs on one connector instance and then redo:
+an unchunked run writes no record, so the one left behind is stale. Rationale:
+[`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
+
 ---
 
 ## 8. Connection to the agent-contracts family
@@ -1376,9 +1414,11 @@ themselves.
 
 **Done.** Core is on PyPI (0.5.0), with the fixed pipeline, both credential-free
 reference connectors, three publishers, the stub and LLM synthesizers, and the
-§4.4 gate. Hookspecs are frozen in practice — `ConnectorSpec` and `PublisherSpec`
-have not changed shape since 0.1.0 — and `examples/github-issues-connector/` is a
-complete worked credentialed connector proving the plugin seam end to end.
+§4.4 gate. Hookspecs are close to frozen: `ConnectorSpec` has not changed shape
+since 0.1.0, and `PublisherSpec` has grown twice, `kbforge_validate_publish_config`
+in 0.3.0 and the optional `kbforge_open_request` for chunked review (§7.2).
+`examples/github-issues-connector/` is a complete worked credentialed connector
+proving the plugin seam end to end.
 
 **Next, in order:**
 

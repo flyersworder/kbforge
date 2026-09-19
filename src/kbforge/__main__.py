@@ -16,6 +16,7 @@ import yaml
 from pydantic import ValidationError
 
 from kbforge.canonical import FetchContractError, StabilityError
+from kbforge.chunking import ChunkRecordError, load_chunking
 from kbforge.grounding import load_grounding, problems_for
 from kbforge.pipeline import (
     Aborted,
@@ -24,6 +25,9 @@ from kbforge.pipeline import (
     NoOp,
     Published,
     PublisherProtocol,
+    RedoRefused,
+    Waiting,
+    redo,
     run,
 )
 from kbforge.publishers._http import PublishError
@@ -66,15 +70,11 @@ def _parse_settings(pairs: list[str]) -> dict:
     return config
 
 
-def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(prog="kbforge")
-    sub = parser.add_subparsers(dest="cmd", required=True)
-
-    sub.add_parser("list", help="list available connectors")
-
-    r = sub.add_parser("run", help="run the pipeline once")
-    r.add_argument("--connector", required=True)
-    r.add_argument(
+def _source_args(p: argparse.ArgumentParser) -> None:
+    """What `run` and `redo` both need to find the connector instance's state
+    and ask the publisher about open review requests."""
+    p.add_argument("--connector", required=True)
+    p.add_argument(
         "--set",
         action="append",
         default=[],
@@ -82,6 +82,32 @@ def main(argv: list[str] | None = None) -> int:
         metavar="KEY=VALUE",
         help="connector config (repeatable); values are YAML-typed",
     )
+    p.add_argument(
+        "--publisher",
+        default="dry-run",
+        help="publisher name (default: dry-run); see `kbforge list`",
+    )
+    p.add_argument(
+        "--publish-set",
+        action="append",
+        default=[],
+        dest="publish_settings",
+        metavar="KEY=VALUE",
+        help="publisher config (repeatable); values are YAML-typed",
+    )
+    p.add_argument("--mirror", required=True)
+    p.add_argument("--state", required=True)
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="kbforge")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    sub.add_parser("list", help="list available connectors")
+
+    r = sub.add_parser("run", help="run the pipeline once")
+    _source_args(r)
+    r.add_argument("--out", required=True)
     r.add_argument("--synthesizer", choices=["stub", "llm"], default="stub")
     r.add_argument(
         "--llm-set",
@@ -92,27 +118,25 @@ def main(argv: list[str] | None = None) -> int:
         help="LLM synthesizer config (repeatable); YAML-typed values",
     )
     r.add_argument(
-        "--publisher",
-        default="dry-run",
-        help="publisher name (default: dry-run); see `kbforge list`",
-    )
-    r.add_argument(
-        "--publish-set",
-        action="append",
-        default=[],
-        dest="publish_settings",
-        metavar="KEY=VALUE",
-        help="publisher config (repeatable); values are YAML-typed",
-    )
-    r.add_argument("--mirror", required=True)
-    r.add_argument("--out", required=True)
-    r.add_argument("--state", required=True)
-    r.add_argument(
         "--grounding",
         default=None,
         metavar="PATH",
         help="grounding subject map (YAML); see docs/architecture.md §7.1",
     )
+    r.add_argument(
+        "--chunking",
+        default=None,
+        metavar="PATH",
+        help="chunked review config (YAML: max_concepts, group_by); "
+        "see docs/architecture.md §7.2",
+    )
+    rd = sub.add_parser(
+        "redo", help="roll the last chunk back so the next run proposes it again"
+    )
+    _source_args(rd)
+    # Accepted so a `run` command line can be reused as is, but never needed:
+    # redo reads and writes state and the mirror, and never publishes.
+    rd.add_argument("--out", default=None)
     args = parser.parse_args(argv)
 
     pm = build_registry()
@@ -155,18 +179,48 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     # The built-in dry-run publisher is wired to --out; forge publishers take
     # their whole config from --publish-set.
-    if args.publisher == "dry-run":
+    if args.publisher == "dry-run" and args.out is not None:
         publish_config.setdefault("out_dir", args.out)
 
     # Fail fast: a bad publisher config should cost a second, not a full
     # fetch+synthesize. Third-party publishers predating the hook skip this.
+    # So does redo under dry-run: dry-run's config is only where to write, and
+    # redo never publishes (a forge publisher's config is still checked, since
+    # redo asks the forge whether a request is open).
     validate = getattr(
         publishers[args.publisher], "kbforge_validate_publish_config", None
     )
+    if args.cmd == "redo" and args.publisher == "dry-run":
+        validate = None
     publish_problems = validate(publish_config) if validate else []
     if publish_problems:
         print("; ".join(publish_problems))
         return 2
+
+    if args.cmd == "redo":
+        try:
+            redone = redo(
+                connectors[args.connector],
+                publishers[args.publisher],
+                config=config,
+                mirror=args.mirror,
+                state_dir=args.state,
+                publish_config=publish_config,
+            )
+        except (ConfigError, ChunkRecordError) as exc:
+            print(str(exc))
+            return 2
+        except RedoRefused as exc:
+            print(f"Redo refused: {exc}")
+            return 1
+        except PublishError as exc:
+            print(f"Publish failed: {exc}")
+            return 1
+        print(
+            f"Redone: {len(redone.admitted)} document(s) will be proposed again "
+            "on the next run."
+        )
+        return 0
 
     if args.synthesizer == "llm":
         from kbforge.llm_synthesizer import LLMConfig, LLMSynthesizer
@@ -214,6 +268,13 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     try:
+        chunking = load_chunking(Path(args.chunking) if args.chunking else None)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ValidationError) as exc:
+        # Same four operator mistakes, same handling, as --grounding above.
+        print(f"chunking config {args.chunking}: {exc}")
+        return 2
+
+    try:
         result = run(
             connectors[args.connector],
             publishers[args.publisher],
@@ -223,8 +284,9 @@ def main(argv: list[str] | None = None) -> int:
             publish_config=publish_config,
             synthesizer=synthesizer,
             grounding_config=grounding_config,
+            chunking=chunking,
         )
-    except ConfigError as exc:
+    except (ConfigError, ChunkRecordError) as exc:
         print(str(exc))
         return 2
     except (FetchContractError, StabilityError) as exc:
@@ -257,6 +319,15 @@ def main(argv: list[str] | None = None) -> int:
         for f in result.failures:
             print(f"  [{f.law}] {f.concept_path}: {f.message}")
         return 1
+    if isinstance(result, Waiting):
+        print(
+            # The request, not `branch_hint`: the hint is the synthesizer's
+            # `sync/<system>`, and a configured `branch` override puts the
+            # request somewhere else.
+            f"Waiting: review request {result.request} is still open; the next "
+            "chunk follows once it is merged or closed."
+        )
+        return 0
     return 2
 
 
