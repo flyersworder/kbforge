@@ -736,7 +736,8 @@ mirror). Deleting the mirror alone is not enough for an
 incremental connector: the surviving cursor still bounds `kbforge_fetch` to
 records past it, so the next run can fetch few or no records, `ChangeSet.is_noop`
 fires, and nothing is re-proposed. Only deleting both re-proposes everything
-from scratch. `kbforge redo` (§7.2) is the one exception: it rolls the last chunk of a chunked run back so the next run re-proposes it.
+from scratch. `kbforge redo` (§7.2) is the one exception: it rolls the
+last chunk of a chunked run back so the next run re-proposes it.
 
 Deletions travel
 as `ProposedChange.files_removed`, assigned by the pipeline rather than by a
@@ -1312,9 +1313,10 @@ will be once the chunk merges: a link to a backlog concept is dropped under
 published referrer. The cursor is held until the final chunk. While a
 non-final chunk's request is open, `run` returns `Waiting` before fetching,
 using the publisher's optional read-only `kbforge_open_request` hook; a
-publisher without it is refused under `--chunking`. `<state>/chunk-<connector>-<digest>.json`
-records the last chunk, and `kbforge redo` restores the mirror files and
-cursor it recorded, so a closed request can be re-proposed. Rationale:
+publisher without it is refused under `--chunking`.
+`<state>/chunk-<connector>-<digest>.json` records the last chunk, and
+`kbforge redo` restores the mirror files and cursor it recorded, so a
+closed request can be re-proposed. Rationale:
 [`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
 
 ---
