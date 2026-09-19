@@ -8,6 +8,7 @@ from kbforge.canonical import content_hash
 from kbforge.chunking import (
     ChunkingConfig,
     ChunkRecord,
+    ChunkRecordError,
     admit,
     load_chunking,
     merge_records,
@@ -207,3 +208,17 @@ def test_merging_unions_admitted_sorted_and_branch_hints_in_order():
     merged = merge_records(older, newer)
     assert merged.admitted == ["sys:a", "sys:b", "sys:c"]
     assert merged.branch_hints == ["sync/b", "sync/a", "sync/z"]
+
+
+@pytest.mark.parametrize(
+    "garbage",
+    [b'{"branch_hints": ["sync/', b'{"pending": true}', b"\xff\xfe"],
+    ids=["torn", "wrong-shape", "not-utf8"],
+)
+def test_an_unreadable_record_names_its_path(tmp_path: Path, garbage: bytes):
+    path = tmp_path / "chunk-fake-0.json"
+    path.write_bytes(garbage)
+    with pytest.raises(ChunkRecordError) as caught:
+        read_record(path)
+    assert caught.value.path == path
+    assert str(caught.value).startswith(f"chunk record {path}: ")

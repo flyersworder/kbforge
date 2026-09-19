@@ -129,3 +129,77 @@ def test_redo_without_a_record_exits_1(tmp_path, capsys):
     )
     assert code == 1
     assert "Redo refused: local_files: no chunk to redo" in capsys.readouterr().out
+
+
+def test_redo_does_not_need_out(tmp_path, capsys):
+    src = _source(tmp_path, ["a", "b"])
+    cfg = _chunking(tmp_path, "max_concepts: 1\n")
+    run_args = [
+        "run",
+        "--connector",
+        "local_files",
+        "--set",
+        f"path={src}",
+        "--chunking",
+        str(cfg),
+        *_plumbing(tmp_path),
+    ]
+    assert main(run_args) == 0
+    code = main(
+        [
+            "redo",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--mirror",
+            str(tmp_path / "mirror"),
+            "--state",
+            str(tmp_path / "state"),
+        ]
+    )
+    out = capsys.readouterr().out
+    assert code == 0, out
+    assert "Redone: 1 document(s)" in out
+    assert list((tmp_path / "mirror").glob("*.json")) == []
+
+
+def _garble_record(tmp_path: Path) -> Path:
+    [record] = (tmp_path / "state").glob("chunk-*.json")
+    record.write_text('{"branch_hints": ["sync/', "utf-8")  # torn mid-write
+    return record
+
+
+def test_a_torn_chunk_record_exits_2_on_run(tmp_path, capsys):
+    src = _source(tmp_path, ["a", "b"])
+    cfg = _chunking(tmp_path, "max_concepts: 1\n")
+    args = [
+        "run",
+        "--connector",
+        "local_files",
+        "--set",
+        f"path={src}",
+        "--chunking",
+        str(cfg),
+        *_plumbing(tmp_path),
+    ]
+    assert main(args) == 0
+    record = _garble_record(tmp_path)
+    capsys.readouterr()
+    assert main(args) == 2
+    out = capsys.readouterr().out
+    assert out.startswith(f"chunk record {record}: "), out
+    assert "Invalid JSON" in out, out
+
+
+def test_a_torn_chunk_record_exits_2_on_redo(tmp_path, capsys):
+    src = _source(tmp_path, ["a", "b"])
+    cfg = _chunking(tmp_path, "max_concepts: 1\n")
+    source = ["--connector", "local_files", "--set", f"path={src}"]
+    assert main(["run", *source, "--chunking", str(cfg), *_plumbing(tmp_path)]) == 0
+    record = _garble_record(tmp_path)
+    capsys.readouterr()
+    assert main(["redo", *source, *_plumbing(tmp_path)]) == 2
+    out = capsys.readouterr().out
+    assert out.startswith(f"chunk record {record}: "), out
+    assert "Invalid JSON" in out, out

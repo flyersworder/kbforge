@@ -132,10 +132,26 @@ def restore(record: ChunkRecord, mirror: Path, cursor_slot: Path) -> None:
     _put(cursor_slot, record.cursor)
 
 
+class ChunkRecordError(RuntimeError):
+    """A chunk record that exists but cannot be read, torn by an interrupted
+    write or edited by hand. Carries the path so the CLI can name it."""
+
+    def __init__(self, path: Path, error: Exception):
+        super().__init__(f"chunk record {path}: {error}")
+        self.path = path
+        self.error = error
+
+
 def read_record(path: Path) -> ChunkRecord | None:
     if not path.exists():
         return None
-    return ChunkRecord.model_validate_json(path.read_text("utf-8"))
+    try:
+        return ChunkRecord.model_validate_json(path.read_text("utf-8"))
+    except (OSError, ValueError) as exc:
+        # ValueError covers pydantic's ValidationError (bad JSON or bad shape)
+        # and UnicodeDecodeError. Either way, guessing is worse than stopping:
+        # a record that cannot be read cannot be waited on or rolled back.
+        raise ChunkRecordError(path, exc) from exc
 
 
 def write_record(path: Path, record: ChunkRecord) -> None:

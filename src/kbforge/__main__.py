@@ -16,7 +16,7 @@ import yaml
 from pydantic import ValidationError
 
 from kbforge.canonical import FetchContractError, StabilityError
-from kbforge.chunking import load_chunking
+from kbforge.chunking import ChunkRecordError, load_chunking
 from kbforge.grounding import load_grounding, problems_for
 from kbforge.pipeline import (
     Aborted,
@@ -96,7 +96,6 @@ def _source_args(p: argparse.ArgumentParser) -> None:
         help="publisher config (repeatable); values are YAML-typed",
     )
     p.add_argument("--mirror", required=True)
-    p.add_argument("--out", required=True)
     p.add_argument("--state", required=True)
 
 
@@ -108,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("run", help="run the pipeline once")
     _source_args(r)
+    r.add_argument("--out", required=True)
     r.add_argument("--synthesizer", choices=["stub", "llm"], default="stub")
     r.add_argument(
         "--llm-set",
@@ -134,6 +134,9 @@ def main(argv: list[str] | None = None) -> int:
         "redo", help="roll the last chunk back so the next run proposes it again"
     )
     _source_args(rd)
+    # Accepted so a `run` command line can be reused as is, but never needed:
+    # redo reads and writes state and the mirror, and never publishes.
+    rd.add_argument("--out", default=None)
     args = parser.parse_args(argv)
 
     pm = build_registry()
@@ -176,14 +179,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     # The built-in dry-run publisher is wired to --out; forge publishers take
     # their whole config from --publish-set.
-    if args.publisher == "dry-run":
+    if args.publisher == "dry-run" and args.out is not None:
         publish_config.setdefault("out_dir", args.out)
 
     # Fail fast: a bad publisher config should cost a second, not a full
     # fetch+synthesize. Third-party publishers predating the hook skip this.
+    # So does redo under dry-run: dry-run's config is only where to write, and
+    # redo never publishes (a forge publisher's config is still checked, since
+    # redo asks the forge whether a request is open).
     validate = getattr(
         publishers[args.publisher], "kbforge_validate_publish_config", None
     )
+    if args.cmd == "redo" and args.publisher == "dry-run":
+        validate = None
     publish_problems = validate(publish_config) if validate else []
     if publish_problems:
         print("; ".join(publish_problems))
@@ -199,7 +207,7 @@ def main(argv: list[str] | None = None) -> int:
                 state_dir=args.state,
                 publish_config=publish_config,
             )
-        except ConfigError as exc:
+        except (ConfigError, ChunkRecordError) as exc:
             print(str(exc))
             return 2
         except RedoRefused as exc:
@@ -278,7 +286,7 @@ def main(argv: list[str] | None = None) -> int:
             grounding_config=grounding_config,
             chunking=chunking,
         )
-    except ConfigError as exc:
+    except (ConfigError, ChunkRecordError) as exc:
         print(str(exc))
         return 2
     except (FetchContractError, StabilityError) as exc:
