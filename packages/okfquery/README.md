@@ -78,8 +78,12 @@ index:
 ```
 
 If the default branch is protected against bot pushes, run
-`okfquery index --check` in the merge-request pipeline instead and regenerate by
-hand when it fails.
+`okfquery index --check` in the **default-branch** pipeline instead, and when it
+fails regenerate `index.md` in a small follow-up change of its own. Do not put
+the check on merge requests: kbforge's sync branches never touch `index.md`, so
+every request that adds or retitles a concept would fail it, and fixing that on
+the sync branches makes several systems edit one whole-bundle file, the
+collision this job exists to avoid.
 
 ## Schema
 

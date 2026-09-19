@@ -117,3 +117,38 @@ def test_cli_refuses_a_hand_written_index(bundle, capsys):
 def test_cli_index_on_a_missing_bundle_exits_2(tmp_path, capsys):
     assert main(["index", "--bundle", str(tmp_path / "nope")]) == 2
     assert "no concepts/ directory" in capsys.readouterr().err
+
+
+def test_a_multi_line_title_stays_on_one_line(tmp_path):
+    _concept(tmp_path, "a", title='"Long\\n  title"')
+    text = render_bundle(tmp_path)
+    assert "* [Long title](concepts/a/overview.md)" in text, text
+
+
+def test_a_list_facet_lists_the_concept_under_each_value(tmp_path):
+    _concept(tmp_path, "a", title="A", tags="[x, y]")
+    _concept(tmp_path, "b", title="B", tags="[y]")
+    _concept(tmp_path, "c", title="C", flag="true")
+    text = render_bundle(tmp_path, group_by="tags")
+    assert "# ['" not in text, text
+    x, y = text.split("# y\n")
+    assert "(concepts/a/overview.md)" in x and "(concepts/b/overview.md)" not in x
+    assert "(concepts/a/overview.md)" in y and "(concepts/b/overview.md)" in y
+    assert "# true" in render_bundle(tmp_path, group_by="flag")
+
+
+def test_a_heading_is_one_line_and_an_empty_value_counts_as_missing(tmp_path):
+    _concept(tmp_path, "a", title="A", type='"multi\\nline"')
+    _concept(tmp_path, "b", title="B", type='""')
+    text = render_bundle(tmp_path)
+    assert "# multi line\n" in text, text
+    assert "\n# \n" not in text
+    assert "# (no type)\n\n* [B](concepts/b/overview.md)" in text, text
+
+
+def test_grouping_on_a_key_okf_owns_is_rejected(tmp_path, capsys):
+    _concept(tmp_path, "a", title="A", type="application")
+    with pytest.raises(ValueError, match="'title' is not a facet"):
+        render_bundle(tmp_path, group_by="title")
+    assert main(["index", "--bundle", str(tmp_path), "--group-by", "type"]) == 2
+    assert "'type' is not a facet" in capsys.readouterr().err

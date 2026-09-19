@@ -88,6 +88,14 @@ def _index(args: argparse.Namespace) -> int:
         print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)
         return 2
     bundle = Path(args.bundle)
+    try:
+        return _index_in(bundle, args)
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+
+def _index_in(bundle: Path, args: argparse.Namespace) -> int:
     if args.check:
         if is_current(bundle, args.group_by):
             print("index.md is up to date")
