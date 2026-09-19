@@ -45,22 +45,46 @@ own sync branch; a whole-bundle file on several branches would collide. Generate
 it on the bundle repo's default branch instead. The sync branches never touch
 it, so they inherit the latest one.
 
-GitHub Actions (commits made with `GITHUB_TOKEN` do not retrigger workflows):
+Both jobs share three properties, each learned from running them on a real
+forge:
+
+- **They wait for the first concept.** A bundle repo is created before anything
+  merges, and `okfquery index` rejects a bundle with no `concepts/` on purpose
+  (that is how a wrong `--bundle` shows). The jobs skip until one exists.
+- **They index the branch as it is now.** A cold start merges chunks in quick
+  succession; a job that indexed its own commit and pushed would be rejected
+  when a later merge had already moved the branch. They fetch the tip, index
+  it, and retry the push on a race, one job at a time.
+- **The bot's commit starts nothing:** `GITHUB_TOKEN` pushes do not trigger
+  workflows, and GitLab honours `[skip ci]`.
+
+GitHub Actions:
 
 ```yaml
 on: { push: { branches: [main] } }
 permissions: { contents: write }
+concurrency: { group: okfquery-index }   # one run at a time; the newest queued run wins
 jobs:
   index:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v6
-      - run: uvx --from kbforge-okfquery okfquery index --bundle .
       - run: |
-          git add index.md && git diff --cached --quiet && exit 0
-          git config user.name "okfquery" && git config user.email "okfquery@users.noreply.github.com"
-          git commit -m "chore: regenerate index.md" && git push
+          git config user.name okfquery && git config user.email okfquery@users.noreply.github.com
+          # Index the branch as it is NOW, not the commit that started the run: a
+          # merge that lands meanwhile would make this push stale. Retry on a race.
+          for attempt in 1 2 3; do
+            git fetch -q origin "$GITHUB_REF_NAME" && git reset -q --hard FETCH_HEAD
+            # Nothing to index until the first concept merges.
+            [ -d concepts ] || { echo "no concepts/ yet; nothing to index"; exit 0; }
+            uvx --from kbforge-okfquery okfquery index --bundle .
+            git add index.md && git diff --cached --quiet && exit 0
+            git commit -qm "chore: regenerate index.md"
+            git push -q origin "HEAD:$GITHUB_REF_NAME" && exit 0
+            echo "push raced another change; retrying on the new tip"
+          done
+          exit 1
 ```
 
 GitLab CI. The script is one block scalar on purpose: a list item such as
@@ -73,20 +97,35 @@ the API with `ci_push_repository_for_job_token_allowed=true`:
 ```yaml
 index:
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
-  rules: [{ if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]
+  rules:
+    # Default branch only, and only once a concept has merged: before the first
+    # merge there is nothing to index, and `okfquery index` rejects a bundle
+    # with no concepts/ directory on purpose (it is how a wrong --bundle shows).
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'
+      exists: ['concepts/**/*.md']
+  resource_group: okfquery-index   # one index job at a time
   script:
     - |
       apt-get update -qq && apt-get install -yqq git
-      uvx --from kbforge-okfquery okfquery index --bundle .
-      git add index.md && git diff --cached --quiet && exit 0
-      git -c user.name=okfquery -c user.email=okfquery@example.invalid commit -m "chore: regenerate index.md [skip ci]"
-      git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_BRANCH}"
+      remote="https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
+      # Index the branch as it is NOW, not the commit that started the job: a
+      # merge that lands meanwhile would make this push stale. Retry on a race.
+      for attempt in 1 2 3; do
+        git fetch -q "$remote" "$CI_COMMIT_BRANCH" && git reset -q --hard FETCH_HEAD
+        uvx --from kbforge-okfquery okfquery index --bundle .
+        git add index.md && git diff --cached --quiet && exit 0
+        git -c user.name=okfquery -c user.email=okfquery@example.invalid commit -qm "chore: regenerate index.md [skip ci]"
+        git push -q "$remote" "HEAD:${CI_COMMIT_BRANCH}" && exit 0
+        echo "push raced another change; retrying on the new tip"
+      done
+      exit 1
 ```
 
 On an older GitLab, push with a project access token instead: store it as a
 masked CI variable and use `oauth2:${YOUR_TOKEN_VARIABLE}` in place of
-`gitlab-ci-token:${CI_JOB_TOKEN}`. `[skip ci]` keeps the bot's commit from
-starting another pipeline. Both recipes were run against a real forge.
+`gitlab-ci-token:${CI_JOB_TOKEN}`. Both jobs, exactly as printed here, were run
+against a real forge: a cold start with no concepts, then two changes seconds
+apart, with every run green and one index listing both.
 
 If the default branch is protected against bot pushes, run
 `okfquery index --check` in the **default-branch** pipeline instead, and when it

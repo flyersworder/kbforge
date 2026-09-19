@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [kbforge-okfquery-v0.2.2] - 2026-09-19
+
+### Fixed
+
+- The README's CI jobs for `okfquery index` now survive a real cold start, both
+  found by a second end-to-end run on GitLab:
+  - A new bundle repo failed every pipeline until its first concept merged,
+    because `okfquery index` rejects a bundle with no `concepts/` (deliberately:
+    it is how a wrong `--bundle` shows). The GitLab job now runs only once
+    `concepts/**/*.md` exists; the GitHub job exits cleanly until then.
+  - Two merges seconds apart made the earlier job's push stale, and it failed
+    with a rejected non-fast-forward push. Both jobs now run one at a time,
+    index the branch tip rather than their own commit, and retry the push on a
+    race.
+
+  Both jobs, as printed, ran on a real forge: a cold start with no concepts
+  (skipped, green), then two changes seconds apart (both green, one index
+  listing both).
+
 ## [kbforge-okfquery-v0.2.1] - 2026-09-19
 
 ### Fixed
@@ -648,6 +667,7 @@ production protocol.
 [Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.0...HEAD
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
+[kbforge-okfquery-v0.2.2]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.2
 [kbforge-okfquery-v0.2.1]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.1
 [kbforge-okfquery-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.0
 [kbforge-mcp-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-mcp-v0.2.0
