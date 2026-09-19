@@ -1,4 +1,4 @@
-"""argparse over `load()`. Four verbs, no query logic of its own.
+"""argparse over `load()`. Five verbs, no query logic of its own.
 
 There is deliberately no --format parquet and no --output: DuckDB writes parquet
 from inside the SQL (`COPY (...) TO 'out.parquet'`), and a second export path
@@ -16,6 +16,7 @@ from pathlib import Path
 
 import duckdb
 
+from okfquery.index import HandWrittenIndexError, is_current, write_index
 from okfquery.load import EmptyMirrorError, load
 from okfquery.schema import SCHEMA_SQL
 
@@ -82,6 +83,26 @@ def _shell(args: argparse.Namespace) -> int:
             return 2
 
 
+def _index(args: argparse.Namespace) -> int:
+    if _bundle_missing(args.bundle):
+        print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)
+        return 2
+    bundle = Path(args.bundle)
+    if args.check:
+        if is_current(bundle, args.group_by):
+            print("index.md is up to date")
+            return 0
+        print("index.md is missing or stale; run `okfquery index`", file=sys.stderr)
+        return 1
+    try:
+        changed = write_index(bundle, args.group_by, force=args.force)
+    except HandWrittenIndexError as exc:
+        print(exc, file=sys.stderr)
+        return 1
+    print(f"wrote {bundle / 'index.md'}" if changed else "index.md is up to date")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="okfquery", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -103,6 +124,25 @@ def main(argv: list[str] | None = None) -> int:
     check = sub.add_parser("check", help="exit 1 if any file failed to parse")
     bundle_args(check)
 
+    index = sub.add_parser(
+        "index", help="write the OKF §8 root index.md (run after each merge)"
+    )
+    index.add_argument("--bundle", default=".", help="bundle root (default: .)")
+    index.add_argument(
+        "--group-by",
+        default=None,
+        metavar="FACET",
+        help="section on this frontmatter facet instead of type",
+    )
+    index.add_argument(
+        "--check",
+        action="store_true",
+        help="write nothing; exit 1 if index.md is missing or stale",
+    )
+    index.add_argument(
+        "--force", action="store_true", help="replace a hand-written index.md"
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "schema":
@@ -110,6 +150,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "shell":
         return _shell(args)
+    if args.command == "index":
+        return _index(args)
 
     if _bundle_missing(args.bundle):
         print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)

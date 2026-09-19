@@ -1,9 +1,11 @@
 """Bundle on disk -> a DuckDB connection with the schema filled.
 
 Ephemeral by design: nothing is cached and nothing is written, so the tables
-cannot disagree with the files they came from. That is also why no index is
+cannot disagree with the files they came from. That is also why no query index is
 committed into a bundle -- an index derived from `ProposedChange.concepts` would
-be a THIRD carrier of the same concept, and kbforge already has two."""
+be a THIRD carrier of the same concept, and kbforge already has two. The OKF
+root `index.md` that `okfquery index` writes is not that: it is navigation,
+rebuilt from the merged files, and `--check` fails CI when it drifts."""
 
 from __future__ import annotations
 
