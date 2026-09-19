@@ -10,6 +10,7 @@ import pytest
 from kbforge.canonical import content_hash
 from kbforge.chunking import ChunkingConfig, owned_paths, read_record
 from kbforge.grounding import GroundingConfig
+from kbforge.hookspecs import PublisherSpec
 from kbforge.mirror import load_all
 from kbforge.models import (
     CanonicalDocument,
@@ -487,3 +488,35 @@ def test_an_oversized_change_waits_while_a_final_chunk_request_is_open(tmp_path)
     assert _tree(tmp_path / "mirror", tmp_path / "state") == before, (
         "a waiting run must not touch the mirror, the cursor or the record"
     )
+
+
+class _InheritsTheSpec(PublisherSpec):
+    """A third-party publisher written against PublisherSpec that predates the
+    hook: it inherits the spec's docstring-only default, which returns None."""
+
+    def kbforge_publisher_info(self):
+        return ConnectorInfo(name="inherits", version="0", source_system="t")
+
+    def kbforge_validate_publish_config(self, config):
+        return []
+
+    def kbforge_publish(self, change, config):
+        raise AssertionError("must be refused before publishing")
+
+
+def test_the_inherited_spec_default_counts_as_no_hook_under_chunking(tmp_path):
+    with pytest.raises(
+        ConfigError,
+        match="inherits: --chunking needs a publisher that implements "
+        "kbforge_open_request",
+    ):
+        _run(tmp_path, [_doc("a")], cap=1, publisher=_InheritsTheSpec())
+
+
+def test_the_inherited_spec_default_counts_as_no_hook_for_redo(tmp_path):
+    _run(tmp_path, [_doc("a"), _doc("b")], cap=1)
+    with pytest.raises(
+        ConfigError,
+        match="inherits: redo needs a publisher that implements kbforge_open_request",
+    ):
+        _redo(tmp_path, publisher=_InheritsTheSpec())

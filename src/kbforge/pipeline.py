@@ -34,6 +34,7 @@ from kbforge.grounding import (
     with_first_seen,
     write_sidecar,
 )
+from kbforge.hookspecs import PublisherSpec
 from kbforge.mirror import commit, diff, load_all
 from kbforge.models import (
     CanonicalDocument,
@@ -257,9 +258,16 @@ def _open_request_hook(
     publisher: PublisherProtocol, needed_by: str
 ) -> Callable[[str, dict], str | None]:
     """The publisher's optional `kbforge_open_request`, or a `ConfigError` naming
-    who needs it (`--chunking`'s wait, or `redo`'s check) and why."""
+    who needs it (`--chunking`'s wait, or `redo`'s check) and why.
+
+    `PublisherSpec`'s own method is a docstring-only default that returns None,
+    so a publisher subclassing the spec without overriding it would inherit
+    "never open" and chunk into open requests unchecked. It counts as missing."""
     open_request = getattr(publisher, "kbforge_open_request", None)
-    if open_request is None:
+    inherited = (
+        getattr(open_request, "__func__", None) is PublisherSpec.kbforge_open_request
+    )
+    if open_request is None or inherited:
         raise ConfigError(f"{publisher.kbforge_publisher_info().name}: {needed_by}")
     return open_request
 
