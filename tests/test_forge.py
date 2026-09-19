@@ -5,6 +5,7 @@ from kbforge.publishers.forge import (
     ForgeConfig,
     PathError,
     build_config,
+    open_request,
     publish_to_forge,
     safe_join,
 )
@@ -341,3 +342,18 @@ def test_a_traversing_removal_path_is_rejected_before_any_network_call():
         publish_to_forge(client, change, _cfg())
 
     assert client.calls == [], "no call may be made before paths are validated"
+
+
+# --- open_request ----------------------------------------------------------
+
+
+def test_open_request_asks_about_the_hinted_branch():
+    client = FakeForgeClient(open_pr="7")
+    assert open_request(client, "sync/sys", _cfg()) == "7"
+    assert client.calls == [("find_open_pr", "sync/sys")]
+
+
+def test_open_request_prefers_the_configured_branch_like_publish_does():
+    client = FakeForgeClient()
+    assert open_request(client, "sync/sys", _cfg(branch="kb/sync")) is None
+    assert client.calls == [("find_open_pr", "kb/sync")]

@@ -160,6 +160,12 @@ class ForgeClient(Protocol):
     def update_pr(self, pr_id: str, title: str, body: str) -> str: ...
 
 
+def open_request(client: ForgeClient, branch_hint: str, cfg: ForgeConfig) -> str | None:
+    """The open review request for `branch_hint`, resolved to a branch exactly as
+    `publish_to_forge` resolves it, so a configured `branch` wins here too."""
+    return client.find_open_pr(cfg.branch or branch_hint)
+
+
 def publish_to_forge(
     client: ForgeClient, change: ProposedChange, cfg: ForgeConfig
 ) -> str:

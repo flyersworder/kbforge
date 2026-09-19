@@ -43,3 +43,8 @@ class DryRunPublisher:
             (out_dir / safe_join("", rel)).unlink(missing_ok=True)
         (out_dir / "MR_BODY.md").write_text(summary_md(change.summary), "utf-8")
         return str(out_dir)  # a path, not a merge — never merges
+
+    @hookimpl
+    def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
+        # A directory is never "open": repeated dry runs step through the chunks.
+        return None

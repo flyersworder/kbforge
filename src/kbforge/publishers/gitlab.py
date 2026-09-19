@@ -22,7 +22,12 @@ from kbforge.publishers._http import (
     TreeListingTruncatedError,
     request,
 )
-from kbforge.publishers.forge import ForgeConfig, build_config, publish_to_forge
+from kbforge.publishers.forge import (
+    ForgeConfig,
+    build_config,
+    open_request,
+    publish_to_forge,
+)
 
 DEFAULTS = {"api_base": "https://gitlab.com/api/v4", "token_env": "GITLAB_TOKEN"}
 
@@ -209,3 +214,8 @@ class GitLabPublisher:
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         cfg = build_config(config, DEFAULTS)
         return publish_to_forge(GitLabClient(cfg), change, cfg)
+
+    @hookimpl
+    def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
+        cfg = build_config(config, DEFAULTS)
+        return open_request(GitLabClient(cfg), branch_hint, cfg)
