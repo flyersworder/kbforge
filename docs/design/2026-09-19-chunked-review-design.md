@@ -140,28 +140,35 @@ including one-chunk runs:
   "branch_hints": ["sync/wiki"],
   "pending": true,
   "admitted": ["wiki:a", "wiki:b"],
-  "restore": {
-    "mirror":     {"wiki:a": null, "wiki:b": "<previous slot JSON>"},
-    "sidecars":   {"wiki:b": "<previous sidecar JSON>"},
-    "first_seen": {"wiki:a": null},
-    "cursor":     "<previous cursor slot JSON or null>"
-  }
+  "mirror": {
+    "<slot_key(wiki:a)>.json": null,
+    "<slot_key(wiki:b)>.json": "<previous slot JSON>",
+    "_grounding/<slot_key(wiki:b)>.json": "<previous sidecar JSON>",
+    "_first_seen/<slot_key(wiki:a)>.json": null
+  },
+  "cursor": "<previous cursor slot JSON, or null>"
 }
 ```
 
+- `branch_hints` is the published proposal's own `branch_hint`, so the wait
+  check asks about exactly the branch the chunk went to, with no second
+  derivation of `sync/{system}` to drift from the synthesizer's.
 - `pending` is true when the publish left a backlog.
-- `restore` captures, *before* the commit, every mirror slot, sidecar and
-  first-seen entry the run writes or deletes (admitted documents, tombstones,
-  referrers), plus the cursor slot. `null` means the entry did not exist.
+- `mirror` maps every mirror-relative file the run writes or deletes on
+  behalf of a touched document (admitted documents, tombstones, referrers, and
+  drifted documents: slot, sidecar and first-seen record each) to its content
+  *before* the commit. `null` means the file did not exist. `cursor` does the
+  same for the cursor slot.
 
 ## 6. Waiting
 
-After the first no-op gate and before any synthesis: if the chunk record has
-`pending: true`, the pipeline asks the publisher whether a request is open on
-each recorded `branch_hint`. If one is, `run` returns **`Waiting(url)`**. It
-opens nothing and synthesizes nothing, so the no-op rule's promise (no review
+First, before the fetch: if the chunk record has `pending: true`, the
+pipeline asks the publisher whether a request is open on
+each recorded `branch_hint`. If one is, `run` returns
+**`Waiting(request, branch_hint)`**. It fetches nothing, opens nothing and
+synthesizes nothing, so the no-op rule's promise (no review
 request for a concept nothing changed under) is untouched and the token bill
-stays bounded. The CLI prints the URL and exits 0.
+stays bounded. The CLI prints the request and exits 0.
 
 A merged request and a closed one both release the next chunk. Closing still
 means discard.
@@ -173,7 +180,7 @@ A new **optional**, non-abstract hook on `PublisherSpec`:
 ```python
 @hookspec
 def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
-    """URL of the open review request for this branch, or None. Read-only."""
+    """Id of the open review request for this branch, or None. Read-only."""
 ```
 
 It resolves the branch exactly as `kbforge_publish` does, so a configured
@@ -183,10 +190,6 @@ through the chunks. A publisher without the hook, run with `--chunking`, is a
 config error at startup. Degrading to appending would rebuild the unbounded
 request this exists to prevent.
 
-`sync/{system}` moves out of `synthesize.py` into a shared
-`branch_hint_for(system)`, so the wait check and the synthesizer cannot
-disagree.
-
 ## 7. Redo
 
 ```bash
@@ -194,8 +197,8 @@ kbforge redo --connector … --set … --mirror … --state … --publisher … 
 ```
 
 It takes the same flags as `run` minus synthesis, because it needs the config
-digest and the open-request check. It refuses, with a message naming the
-reason, when:
+digest and the open-request check. It refuses (exit 1, a message naming the
+reason, nothing touched) when:
 
 - there is no chunk record (nothing to redo), or
 - a request is open on a recorded branch ("close it first", or the redone
@@ -255,5 +258,11 @@ re-proposes it.
   by link topology would reduce this; it is not needed to be correct.
 - **Concurrency.** Two runs over one mirror can interleave admission and
   commit. That is #29's run lock, and chunking neither fixes nor worsens it.
+- **Arrival referrers outside chunking.** A concept whose relation names a
+  document that does not exist yet loses that link under law 2, and nothing
+  re-synthesizes it when the document later arrives. That gap predates this
+  note and applies to unchunked incremental runs too. Arrival referrers close it
+  only under `--chunking`, which keeps unchunked runs byte-for-byte unchanged;
+  closing it everywhere is a separate change.
 - **Per-system caps** and **a default `group_by`**: one global cap, no default
   key, until a deployment needs otherwise.
