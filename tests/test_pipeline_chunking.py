@@ -5,7 +5,7 @@ package, so cross-test imports depend on pytest's import mode."""
 from datetime import UTC, datetime
 
 from kbforge.canonical import content_hash
-from kbforge.chunking import ChunkingConfig, read_record
+from kbforge.chunking import ChunkingConfig, owned_paths, read_record
 from kbforge.grounding import GroundingConfig
 from kbforge.mirror import load_all
 from kbforge.models import (
@@ -132,6 +132,22 @@ def test_an_oversized_run_publishes_and_commits_only_the_first_chunk(tmp_path):
     record = _record(tmp_path)
     assert record is not None and record.pending is True
     assert any("carries 2 of 3" in n for n in pub.changes[0].summary.grounding_notes)
+    assert record.branch_hints == ["sync/sys"]
+    assert record.admitted == ["sys:a", "sys:b"]
+    assert record.cursor is None
+    assert all(v is None for v in record.mirror.values())
+    assert set(record.mirror) == set(owned_paths("sys:a")) | set(owned_paths("sys:b"))
+
+
+def test_the_chunk_record_captures_the_pre_run_slot_of_a_modified_document(tmp_path):
+    _run(tmp_path, [_doc("a"), _doc("b")])
+    slot_path = tmp_path / "mirror" / owned_paths("sys:a")[0]
+    pre_run_text = slot_path.read_text("utf-8")
+
+    _, _, _ = _run(tmp_path, [_doc("a", text="a2"), _doc("b")], cap=1)
+    record = _record(tmp_path)
+    assert record is not None
+    assert record.mirror[owned_paths("sys:a")[0]] == pre_run_text
 
 
 def test_the_cursor_is_held_until_the_final_chunk(tmp_path):
@@ -221,6 +237,50 @@ def test_drift_counts_toward_the_cap_and_waits_its_turn(tmp_path):
     assert set(pub2.changes[0].files) == {concept_path("sys:a")}
     assert any(
         "grounding changed" in n for n in pub2.changes[0].summary.grounding_notes
+    )
+
+
+def test_a_deferred_drift_document_rebuilt_as_a_referrer_is_not_left_pending(
+    tmp_path,
+):
+    """A doc that both drifted (grounding changed) and links to a concept this
+    chunk removes gets rebuilt via the referrer path regardless of the cap, so
+    it must not also count as deferred: it ships with fresh grounding in THIS
+    chunk, so `pending` must be False and it must get the "grounding changed"
+    note, not be silently dropped from the accounting."""
+    grounding = GroundingConfig(grounding={"sys:d": ["other:t"]})
+    synth = _GroundingSynth()
+    d = _doc("d", relations=["sys:x"])
+    x = _doc("x")
+    _run(
+        tmp_path,
+        [x, d, _doc("t", system="other")],
+        synthesizer=synth,
+        grounding_config=grounding,
+    )
+    _run(
+        tmp_path,
+        [_doc("t", system="other", text="t2")],
+        connector=_Connector([], name="other"),
+        synthesizer=synth,
+        grounding_config=grounding,
+    )
+
+    docs = [_doc("x", deleted=True), _doc("b")]
+    _, pub, _ = _run(
+        tmp_path, docs, cap=1, synthesizer=synth, grounding_config=grounding
+    )
+    change = pub.changes[0]
+    path_d = concept_path("sys:d")
+    assert path_d in change.files, "the drifted referrer was not rebuilt"
+    assert any(
+        n.startswith(path_d) and "grounding changed" in n
+        for n in change.summary.grounding_notes
+    ), "a doc rebuilt via the referrer path must still get its drift note"
+    record = _record(tmp_path)
+    assert record is not None and record.pending is False
+    assert not any("carries" in n for n in change.summary.grounding_notes), (
+        "nothing is actually left in backlog, so no carry note should be emitted"
     )
 
 

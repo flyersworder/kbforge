@@ -434,6 +434,20 @@ def run(
             ]
             changed_docs += arrivals
 
+    # A deferred-drift document is not exempt from law 2: if it also links to a
+    # concept this run removes, or itself gains a link to a concept this chunk
+    # adds, `referrers`/`arrivals` rebuild it regardless of the cap (neither
+    # filter checks `deferred_drift`). It is then published in THIS chunk with
+    # fresh grounding, so treating it as still-deferred would leave it with no
+    # "grounding changed" note, an inflated backlog count, and a chunk record
+    # stuck `pending: True` even once nothing is actually left to redo.
+    # Promoted back into `drift` rather than left alone, so the note loop and
+    # the `pending`/"carries" accounting below see it as delivered.
+    rebuilt_deferred = deferred_drift & {d.doc_id for d in referrers + arrivals}
+    if rebuilt_deferred:
+        drift += sorted(rebuilt_deferred)
+        deferred_drift -= rebuilt_deferred
+
     # The drift scan and `referrers` can both select the same document — drift
     # knows nothing about `referrers`' filter and vice versa. Deduped once,
     # here, before either feeds the synthesizer or `summary.sources_changed`.

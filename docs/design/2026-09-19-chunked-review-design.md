@@ -85,11 +85,19 @@ plus the grounding-drift documents: every concept the reviewer would read.
   document without the key goes in a trailing group. Groups are ordered by key
   and documents within a group by `doc_id`. Without `group_by` there is one
   group. The ordering is deterministic, so a re-run admits the same chunk.
-- **Packing.** Whole groups are packed in order while they fit. A group larger
-  than the cap is split by `doc_id` and fills chunks by itself. The **admitted**
-  set is the first chunk. Everything else is **backlog**.
-- **Final chunk.** A run whose backlog is empty is final. A run under the cap is
-  a one-chunk run and is final.
+- **Packing is two-phase, not one candidate set.** Added and modified
+  documents are packed first, against the full cap; grounding-drift documents
+  then fill whatever room remains, with the same group/doc_id ordering. This
+  is required rather than a simplification: drift detection reads `by_id`,
+  which already reflects this chunk's admission of added and modified
+  documents, so computing drift and admission from one shared candidate set
+  would be circular. One consequence follows directly: a drifted concept never
+  displaces a changed one. Within each phase, a group larger than its
+  remaining room is split by `doc_id` and fills that phase's capacity by
+  itself. The **admitted** set is the union of both phases. Everything else is
+  **backlog** (unadmitted changes) or **deferred drift**.
+- **Final chunk.** A run whose backlog and deferred drift are both empty is
+  final. A run under the cap is a one-chunk run and is final.
 
 ### 4.1 What the run sees
 
