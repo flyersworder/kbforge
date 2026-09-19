@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-09-19
+
+### Fixed
+
+- The LLM synthesizer failed on long sources (#35). Its default output budget,
+  `max_tokens=1500`, cut the model's answer off inside `body` for a source near
+  `max_source_chars` (about 1,800 output tokens were needed), and the provider
+  still reported `finish_reason=tool_call`, so the run died with a
+  ~150-line pydantic-ai traceback and no hint why. In an end-to-end run on two
+  Wikipedia pages it failed 3 of 4 attempts; with the fix, 6 of 6 cold runs
+  succeeded on the first attempt.
+  - `max_tokens` now defaults to 4096.
+  - A failed output raises `SynthesisError` naming the concept path and the
+    model; when the last response used the whole budget it says the output was
+    cut off and suggests `--llm-set max_tokens=`.
+  - `output_retries` (default 2, set with `--llm-set output_retries=N`) retries
+    a genuinely invalid output. It does not help a truncated one.
+  - The CLI prints one line and exits 1. Nothing was published, so the mirror
+    and cursor stay put and the next run retries.
+
 ## [kbforge-okfquery-v0.2.2] - 2026-09-19
 
 ### Fixed
@@ -664,7 +684,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.1...HEAD
+[0.11.1]: https://github.com/flyersworder/kbforge/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
 [kbforge-okfquery-v0.2.2]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.2
