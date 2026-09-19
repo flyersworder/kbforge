@@ -63,19 +63,30 @@ jobs:
           git commit -m "chore: regenerate index.md" && git push
 ```
 
-GitLab CI (needs a project access token with `write_repository`, here `KB_TOKEN`):
+GitLab CI. The script is one block scalar on purpose: a list item such as
+`- git commit -m "chore: ..."` contains `: `, which YAML reads as a mapping, and
+GitLab rejects the whole file. The push uses the job's own token, so no personal
+token is stored anywhere; enable it once under **Settings → CI/CD → Job token
+permissions → Allow Git push requests to the repository** (GitLab 17.2+), or via
+the API with `ci_push_repository_for_job_token_allowed=true`:
 
 ```yaml
 index:
   image: ghcr.io/astral-sh/uv:python3.12-bookworm-slim
   rules: [{ if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH' }]
   script:
-    - apt-get update -qq && apt-get install -yqq git
-    - uvx --from kbforge-okfquery okfquery index --bundle .
-    - git add index.md && git diff --cached --quiet && exit 0
-    - git -c user.name=okfquery -c user.email=okfquery@example.invalid commit -m "chore: regenerate index.md [skip ci]"
-    - git push "https://oauth2:${KB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_BRANCH}"
+    - |
+      apt-get update -qq && apt-get install -yqq git
+      uvx --from kbforge-okfquery okfquery index --bundle .
+      git add index.md && git diff --cached --quiet && exit 0
+      git -c user.name=okfquery -c user.email=okfquery@example.invalid commit -m "chore: regenerate index.md [skip ci]"
+      git push "https://gitlab-ci-token:${CI_JOB_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git" "HEAD:${CI_COMMIT_BRANCH}"
 ```
+
+On an older GitLab, push with a project access token instead: store it as a
+masked CI variable and use `oauth2:${YOUR_TOKEN_VARIABLE}` in place of
+`gitlab-ci-token:${CI_JOB_TOKEN}`. `[skip ci]` keeps the bot's commit from
+starting another pipeline. Both recipes were run against a real forge.
 
 If the default branch is protected against bot pushes, run
 `okfquery index --check` in the **default-branch** pipeline instead, and when it

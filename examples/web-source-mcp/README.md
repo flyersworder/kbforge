@@ -44,7 +44,7 @@ export WEB_SOURCE_ALLOWED_DOMAINS='bosch-semiconductors.com,st.com,nxp.com,ti.co
 |---|---|
 | `FIRECRAWL_API_KEY` | required |
 | `WEB_SOURCE_ALLOWED_DOMAINS` | required for `search`. Comma-separated, matched on whole labels (`ti.com` admits `news.ti.com`, not `evilti.com`). Empty is an error; `*` allows any. |
-| `WEB_SOURCE_MAX_AGE_MS` | optional. Accept a cached scrape up to this age (Firecrawl's default when unset; `0` = always live). |
+| `WEB_SOURCE_MAX_AGE_MS` | optional. Accept a cached scrape up to this age (Firecrawl's default when unset; `0` = always live). **Set it for Watch**, e.g. `86400000` (a day): see *Some pages scrape differently* below. |
 | `FIRECRAWL_API_URL` | optional; default `https://api.firecrawl.dev/v2` |
 
 **Use one `system` for Watch and Scout, and let the reader own the title.** A search
@@ -97,6 +97,14 @@ Measured on 2026-09-18, not assumed:
 - **Stable pages stay quiet.** Two live fetches (`maxAge: 0`) of a vendor article
   returned byte-identical markdown. Only Firecrawl's `scrapeId`/`indexId` metadata
   differed, and `read` never returns metadata.
+- **Some pages scrape differently from one call to the next** (measured
+  2026-09-19). Two fetches of an unchanged Wikipedia article, minutes apart and
+  both with `onlyMainContent`, drew the main-content boundary differently: one
+  kept the page chrome ("Jump to content", "From Wikipedia, the free
+  encyclopedia"), the other began at the heading. kbforge saw a modified page and
+  re-synthesized it, spending tokens on no real change. Setting
+  `WEB_SOURCE_MAX_AGE_MS` makes re-runs reuse Firecrawl's cached scrape, after
+  which the same page was a `NoOp`; a day-old copy is fresh enough for Watch.
 - **Some pages embed per-request tokens.** A trade-press article behind Cloudflare
   Turnstile carries challenge links whose path changes on every fetch, which would
   make the article "modified" on every run. `clean.py` drops link targets on

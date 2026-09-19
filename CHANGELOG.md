@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [kbforge-okfquery-v0.2.1] - 2026-09-19
+
+### Fixed
+
+- The README's GitLab CI job for `okfquery index` was invalid YAML: a script item
+  containing `: ` parsed as a mapping, so GitLab rejected the file and every
+  pipeline failed. The script is now one block scalar, and the job pushes with
+  its own `CI_JOB_TOKEN` (GitLab 17.2+, one project setting) instead of a stored
+  personal token. Linted by GitLab and run on a real project: it regenerated a
+  deleted `index.md` and pushed it back, and `[skip ci]` stopped a second
+  pipeline.
+- `okfquery index` percent-encoded every character `urllib.parse.quote` would,
+  so a web-source concept's `concepts/@en.wikipedia.org/...` link came out as
+  `concepts/%40en.wikipedia.org/...`, a path an agent reading the index as text
+  cannot open. Only characters that break or redirect a link (space, `#`, `?`,
+  `%`, brackets, parentheses, quotes, controls) are encoded now.
+
 ## [kbforge-okfquery-v0.2.0] - 2026-09-19
 
 ### Added
@@ -631,6 +648,7 @@ production protocol.
 [Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.0...HEAD
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
+[kbforge-okfquery-v0.2.1]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.1
 [kbforge-okfquery-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.0
 [kbforge-mcp-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-mcp-v0.2.0
 [kbforge-sql-v0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.0
