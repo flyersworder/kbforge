@@ -23,7 +23,7 @@ def _concept(bundle: Path, slug: str, **front: str) -> None:
 @pytest.fixture
 def bundle(tmp_path: Path) -> Path:
     _concept(tmp_path, "ledger", type="application", title="Ledger",
-             description="Book of\n  record.", owner="finance")  # fmt: skip
+             description='"Book of\\n  record."', owner="finance")  # fmt: skip
     _concept(tmp_path, "fraud", type="application", title="Fraud Check",
              description="Scores payments.", owner="risk")  # fmt: skip
     _concept(tmp_path, "refunds", type="runbook", title="Refund a payment",
