@@ -166,7 +166,10 @@ produce hundreds of concepts in one review request. `--chunking chunking.yaml`
 time and waits for each request to be merged or closed before the next. To
 redo a chunk after fixing the taxonomy or exemplars, close its request and run
 `kbforge redo` with the same `--connector`, `--set`, `--publisher`,
-`--mirror` and `--state`. See `docs/architecture.md` §7.2.
+`--mirror` and `--state`, before the next `kbforge run`: closing alone
+discards the chunk, and a run after closing moves on to the next one. Keep a
+connector instance either always chunked or never; redo after an unchunked run
+would roll back a stale record. See `docs/architecture.md` §7.2.
 
 ## Design stance
 

@@ -689,10 +689,20 @@ class PublisherSpec:
     def kbforge_publisher_info(self) -> ConnectorInfo: ...
 
     @hookspec
+    def kbforge_validate_publish_config(self, config: dict) -> list[str]:
+        """Problems with the publisher config ([] = ok). No network I/O."""
+
+    @hookspec
     def kbforge_publish(self, change: ProposedChange, config: dict) -> str:
         """Open a review request (MR/PR). Returns its URL.
         MUST NOT merge. Must be idempotent per (branch_hint, content-hash):
         re-running a failed pipeline updates the same MR, never opens twins."""
+
+    @hookspec
+    def kbforge_open_request(self, branch_hint: str, config: dict) -> str | None:
+        """Optional, read-only: the id of the review request open on
+        branch_hint's branch, or None. Only --chunking and redo call it (§7.2);
+        a publisher that does not override it cannot be used with either."""
 ```
 
 Three publishers ship in core: `dry-run` (default; writes to a directory),
@@ -1313,10 +1323,16 @@ will be once the chunk merges: a link to a backlog concept is dropped under
 published referrer. The cursor is held until the final chunk. While a
 non-final chunk's request is open, `run` returns `Waiting` before fetching,
 using the publisher's optional read-only `kbforge_open_request` hook; a
-publisher without it is refused under `--chunking`.
-`<state>/chunk-<connector>-<digest>.json` records the last chunk, and
-`kbforge redo` restores the mirror files and cursor it recorded, so a
-closed request can be re-proposed. Rationale:
+publisher without it is refused under `--chunking`. A final chunk's request
+stays open to small follow-ups, but a change that would leave a backlog also
+returns `Waiting` (after the diff, before synthesis) while any recorded
+request is open. `<state>/chunk-<connector>-<digest>.json` records the last
+chunk, merged with every earlier run published into the same still-open
+request, and `kbforge redo` restores the mirror files and cursor it recorded,
+so a closed request can be re-proposed. Redo must run before the next `run`:
+a run after closing proceeds to the next chunk, and closing alone discards.
+Do not mix chunked and unchunked runs on one connector instance and then redo:
+an unchunked run writes no record, so the one left behind is stale. Rationale:
 [`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
 
 ---
@@ -1398,9 +1414,11 @@ themselves.
 
 **Done.** Core is on PyPI (0.5.0), with the fixed pipeline, both credential-free
 reference connectors, three publishers, the stub and LLM synthesizers, and the
-§4.4 gate. Hookspecs are frozen in practice — `ConnectorSpec` and `PublisherSpec`
-have not changed shape since 0.1.0 — and `examples/github-issues-connector/` is a
-complete worked credentialed connector proving the plugin seam end to end.
+§4.4 gate. Hookspecs are close to frozen: `ConnectorSpec` has not changed shape
+since 0.1.0, and `PublisherSpec` has grown twice, `kbforge_validate_publish_config`
+in 0.3.0 and the optional `kbforge_open_request` for chunked review (§7.2).
+`examples/github-issues-connector/` is a complete worked credentialed connector
+proving the plugin seam end to end.
 
 **Next, in order:**
 

@@ -247,7 +247,7 @@ as updates, which is a legitimate "regenerate".
   modification.
 - **One bundle path, one owner:** `_scope_failures` runs over the admitted set
   plus referrers, as today. A collision between two backlog documents surfaces
-  in the chunk that admits the first of them.
+  in the chunk that admits the second of them.
 - **Explicit tombstones:** redo restores a tombstoned document's slot. It never
   infers a deletion.
 
