@@ -4,7 +4,7 @@ no-op and never-auto-merge rules are trust guarantees enforced here."""
 from __future__ import annotations
 
 import json
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
@@ -252,6 +252,31 @@ def _scope_failures(
     return failures
 
 
+def _open_request_hook(
+    publisher: PublisherProtocol, needed_by: str
+) -> Callable[[str, dict], str | None]:
+    """The publisher's optional `kbforge_open_request`, or a `ConfigError` naming
+    who needs it (`--chunking`'s wait, or `redo`'s check) and why."""
+    open_request = getattr(publisher, "kbforge_open_request", None)
+    if open_request is None:
+        raise ConfigError(f"{publisher.kbforge_publisher_info().name}: {needed_by}")
+    return open_request
+
+
+def _open_chunk_request(
+    open_request: Callable[[str, dict], str | None],
+    record: ChunkRecord,
+    publish_config: dict,
+) -> tuple[str, str] | None:
+    """`(request, branch_hint)` of the first open request on a recorded branch,
+    or `None` if every recorded branch is merged or closed."""
+    for hint in record.branch_hints:
+        request = open_request(hint, publish_config)
+        if request is not None:
+            return request, hint
+    return None
+
+
 def run(
     connector: ConnectorProtocol,
     publisher: PublisherProtocol,
@@ -270,20 +295,18 @@ def run(
         raise ConfigError(f"{info.name}: {'; '.join(problems)}")
 
     # Before the fetch, so a waiting run costs one read-only forge call (§6).
-    open_request = getattr(publisher, "kbforge_open_request", None)
     if chunking is not None:
-        if open_request is None:
-            raise ConfigError(
-                f"{publisher.kbforge_publisher_info().name}: --chunking needs a "
-                "publisher that implements kbforge_open_request, to wait between "
-                "chunks; this one does not"
-            )
+        open_request = _open_request_hook(
+            publisher,
+            "--chunking needs a publisher that implements kbforge_open_request, "
+            "to wait between chunks; this one does not",
+        )
         record = read_record(_chunk_slot(Path(state_dir), info.name, config))
         if record is not None and record.pending:
-            for hint in record.branch_hints:
-                request = open_request(hint, publish_config)
-                if request is not None:
-                    return Waiting(request=request, branch_hint=hint)
+            opened = _open_chunk_request(open_request, record, publish_config)
+            if opened is not None:
+                request, hint = opened
+                return Waiting(request=request, branch_hint=hint)
 
     synthesizer = synthesizer or StubSynthesizer()
 
@@ -702,12 +725,11 @@ def redo(
     problems = connector.kbforge_validate_config(config)
     if problems:
         raise ConfigError(f"{info.name}: {'; '.join(problems)}")
-    open_request = getattr(publisher, "kbforge_open_request", None)
-    if open_request is None:
-        raise ConfigError(
-            f"{publisher.kbforge_publisher_info().name}: redo needs a publisher "
-            "that implements kbforge_open_request; this one does not"
-        )
+    open_request = _open_request_hook(
+        publisher,
+        "redo needs a publisher that implements kbforge_open_request; "
+        "this one does not",
+    )
     state_path = Path(state_dir)
     slot = _chunk_slot(state_path, info.name, config)
     record = read_record(slot)
@@ -716,13 +738,13 @@ def redo(
             f"{info.name}: no chunk to redo (no chunk record in {state_path}; "
             "only a run with --chunking writes one)"
         )
-    for hint in record.branch_hints:
-        request = open_request(hint, publish_config)
-        if request is not None:
-            raise RedoRefused(
-                f"review request {request} on {hint} is still open; close it "
-                "first, or the redone chunk would be appended to it"
-            )
+    opened = _open_chunk_request(open_request, record, publish_config)
+    if opened is not None:
+        request, hint = opened
+        raise RedoRefused(
+            f"review request {request} on {hint} is still open; close it "
+            "first, or the redone chunk would be appended to it"
+        )
     restore(record, Path(mirror), _cursor_slot(state_path, info.name, config))
     slot.unlink()
     return Redone(admitted=record.admitted)
