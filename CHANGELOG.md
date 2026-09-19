@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-09-19
+
 ### Added
 
 - Chunked review: `kbforge run --chunking <file>` splits a change larger than
@@ -17,6 +19,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   read-only `kbforge_open_request` hook (implemented by `dry-run`, `github`,
   `gitlab`); third-party publishers without it keep working, but cannot be used
   with `--chunking`.
+
+### Fixed
+
+- A concept published before the target of one of its relations existed lost
+  that link under the link-resolvability law, and nothing rebuilt it when the
+  target arrived, so the link stayed missing until the concept's own source
+  changed (#32). Every run now rebuilds such referrers when their target is
+  added, as it already did for referrers of a deleted concept. Unchunked runs
+  may therefore propose a few more rebuilt concepts than before, each with a
+  review note saying why.
 
 ## [0.10.0] - 2026-09-18
 
@@ -602,7 +614,8 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
 [kbforge-mcp-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-mcp-v0.2.0
 [kbforge-sql-v0.1.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.0

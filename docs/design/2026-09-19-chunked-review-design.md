@@ -118,8 +118,9 @@ merges*. Nothing about an unadmitted document may reach the bundle.
   documents in this run's systems whose `relations` name it, and that are not
   admitted, are re-synthesized so the link dropped in an earlier chunk comes
   back. They do not count toward the cap, and each gets a note in the review
-  body: `re-synthesized to restore a link to a concept added in this chunk; its
-  own source is unchanged`. A deferred grounding-drift document that is rebuilt
+  body: `re-synthesized to restore a link to a concept added in this run; its
+  own source is unchanged`. Since #32 this also runs without `--chunking`, for
+  a target the source simply created later. A deferred grounding-drift document that is rebuilt
   as a deletion or arrival referrer is promoted out of the deferred set in the
   same run, so it carries its drift note and does not leave the chunk pending.
 
@@ -284,11 +285,5 @@ re-proposes it.
   by link topology would reduce this; it is not needed to be correct.
 - **Concurrency.** Two runs over one mirror can interleave admission and
   commit. That is #29's run lock, and chunking neither fixes nor worsens it.
-- **Arrival referrers outside chunking.** A concept whose relation names a
-  document that does not exist yet loses that link under law 2, and nothing
-  re-synthesizes it when the document later arrives. That gap predates this
-  note and applies to unchunked incremental runs too. Arrival referrers close it
-  only under `--chunking`, which keeps unchunked runs byte-for-byte unchanged;
-  closing it everywhere is a separate change.
 - **Per-system caps** and **a default `group_by`**: one global cap, no default
   key, until a deployment needs otherwise.

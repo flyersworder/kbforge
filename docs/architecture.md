@@ -541,6 +541,9 @@ The four laws are exactly "emit what those affordances read":
    file (or is dropped, never dangling); meaning stays in the prose — OKF keeps
    links untyped, and we do not invent an edge vocabulary. *Without it:*
    `related_concepts` returns a broken graph, killing multi-hop reasoning.
+   A dropped link is not lost for good: the pipeline rebuilds every published
+   concept linking to a document the run deletes (so the dead link goes) or
+   adds (so a link dropped while its target did not exist comes back).
 3. **Anchor presence.** Every concept carries ≥1 `sources` entry in frontmatter
    (OKF §5.1), tracing to a canonical doc → a SoR. *Without it:* provenance and
    anchor-based `related_concepts`; the §4.3 grounding chain is only *useful* if
