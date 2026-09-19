@@ -1,0 +1,229 @@
+"""Chunked review in the pipeline (design/2026-09-19-chunked-review-design.md).
+Helpers are local rather than imported from test_pipeline: tests/ is not a
+package, so cross-test imports depend on pytest's import mode."""
+
+from datetime import UTC, datetime
+
+from kbforge.canonical import content_hash
+from kbforge.chunking import ChunkingConfig, read_record
+from kbforge.grounding import GroundingConfig
+from kbforge.mirror import load_all
+from kbforge.models import (
+    CanonicalDocument,
+    ConnectorInfo,
+    Cursor,
+    FetchResult,
+    ProposedChange,
+    ResourceAnchor,
+)
+from kbforge.pipeline import Published, _chunk_slot, _cursor_slot, run
+from kbforge.synthesize import assemble, concept_path
+
+
+def _doc(
+    native_id: str,
+    *,
+    system: str = "sys",
+    text: str | None = None,
+    relations: list[str] | None = None,
+    deleted: bool = False,
+) -> CanonicalDocument:
+    doc = CanonicalDocument(
+        anchor=ResourceAnchor(
+            system=system,
+            native_id=native_id,
+            url=None,
+            retrieved_at=datetime(2024, 1, 1, tzinfo=UTC),
+            content_hash="",
+        ),
+        doc_id=f"{system}:{native_id}",
+        title=native_id,
+        text=text or native_id,
+        relations=relations or [],
+        deleted=deleted,
+    )
+    doc.anchor.content_hash = content_hash(doc)
+    return doc
+
+
+class _Connector:
+    """Fixed docs; records the cursor each fetch was handed, and returns a
+    cursor that counts fetches so a held cursor is observable."""
+
+    def __init__(self, docs, name: str = "fake"):
+        self.docs = docs
+        self.name = name
+        self.cursors: list[Cursor | None] = []
+
+    def kbforge_connector_info(self):
+        return ConnectorInfo(name=self.name, version="0.1.0", source_system="sys")
+
+    def kbforge_validate_config(self, config):
+        return []
+
+    def kbforge_fetch(self, config, cursor):
+        self.cursors.append(cursor)
+        n = 0 if cursor is None else int(cursor.payload.get("n", 0))
+        return FetchResult(
+            records=[], cursor=Cursor(connector=self.name, payload={"n": n + 1})
+        )
+
+    def kbforge_normalize(self, records):
+        return self.docs
+
+
+class _Publisher:
+    """Records every change; `open` is what kbforge_open_request reports."""
+
+    def __init__(self, open_request: str | None = None):
+        self.open = open_request
+        self.changes: list[ProposedChange] = []
+
+    def kbforge_publisher_info(self):
+        return ConnectorInfo(name="chunk-test", version="0.1.0", source_system="test")
+
+    def kbforge_publish(self, change, config):
+        self.changes.append(change)
+        return f"recorded://{len(self.changes)}"
+
+    def kbforge_open_request(self, branch_hint, config):
+        return self.open
+
+
+class _GroundingSynth:
+    grounds = True
+
+    def synthesize(
+        self, changed_docs, changeset, existing_paths=frozenset(), grounding=None
+    ):
+        items = [(d, d.title, d.title, d.text) for d in changed_docs]
+        return assemble(items, changeset, existing_paths, grounding=grounding)
+
+
+def _run(tmp_path, docs, *, cap=None, publisher=None, connector=None, **kw):
+    publisher = publisher or _Publisher()
+    connector = connector or _Connector(docs)
+    connector.docs = docs
+    result = run(
+        connector,
+        publisher,
+        config={},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={},
+        chunking=None if cap is None else ChunkingConfig(max_concepts=cap),
+        **kw,
+    )
+    return result, publisher, connector
+
+
+def _record(tmp_path, name="fake"):
+    return read_record(_chunk_slot(tmp_path / "state", name, {}))
+
+
+def test_an_oversized_run_publishes_and_commits_only_the_first_chunk(tmp_path):
+    result, pub, _ = _run(tmp_path, [_doc("a"), _doc("b"), _doc("c")], cap=2)
+    assert isinstance(result, Published)
+    assert set(pub.changes[0].files) == {concept_path("sys:a"), concept_path("sys:b")}
+    assert pub.changes[0].summary.claims_added == sorted(
+        [concept_path("sys:a"), concept_path("sys:b")]
+    )
+    assert [d.doc_id for d in load_all(tmp_path / "mirror")] == ["sys:a", "sys:b"]
+    record = _record(tmp_path)
+    assert record is not None and record.pending is True
+    assert any("carries 2 of 3" in n for n in pub.changes[0].summary.grounding_notes)
+
+
+def test_the_cursor_is_held_until_the_final_chunk(tmp_path):
+    docs = [_doc("a"), _doc("b"), _doc("c")]
+    connector = _Connector(docs)
+    _run(tmp_path, docs, cap=2, connector=connector)
+    assert not _cursor_slot(tmp_path / "state", "fake", {}).exists()
+
+    _, pub, _ = _run(tmp_path, docs, cap=2, connector=connector)
+    assert connector.cursors == [None, None], (
+        "the second chunk must re-fetch from the held cursor"
+    )
+    assert set(pub.changes[0].files) == {concept_path("sys:c")}, (
+        "admitted docs were re-proposed"
+    )
+    assert _cursor_slot(tmp_path / "state", "fake", {}).exists()
+    record = _record(tmp_path)
+    assert record is not None and record.pending is False
+
+
+def test_a_link_to_a_backlog_concept_is_dropped_then_restored_on_arrival(tmp_path):
+    docs = [_doc("a", relations=["sys:b"]), _doc("b")]
+    _, pub1, _ = _run(tmp_path, docs, cap=1)
+    assert pub1.changes[0].concepts[concept_path("sys:a")].links == [], (
+        "a link to an unpublished backlog concept must not ship"
+    )
+
+    _, pub2, _ = _run(tmp_path, docs, cap=1)
+    change = pub2.changes[0]
+    assert concept_path("sys:a") in change.files, (
+        "the referrer was not rebuilt on arrival"
+    )
+    assert change.concepts[concept_path("sys:a")].links == [concept_path("sys:b")]
+    assert any(
+        n.startswith(concept_path("sys:a")) and "restore a link" in n
+        for n in change.summary.grounding_notes
+    )
+
+
+def test_a_backlog_referrer_of_a_deleted_concept_is_rebuilt_from_its_mirror_copy(
+    tmp_path,
+):
+    _run(tmp_path, [_doc("x"), _doc("r", relations=["sys:x"]), _doc("a")])
+    docs = [
+        _doc("x", deleted=True),
+        _doc("r", text="r2", relations=["sys:x"]),  # modified, but backlog
+        _doc("a", text="a2"),  # modified, admitted first (a < r)
+    ]
+    _, pub, _ = _run(tmp_path, docs, cap=1)
+    change = pub.changes[0]
+    assert change.files_removed == [concept_path("sys:x")]
+    path_r = concept_path("sys:r")
+    assert path_r in change.files, "a dangling link to the deleted concept would ship"
+    assert change.concepts[path_r].links == []
+    assert "r2" not in change.files[path_r], (
+        "the backlog modification leaked into this chunk"
+    )
+
+
+def test_drift_counts_toward_the_cap_and_waits_its_turn(tmp_path):
+    grounding = GroundingConfig(grounding={"sys:a": ["other:t"]})
+    synth = _GroundingSynth()
+    a = _doc("a")
+    _run(
+        tmp_path,
+        [a, _doc("t", system="other")],
+        synthesizer=synth,
+        grounding_config=grounding,
+    )
+    _run(
+        tmp_path,
+        [_doc("t", system="other", text="t2")],
+        connector=_Connector([], name="other"),
+        synthesizer=synth,
+        grounding_config=grounding,
+    )
+
+    b = _doc("b")
+    _, pub1, _ = _run(
+        tmp_path, [a, b], cap=1, synthesizer=synth, grounding_config=grounding
+    )
+    assert set(pub1.changes[0].files) == {concept_path("sys:b")}
+
+    _, pub2, _ = _run(
+        tmp_path, [a, b], cap=1, synthesizer=synth, grounding_config=grounding
+    )
+    assert set(pub2.changes[0].files) == {concept_path("sys:a")}
+    assert any(
+        "grounding changed" in n for n in pub2.changes[0].summary.grounding_notes
+    )
+
+
+def test_without_chunking_no_record_is_written(tmp_path):
+    _run(tmp_path, [_doc("a"), _doc("b")])
+    assert _record(tmp_path) is None

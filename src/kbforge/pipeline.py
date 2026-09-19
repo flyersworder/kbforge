@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Protocol, cast
 
 from kbforge.canonical import assert_fetch_contract, assert_stability
+from kbforge.chunking import ChunkingConfig, ChunkRecord, admit, snapshot, write_record
 from kbforge.grounding import (
     GroundingConfig,
     declared_ids,
@@ -101,6 +102,11 @@ def _instance_key(config: dict) -> str:
 
 def _cursor_slot(state_dir: Path, connector: str, config: dict) -> Path:
     return state_dir / f"cursor-{connector}-{_instance_key(config)}.json"
+
+
+def _chunk_slot(state_dir: Path, connector: str, config: dict) -> Path:
+    """Keyed exactly like the cursor slot, for the same sibling-instance reason."""
+    return state_dir / f"chunk-{connector}-{_instance_key(config)}.json"
 
 
 def _load_cursor(state_dir: Path, connector: str, config: dict) -> Cursor | None:
@@ -230,6 +236,7 @@ def run(
     publish_config: dict,
     synthesizer: Synthesizer | None = None,
     grounding_config: GroundingConfig | None = None,
+    chunking: ChunkingConfig | None = None,
 ) -> NoOp | Aborted | Published:
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
@@ -277,6 +284,21 @@ def run(
     # grounding drift) is not tombstone-specific — there is no cheaper subset
     # of the mirror that is still correct.
     mirror_docs = load_all(mirror_path)
+    # Chunked review (design/2026-09-19): an oversized change publishes one
+    # chunk now and leaves the rest as backlog, which stays visible to `diff`
+    # because only admitted documents are committed. Everything below sees the
+    # world as it will be once this chunk merges, so `admitted_docs` replaces
+    # `docs` wherever a document could reach the bundle or the mirror. Without
+    # --chunking the backlog is empty and `admitted_docs` is `docs`.
+    changed = set(changeset.added) | set(changeset.modified)
+    backlog: set[str] = set()
+    if chunking is not None:
+        chunk, _ = admit(
+            [d for d in docs if d.doc_id in changed], chunking, chunking.max_concepts
+        )
+        backlog = changed - {d.doc_id for d in chunk}
+        changed -= backlog
+    admitted_docs = [d for d in docs if d.doc_id not in backlog]
     # Recency fallback for grounding rules; loaded once, only when the drift
     # scan runs and rules exist. Gated on `scan`, not `grounding_cfg.rules`
     # alone: `scan` already requires `grounds`, and a synthesizer that never
@@ -288,12 +310,12 @@ def run(
     # run and dated on the next identical-fetch run -- an unchanged world would
     # stop being a no-op.
     first_seen = (
-        with_first_seen(load_first_seen(mirror_path), docs)
+        with_first_seen(load_first_seen(mirror_path), admitted_docs)
         if scan and grounding_cfg.rules
         else {}
     )
     by_id = {d.doc_id: d for d in mirror_docs}
-    by_id.update({d.doc_id: d for d in docs if not d.deleted})
+    by_id.update({d.doc_id: d for d in admitted_docs if not d.deleted})
     # A doc this run tombstones is never in the update above (it is filtered
     # by `not d.deleted`), so without this its *stale, pre-run* mirror copy
     # -- still `deleted=False` -- would linger in `by_id` under its own
@@ -301,12 +323,11 @@ def run(
     # `rule_matches`) checks the copy IN `by_id`, so that guard would never
     # fire: a rule (or an explicit declaration) could cite a document the
     # same run is deleting, and the sidecar would record it as grounding.
-    for doc in docs:
+    for doc in admitted_docs:
         if doc.deleted:
             by_id.pop(doc.doc_id, None)
     hashes = {k: v.anchor.content_hash for k, v in by_id.items()}
 
-    changed = set(changeset.added) | set(changeset.modified)
     removed_ids = set(changeset.removed)
     changed_docs = [d for d in docs if d.doc_id in changed]
 
@@ -338,9 +359,12 @@ def run(
     systems = {d.anchor.system for d in docs} or set(prior.systems if prior else ())
 
     drift: list[str] = []
+    deferred_drift: set[str] = set()
     if scan:
+        # `changed | backlog`: a backlog document is rebuilt whole in its own
+        # chunk, so rebuilding its stale mirror copy for drift now is waste.
         candidates = _drift_candidates(
-            mirror_docs, by_id, systems, changed, removed_ids
+            mirror_docs, by_id, systems, changed | backlog, removed_ids
         )
         drift = drifted(
             mirror_path,
@@ -351,7 +375,16 @@ def run(
         # Hoisted: as a comprehension condition this was rebuilt once per
         # candidate, and `candidates` is O(mirror).
         drift_ids = set(drift)
-        changed_docs += [d for d in candidates if d.doc_id in drift_ids]
+        drifted_docs = [d for d in candidates if d.doc_id in drift_ids]
+        if chunking is not None:
+            # Drift counts toward the cap: each is a concept the reviewer
+            # reads. A deferred one writes no sidecar, so the next run finds
+            # the same drift again.
+            room = max(chunking.max_concepts - len(changed), 0)
+            drifted_docs, _ = admit(drifted_docs, chunking, room)
+            deferred_drift = drift_ids - {d.doc_id for d in drifted_docs}
+            drift = [x for x in drift if x not in deferred_drift]
+        changed_docs += drifted_docs
 
     if changeset.is_noop and not drift:
         return NoOp()
@@ -368,6 +401,8 @@ def run(
     # because `existing` IS scoped, law 2 then strips every one of ITS links as
     # dangling and republishes it — on the wrong branch, since `branch_hint`
     # comes from the first item and a deletion-only run has no other.
+    # Under chunking, `changed` is the admitted set, so a backlog document that
+    # links to a removed concept is rebuilt here from its mirror copy (§4.1).
     referrers: list[CanonicalDocument] = []
     if removed_ids:
         referrers = [
@@ -379,6 +414,25 @@ def run(
             and removed_ids.intersection(d.relations)
         ]
         changed_docs += referrers
+
+    # Arrival referrers (§4.1), chunked runs only: a published concept whose
+    # relation names a document this chunk adds lost that link under law 2
+    # when it was built, because the target was still backlog. Rebuilt so the
+    # link comes back. Scoped and filtered exactly like `referrers`. Unchunked
+    # runs keep today's behaviour (spec §10).
+    arrivals: list[CanonicalDocument] = []
+    if chunking is not None:
+        arrived = set(changeset.added) - backlog
+        if arrived:
+            arrivals = [
+                d
+                for d in mirror_docs
+                if d.anchor.system in systems
+                and d.doc_id not in changed
+                and d.doc_id not in removed_ids
+                and arrived.intersection(d.relations)
+            ]
+            changed_docs += arrivals
 
     # The drift scan and `referrers` can both select the same document — drift
     # knows nothing about `referrers`' filter and vice versa. Deduped once,
@@ -412,7 +466,7 @@ def run(
     existing = (
         frozenset(
             {concept_path(d.doc_id) for d in mirror_docs if d.anchor.system in systems}
-            | {concept_path(d.doc_id) for d in docs if not d.deleted}
+            | {concept_path(d.doc_id) for d in admitted_docs if not d.deleted}
         )
         - tombstoned
     )
@@ -430,6 +484,15 @@ def run(
                 grounding_map[doc.doc_id] = docs_for
             grounding_notes += notes_for
 
+    # Summary claims come from the changeset, so a chunk must not claim its
+    # backlog. Identical to `changeset` when nothing is backlog.
+    chunk_changeset = changeset.model_copy(
+        update={
+            "added": [x for x in changeset.added if x not in backlog],
+            "modified": [x for x in changeset.modified if x not in backlog],
+        }
+    )
+
     if grounds:
         # `Synthesizer` deliberately keeps its 0.7.0 shape, so the type checker
         # cannot narrow `synthesizer` to something accepting `grounding=` from
@@ -439,10 +502,10 @@ def run(
         # really does implement `GroundingSynthesizer` (every shipped
         # implementation sets `grounds = True` exactly when it does).
         proposal = cast(GroundingSynthesizer, synthesizer).synthesize(
-            changed_docs, changeset, existing, grounding=grounding_map
+            changed_docs, chunk_changeset, existing, grounding=grounding_map
         )
     else:
-        proposal = synthesizer.synthesize(changed_docs, changeset, existing)
+        proposal = synthesizer.synthesize(changed_docs, chunk_changeset, existing)
     proposal.summary.grounding_notes.extend(grounding_notes)
 
     # Assigned here, never taken from the synthesizer: deletion is structure,
@@ -473,13 +536,44 @@ def run(
                 "it was last published; its own source is unchanged"
             )
 
+    for doc in arrivals:
+        path = concept_path(doc.doc_id)
+        if path in proposal.files:
+            proposal.summary.grounding_notes.append(
+                f"{path}: re-synthesized to restore a link to a concept added in "
+                "this chunk; its own source is unchanged"
+            )
+
+    pending = bool(backlog or deferred_drift)
+    if pending:
+        carried = len(changed) + len(drift)
+        proposal.summary.grounding_notes.append(
+            f"chunked review: this request carries {carried} of "
+            f"{carried + len(backlog) + len(deferred_drift)} changed concepts; "
+            "the rest follow once it is merged or closed"
+        )
+
     failures = run_validators(proposal, existing)
     if failures:
         return Aborted(failures=failures)
 
     url = publisher.kbforge_publish(proposal, publish_config)
-    commit(mirror_path, docs)  # advance mirror ONLY after success
-    record_first_seen(mirror_path, docs)
+    cursor_slot = _cursor_slot(state_path, info.name, config)
+    touched: set[str] = set()
+    prior_mirror: dict[str, str | None] = {}
+    prior_cursor: str | None = None
+    if chunking is not None:
+        # Captured before the commit: everything redo must put back (§5).
+        touched = (
+            changed
+            | removed_ids
+            | set(drift)
+            | {d.doc_id for d in referrers + arrivals}
+        )
+        prior_mirror = snapshot(mirror_path, touched)
+        prior_cursor = cursor_slot.read_text("utf-8") if cursor_slot.exists() else None
+    commit(mirror_path, admitted_docs)  # advance mirror ONLY after success
+    record_first_seen(mirror_path, admitted_docs)
     for doc in changed_docs:
         if concept_path(doc.doc_id) not in proposal.files:
             # The synthesizer dropped this document, exactly as the two note
@@ -516,5 +610,20 @@ def run(
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
         delete_first_seen(mirror_path, doc_id)
-    _save_cursor(state_path, result.cursor, systems, config)
+    # Held while a backlog remains: the next chunk re-fetches from the same
+    # cursor, which §4.2's at-least-once replay makes harmless (§4.2 of the
+    # design note).
+    if not pending:
+        _save_cursor(state_path, result.cursor, systems, config)
+    if chunking is not None:
+        write_record(
+            _chunk_slot(state_path, info.name, config),
+            ChunkRecord(
+                branch_hints=[proposal.branch_hint],
+                pending=pending,
+                admitted=sorted(touched),
+                mirror=prior_mirror,
+                cursor=prior_cursor,
+            ),
+        )
     return Published(url=url)
