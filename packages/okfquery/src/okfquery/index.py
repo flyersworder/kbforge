@@ -60,7 +60,7 @@ def _one_line(text: str | None) -> str:
     return " ".join((text or "").split())
 
 
-def _entry(path: str, title: str | None, description: str | None) -> str:
+def entry(path: str, title: str | None, description: str | None) -> str:
     line = f"* [{_link_text(_one_line(title) or path)}]({_target(path)})"
     summary = _one_line(description)
     return f"{line} - {summary}" if summary else line
@@ -72,21 +72,30 @@ def _label(value: object) -> str:
     return value if isinstance(value, str) else json.dumps(value)
 
 
+def _labels(values: list[object]) -> list[str]:
+    labels = (_one_line(_label(v)) for v in values if v is not None)
+    return sorted({label for label in labels if label})
+
+
+def facet_values(facets: str | dict | None, key: str) -> list[str]:
+    """One facet's values as sorted labels; a scalar is a one-value list and an
+    empty value counts as missing. Shared by `index --group-by` and `related`,
+    so "shares a tag" and "listed under the same heading" cannot disagree."""
+    if isinstance(facets, str):  # DuckDB hands a JSON column back as text
+        facets = json.loads(facets)
+    value = facets.get(key) if isinstance(facets, dict) else None
+    return _labels(value if isinstance(value, list) else [value])
+
+
 def _groups(
     type_: str | None, facets: str | dict | None, group_by: str | None
 ) -> list[str]:
     """The sections a concept is listed under; [] means the trailing one. A list
     facet (tags, say) lists the concept once under each of its values, so
-    concepts sharing a tag share a section. An empty value counts as missing."""
+    concepts sharing a tag share a section."""
     if group_by is None:
-        values: list[object] = [type_]
-    else:
-        if isinstance(facets, str):  # DuckDB hands a JSON column back as text
-            facets = json.loads(facets)
-        value = facets.get(group_by) if isinstance(facets, dict) else None
-        values = value if isinstance(value, list) else [value]
-    labels = (_one_line(_label(v)) for v in values if v is not None)
-    return sorted({label for label in labels if label})
+        return _labels([type_])
+    return facet_values(facets, group_by)
 
 
 def render_bundle(bundle: Path, group_by: str | None = None) -> str:
@@ -117,7 +126,7 @@ def render_bundle(bundle: Path, group_by: str | None = None) -> str:
             groups[key], key=lambda e: ((_one_line(e[1]) or e[0]).casefold(), e[0])
         )
         lines += ["", f"# {heading}", ""]
-        lines += [_entry(*e) for e in entries]
+        lines += [entry(*e) for e in entries]
     return "\n".join(lines) + "\n"
 
 
