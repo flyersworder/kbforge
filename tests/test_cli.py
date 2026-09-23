@@ -460,3 +460,56 @@ def test_a_synthesis_failure_is_one_line_not_a_traceback(tmp_path, capsys, monke
         "Synthesis failed: concepts/x/overview.md: model output hit max_tokens=1500"
         " (nothing was published; the next run retries)"
     ), out
+
+
+def test_run_describe_synthesizer_offline(tmp_path: Path, capsys, monkeypatch):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from kbforge import llm_synthesizer
+
+    real = llm_synthesizer.DescribeSynthesizer._build_agent
+
+    def fake_agent(config, model=None):
+        def fn(messages, info: AgentInfo):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        info.output_tools[0].name,
+                        {"description": "Says what X is.", "tags": []},
+                    )
+                ]
+            )
+
+        return real(config, model=FunctionModel(fn))
+
+    monkeypatch.setattr(
+        llm_synthesizer.DescribeSynthesizer, "_build_agent", staticmethod(fake_agent)
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(["run", "--connector", "local_files", "--set", f"path={src}",
+                 "--synthesizer", "describe",
+                 "--llm-set", "tags_vocabulary={x: [App X]}",
+                 *_plumbing(tmp_path)])  # fmt: skip
+    assert code == 0 and "Published" in capsys.readouterr().out
+    text = (
+        tmp_path / "out" / "sync-local_files" / "concepts/x/overview.md"
+    ).read_text()
+    assert "description: Says what X is." in text and "- x" in text
+
+
+def test_describe_rejects_a_bad_vocabulary(tmp_path: Path, capsys, monkeypatch):
+    pytest.importorskip("pydantic_ai")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    code = main(["run", "--connector", "local_files", "--set", f"path={tmp_path}",
+                 "--synthesizer", "describe", "--llm-set", "tags_vocabulary={x: [' ']}",
+                 *_plumbing(tmp_path)])  # fmt: skip
+    assert code == 2
+    assert (
+        "tags_vocabulary['x'] must be a list of non-blank phrases"
+        in capsys.readouterr().out
+    )

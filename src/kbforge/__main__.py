@@ -109,7 +109,13 @@ def main(argv: list[str] | None = None) -> int:
     r = sub.add_parser("run", help="run the pipeline once")
     _source_args(r)
     r.add_argument("--out", required=True)
-    r.add_argument("--synthesizer", choices=["stub", "llm"], default="stub")
+    r.add_argument(
+        "--synthesizer",
+        choices=["stub", "llm", "describe"],
+        default="stub",
+        help="stub (default), llm, or describe (stub body + model "
+        "description and tags)",
+    )
     r.add_argument(
         "--llm-set",
         action="append",
@@ -223,11 +229,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 0
 
-    if args.synthesizer == "llm":
-        from kbforge.llm_synthesizer import LLMConfig, LLMSynthesizer
+    if args.synthesizer in ("llm", "describe"):
+        from kbforge.llm_synthesizer import (
+            DescribeConfig,
+            DescribeSynthesizer,
+            LLMConfig,
+            LLMSynthesizer,
+        )
 
+        config_cls = DescribeConfig if args.synthesizer == "describe" else LLMConfig
         try:
-            llm_cfg = LLMConfig(**_parse_settings(args.llm_settings))
+            llm_cfg = config_cls(**_parse_settings(args.llm_settings))
         except (ValueError, TypeError) as exc:
             print(str(exc))
             return 2
@@ -236,7 +248,10 @@ def main(argv: list[str] | None = None) -> int:
             print("; ".join(problems))
             return 2
         try:
-            synthesizer = LLMSynthesizer(llm_cfg)
+            if isinstance(llm_cfg, DescribeConfig):
+                synthesizer = DescribeSynthesizer(llm_cfg, mirror=Path(args.mirror))
+            else:
+                synthesizer = LLMSynthesizer(llm_cfg)
         except ImportError as exc:
             print(str(exc))
             return 2
@@ -262,10 +277,10 @@ def main(argv: list[str] | None = None) -> int:
         print(f"grounding config: {'; '.join(problems)}")
         return 2
 
-    if grounding_config.rules and args.synthesizer == "stub":
+    if grounding_config.rules and args.synthesizer in ("stub", "describe"):
         print(
-            "grounding rules are validated but inactive: the stub synthesizer "
-            "does not ground; use --synthesizer llm"
+            "grounding rules are validated but inactive: the "
+            f"{args.synthesizer} synthesizer does not ground; use --synthesizer llm"
         )
 
     try:
