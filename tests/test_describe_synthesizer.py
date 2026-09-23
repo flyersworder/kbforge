@@ -107,13 +107,28 @@ def test_duplicate_model_tags_collapse():
 
 
 @pytest.mark.parametrize(
-    "description, why",
-    [("", "blank"), ("Two\nlines.", "multi-line"), ("x" * 241, "over the cap")],
+    "description, why, expect",
+    [
+        ("", "blank", "empty"),
+        ("Two\nlines.", "multi-line", "ONE sentence on one line"),
+        (
+            "Two\rlines.",
+            "carriage return is a line break too",
+            "ONE sentence on one line",
+        ),
+        ("x" * 241, "over the cap", "241 chars"),
+    ],
 )
-def test_a_bad_description_retries_then_fails(description, why):
+def test_a_bad_description_retries_then_fails(description, why, expect):
     with pytest.raises(SynthesisError) as err:
         _run(_synth([{"description": description, "tags": []}] * 3, []))
-    assert PATH in str(err.value), why
+    assert PATH in str(err.value) and expect in str(err.value), why
+
+
+def test_a_description_at_exactly_the_cap_is_accepted():
+    at_cap = "x" * 240
+    change = _run(_synth([{"description": at_cap, "tags": []}], []))
+    assert _front(change.files[PATH])["description"] == at_cap
 
 
 def test_model_tags_off_means_no_tag_request_and_keyword_tags_still_apply():
@@ -145,12 +160,18 @@ def test_a_cache_hit_makes_no_model_call_and_keeps_the_stored_actor(tmp_path: Pa
 
 
 @pytest.mark.parametrize(
-    "record_hash, record_tags, why",
-    [("h0", ["gan"], "the source changed"), ("h1", ["dropped"], "vocabulary narrowed")],
+    "record_hash, record_tags, record_description, why",
+    [
+        ("h0", ["gan"], "Old.", "the source changed"),
+        ("h1", ["dropped"], "Old.", "vocabulary narrowed"),
+        ("h1", ["gan"], "x" * 241, "the cached description is over the cap"),
+    ],
 )
-def test_a_stale_cache_is_a_miss(tmp_path: Path, record_hash, record_tags, why):
+def test_a_stale_cache_is_a_miss(
+    tmp_path: Path, record_hash, record_tags, record_description, why
+):
     write_described(tmp_path, DescribedRecord(doc_id=DOC_ID, content_hash=record_hash,
-                    actor="kbforge/m", description="Old.", tags=record_tags))  # fmt: skip  # noqa: E501
+                    actor="kbforge/m", description=record_description, tags=record_tags))  # fmt: skip  # noqa: E501
     calls: list[int] = []
     change = _run(_synth([GOOD], calls, mirror=tmp_path))
     assert calls == [1], why

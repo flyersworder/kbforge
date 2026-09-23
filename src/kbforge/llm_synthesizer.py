@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     # kbforge[llm] stays optional. `from __future__ import annotations` (above)
     # means these names are never evaluated outside a type checker.
     from pydantic_ai import Agent
+    from pydantic_ai.messages import RetryPromptPart
     from pydantic_ai.models import Model
 
 
@@ -124,6 +125,21 @@ def _wrap_output(mode: str):
     return SynthesizedConcept  # tool mode (default)
 
 
+def _retry_reason(part: RetryPromptPart) -> str:
+    """The last retry's problem, compact and never carrying `input` — a
+    validation error's `input` echoes the model's own field value back
+    (potentially the whole body it wrote), which `SynthesisError` must not
+    repeat. `content` is either a `ModelRetry` message (a plain `str`, used
+    as-is) or a list of pydantic `ErrorDetails` (reduced to `loc: msg`)."""
+    if isinstance(part.content, str):
+        return part.content
+    return "; ".join(
+        f"{'.'.join(str(x) for x in e.get('loc', ())) or '?'}: "
+        f"{e.get('msg', '(no message)')}"
+        for e in part.content
+    )
+
+
 def _run_agent(
     agent: Agent[Any, Any], config: LLMConfig, doc: CanonicalDocument, prompt: str
 ) -> Any:
@@ -161,9 +177,7 @@ def _run_agent(
                 # The last retry prompt says what was wrong (a tag outside the
                 # vocabulary, a description over the cap); `exc` only says
                 # retries ran out.
-                why = (
-                    f"; last problem: {retries[-1].model_response()}" if retries else ""
-                )
+                why = f"; last problem: {_retry_reason(retries[-1])}" if retries else ""
                 reason = (
                     f"model returned invalid output in {len(attempts)} "
                     f"attempts: {exc}{why}"
@@ -339,6 +353,22 @@ class DescribedConcept(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+def _description_problem(text: str, cap: int) -> str | None:
+    """What is wrong with a description, or None. Shared by `_check` (a fresh
+    model answer) and `_cached` (a stored one) so a description that would
+    fail one fails the other — a cache hit ships a description no run of the
+    model could actually produce, and lowering `description_max_chars` must
+    retire descriptions written under a looser cap rather than keep shipping
+    them unchecked."""
+    if not text:
+        return "`description` is empty; write one sentence."
+    if len(text.splitlines()) > 1:
+        return "`description` must be ONE sentence on one line."
+    if len(text) > cap:
+        return f"`description` is {len(text)} chars; keep it at most {cap}."
+    return None
+
+
 def _describe_instructions(config: DescribeConfig) -> str:
     parts = [_DESCRIBE_INSTRUCTIONS]
     if config.allowed_tags:
@@ -418,15 +448,9 @@ class DescribeSynthesizer:
         from pydantic_ai import ModelRetry
 
         text = out.description.strip()
-        cap = self.config.description_max_chars
-        if not text:
-            raise ModelRetry("`description` is empty; write one sentence.")
-        if "\n" in text:
-            raise ModelRetry("`description` must be ONE sentence on one line.")
-        if len(text) > cap:
-            raise ModelRetry(
-                f"`description` is {len(text)} chars; keep it under {cap}."
-            )
+        problem = _description_problem(text, self.config.description_max_chars)
+        if problem:
+            raise ModelRetry(problem)
         allowed = self.config.allowed_tags
         bad = sorted({t for t in out.tags if t not in allowed})
         if bad:
@@ -442,6 +466,10 @@ class DescribeSynthesizer:
             record is None
             or record.content_hash != doc.anchor.content_hash
             or not set(record.tags) <= self.config.allowed_tags
+            or _description_problem(
+                record.description, self.config.description_max_chars
+            )
+            is not None
         ):
             return None
         return record
