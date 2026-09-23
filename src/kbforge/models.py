@@ -58,6 +58,7 @@ class ConceptFrontmatter(BaseModel):
     facets: dict = Field(default_factory=dict)  # law 1
     sources: list[ResourceAnchor] = Field(default_factory=list)  # law 3
     links: list[str] = Field(default_factory=list)  # law 2
+    tags: list[str] = Field(default_factory=list)  # OKF §4.1; bound by validate
     generated_at: datetime | None = None  # law 4 — OKF `generated.at`
     generated_by: str = ""  # OKF `generated.by`, an §7 actor
 

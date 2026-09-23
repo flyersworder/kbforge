@@ -292,3 +292,57 @@ def test_run_validators_also_runs_artifact_laws():
     # a file present but no concept projection → §4.4 coherence still fires
     failures = run_validators(_proposal("concepts/x/overview.md", GOOD))
     assert any(f.law == "projection-coherence" for f in failures)
+
+
+def _tagged(tags_line: str) -> str:
+    return (
+        "---\ntype: concept\ntitle: X\ndescription: X\n"
+        f"{_GOOD_GENERATED}\n{_GOOD_SOURCES}\n{tags_line}---\n# X\n"
+    )
+
+
+def _with_tags(tags: list[str]) -> ConceptFrontmatter:
+    concept = _concept()
+    concept.tags = tags
+    return concept
+
+
+def test_rendered_tags_not_in_the_projection_are_reported():
+    change = ProposedChange(
+        branch_hint="b",
+        files={"c.md": _tagged("tags: [sic]\n")},
+        concepts={"c.md": _with_tags([])},
+    )
+    messages = [f.message for f in run_validators(change)]
+    assert any(
+        "rendered 'tags' disagree with the projection's" in m for m in messages
+    ), messages
+
+
+@pytest.mark.parametrize(
+    "line, why",
+    [("tags: sic\n", "a string"), ("tags: [sic, '']\n", "a blank tag"),
+     ("tags: [sic, 3]\n", "a number")],
+)  # fmt: skip
+def test_malformed_rendered_tags_are_reported(line, why):
+    change = ProposedChange(
+        branch_hint="b",
+        files={"c.md": _tagged(line)},
+        concepts={"c.md": _with_tags(["sic"])},
+    )
+    messages = [f.message for f in run_validators(change)]
+    assert any(
+        "rendered 'tags' must be a list of non-blank strings" in m for m in messages
+    ), (
+        why,
+        messages,
+    )
+
+
+def test_matching_tags_pass():
+    change = ProposedChange(
+        branch_hint="b",
+        files={"c.md": _tagged("tags: [sic]\n")},
+        concepts={"c.md": _with_tags(["sic"])},
+    )
+    assert run_validators(change) == []

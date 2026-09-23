@@ -4,7 +4,7 @@ import pytest
 import yaml
 
 from kbforge.models import CanonicalDocument, ChangeSet, ResourceAnchor
-from kbforge.synthesize import assemble, concept_path, synthesize
+from kbforge.synthesize import _facets, _source_tags, assemble, concept_path, synthesize
 
 NOW = datetime(2026, 7, 19, tzinfo=UTC)
 
@@ -278,3 +278,41 @@ def test_the_stub_declares_that_it_does_not_ground():
     from kbforge.synthesize import StubSynthesizer
 
     assert StubSynthesizer.grounds is False
+
+
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        ("sic", ["sic"]),
+        (["sic", "sic", "", "  ", 3, "800v"], ["800v", "sic"]),
+        ([" gan "], ["gan"]),
+        (None, []),
+        ({"a": 1}, []),
+    ],
+)
+def test_source_tags_are_normalized(raw, expected):
+    assert _source_tags({"tags": raw}) == expected
+
+
+def test_tags_are_no_longer_a_facet():
+    assert "tags" not in _facets({"tags": ["sic"], "owner": "x"})
+
+
+def test_assemble_ships_source_union_extra_tags_in_both_carriers():
+    doc = _doc("local_files:apps/x.md", structured={"tags": ["sic", "gan"]})
+    change = assemble(
+        [(doc, doc.title, doc.title, doc.text)],
+        ChangeSet(added=[doc.doc_id]),
+        tags={doc.doc_id: ["800v", "sic"]},
+    )
+    path = concept_path(doc.doc_id)
+    assert change.concepts[path].tags == ["800v", "gan", "sic"]
+    assert _frontmatter(change.files[path])["tags"] == ["800v", "gan", "sic"]
+
+
+def test_no_tags_renders_no_tags_key():
+    doc = _doc("local_files:apps/x.md", structured={})
+    change = assemble(
+        [(doc, doc.title, doc.title, doc.text)], ChangeSet(added=[doc.doc_id])
+    )
+    assert "tags" not in _frontmatter(change.files[concept_path(doc.doc_id)])

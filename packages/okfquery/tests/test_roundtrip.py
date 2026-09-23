@@ -118,10 +118,16 @@ def test_replicated_constants_have_not_drifted():
     okfquery cannot import kbforge at runtime (that is the whole boundary), so it
     copies two constants. A copy with no equality check is just a stale value
     waiting to happen -- the same defect the dual-carrier rule exists to prevent.
+
+    `tags` is the one deliberate divergence: kbforge owns and writes the key, but
+    to a reader it is a filterable facet like any other, so okfquery's OKF_OWNED
+    must never gain it (see the comment above okfquery's OKF_OWNED). Everything
+    else must still match exactly.
     """
     from kbforge.synthesize import OKF_OWNED as KB_OWNED
     from kbforge.validate import _RESERVED as KB_RESERVED
     from okfquery import parse
 
     assert parse.RESERVED == KB_RESERVED
-    assert parse.OKF_OWNED == KB_OWNED
+    assert parse.OKF_OWNED == KB_OWNED - {"tags"}
+    assert "tags" not in parse.OKF_OWNED

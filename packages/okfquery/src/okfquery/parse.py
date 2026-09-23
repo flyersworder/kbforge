@@ -23,8 +23,9 @@ RESERVED = frozenset({"index.md", "log.md"})
 """OKF §8 directory listings and change logs. See `is_reserved` for the rule."""
 
 # The keys OKF owns at the head of a concept. Everything else in the frontmatter
-# is a facet. Mirrors kbforge's synthesize.OKF_OWNED, which is what keeps a
-# source field named `type` out of the facet map on the emit side.
+# is a facet. Mirrors kbforge's synthesize.OKF_OWNED except for `tags`: kbforge
+# owns `tags` so only it writes the key, but to a reader `tags` is a filterable
+# list like any facet (`okfquery index --group-by tags`, `okfquery related`).
 OKF_OWNED = frozenset({"type", "title", "description", "generated", "sources", "links"})
 
 _REQUIRED = ("type", "title", "description", "generated", "sources")
