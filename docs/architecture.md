@@ -973,7 +973,7 @@ never the additive `kbforge_extra_validators` hook (§5.3). They are trust guara
 of the standard, so making them opt-in would make them optional — the same posture
 as the no-op and never-auto-merge rules. `synthesize` is a stage backed by a
 `Synthesizer` object injected into `run` — `StubSynthesizer` by default,
-`LLMSynthesizer` optionally; when the LLM is used, it writes prose inside a
+`LLMSynthesizer` or `DescribeSynthesizer` (§7.3) optionally; when the LLM is used, it writes prose inside a
 kbforge-owned frame, and you *check* its output against the laws, you do not trust
 it to emit them (same posture as `assert_stability` for §4.3 law 1). A concept
 that violates any law fails the run; no MR opens for a non-conformant artifact.
@@ -1337,6 +1337,76 @@ a run after closing proceeds to the next chunk, and closing alone discards.
 Do not mix chunked and unchunked runs on one connector instance and then redo:
 an unchunked run writes no record, so the one left behind is stale. Rationale:
 [`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
+
+### 7.3 The describe synthesizer
+
+`kbforge run --synthesizer describe` (`DescribeSynthesizer`) keeps the stub's
+body byte-for-byte and asks a model for exactly one thing: a one-sentence
+`description` (OKF §4.1) — the field `okfquery index` and any snippet/preview
+consumer actually read, and the one thing a verbatim stub concept never had.
+It is a synthesizer, not a `--describe` flag on `stub`: one CLI choice keeps
+one settings namespace (`--llm-set`) per behavior, and `stub` stays the
+offline, LLM-free baseline unconditionally. `LLMSynthesizer` is not a
+substitute — it rewrites the body, so a table or a verbatim report is
+paraphrased or dropped, which is exactly what stub concepts exist to avoid.
+
+`tags` come from a configured vocabulary two ways: deterministic keyword
+matching (`tagging.keyword_tags`, pure, no cache — cheap enough to run on
+every render) and, optionally, the model choosing among the vocabulary's
+keys. Both draw from one vocabulary so a deployment's tags stay filterable
+across sources regardless of which path assigned them. The vocabulary
+constrains **model** tags only: source tags are the source's own data, and
+keyword tags are drawn from the vocabulary by construction, so nothing there
+needs re-checking.
+
+Model output — `description` and the model's tags — is cached in
+`mirror/_described/`, keyed by the document's `content_hash` alone. Two
+things deliberately do *not* invalidate the cache: editing `instructions`,
+and switching `model`. The no-op rule already means "the source did not
+change"; re-describing on every config edit would make a cache that saves no
+model calls on the runs that matter (referrer/arrival/drift re-renders,
+which are the majority of what `describe` costs money on) — the same
+posture `LLMSynthesizer` takes toward its own prompt. A cache hit also
+requires the *stored* description to still pass the current description
+checks (non-blank, one line, `len <= description_max_chars`) — not just a
+matching `content_hash` — so lowering the cap re-describes cached concepts
+on their next render rather than shipping a description no run of the
+current config could produce. `generated.by` follows the same split:
+`actor_for(model)` on a miss, the record's stored `actor` on a hit, so a
+model switch does not relabel descriptions the previous model wrote.
+
+Vocabulary membership and the length/single-line checks are enforced inside
+the synthesizer (an output validator, retried, then `SynthesisError`), never
+promoted to a §4.4 law: a law is unconditional core, and `tags_vocabulary` /
+`description_max_chars` are deployment config — making a law depend on
+config would make it optional, the posture §4.4 exists to rule out.
+`SynthesisError` ends with the model's last retry reason (field path and
+message only, never the model's own input, which could echo an entire
+rejected body back).
+
+The pipeline writes a `_described/` record after a successful publish, and
+only for a concept whose record's `doc_id` matches the document it was built
+for — a synthesizer does not get to write another concept's mirror state. A
+rebuild that produces no record (a referrer or arrival rebuilt by another
+synthesizer) deletes any stale one instead of leaving it behind, and a
+tombstone deletes it outright, for the same reason the grounding sidecar is
+deleted rather than left stale: a record describing a concept that no
+longer ships its text is worse than no record.
+
+`tags` is a kbforge-owned frontmatter key with a projection counterpart, the
+same as `links` and `generated.at` — see "the dual-carrier rule" in
+CLAUDE.md. Shipped tags are the sorted union of source tags, keyword tags,
+and model tags.
+
+**Deferred**, per the original design note:
+
+- Keyword tags for every synthesizer, not just `describe` — worth doing if
+  keyword tagging proves useful on its own; needs a pipeline-level
+  vocabulary rather than an `--llm-set` key.
+- `instructions` for `LLMSynthesizer` (`DescribeConfig.instructions` is
+  shaped so it can move to `LLMConfig` unchanged).
+- Re-describing on an `instructions` or `model` change: a config fingerprint
+  in the sidecar and a drift rule like grounding rule 3.
 
 ---
 

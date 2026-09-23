@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--synthesizer describe` (#40): keeps the stub's body byte-for-byte and has a
+  model write only a one-sentence `description` (OKF §4.1), so `okfquery index`
+  lines say what verbatim sources are. `tags` come from the source, from a
+  `tags_vocabulary` by keyword match, and optionally from the model choosing
+  among the vocabulary's tags; a model tag outside it is retried, then fails the
+  run. Model output is cached in `mirror/_described/` by content hash, so an
+  unchanged source makes no model call, even when its concept is re-rendered.
+
+### Changed
+
+- `tags` is now a kbforge-owned frontmatter key, bound to the projection like
+  `links`. A source's `tags` still ship, normalized (a string becomes a list;
+  blanks and non-strings are dropped), and render after `sources`/`links`.
+
 ## [kbforge-okfquery-v0.3.0] - 2026-09-23
 
 ### Added

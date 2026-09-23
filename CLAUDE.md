@@ -58,7 +58,7 @@ Two mechanisms keep them honest, and both must survive any refactor:
 - `_check_projection_coherence` binds the path *sets* — every non-reserved file has
   a projection and vice versa.
 - `_check_strict_okf` binds the *values* for the keys with a projection counterpart
-  (`type`, `links`, `generated.at`, `sources`).
+  (`type`, `links`, `tags`, `generated.at`, `sources`).
 
 Facets merge into top-level frontmatter, so a source field named like an OKF key
 would shadow it in the file while the projection kept the good value. `_facets`
