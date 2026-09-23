@@ -59,6 +59,15 @@ def _publishers(pm: pluggy.PluginManager) -> dict[str, PublisherProtocol]:
     }
 
 
+SYNTHESIZERS = {
+    "stub": "deterministic, no LLM",
+    "llm": "Pydantic AI (needs kbforge[llm])",
+    "describe": "stub body, model-written description and tags (needs kbforge[llm])",
+}
+"""One table for `--synthesizer` choices and `kbforge list`: two hand-kept
+lists let `describe` reach the first and not the second."""
+
+
 def _parse_settings(pairs: list[str]) -> dict:
     """`KEY=VALUE` pairs into a config dict; VALUE is YAML-typed so `max_commits=5`
     is an int, `ref=HEAD` a str, and `ignore_globs=[a, b]` a list."""
@@ -111,9 +120,9 @@ def main(argv: list[str] | None = None) -> int:
     r.add_argument("--out", required=True)
     r.add_argument(
         "--synthesizer",
-        choices=["stub", "llm", "describe"],
+        choices=list(SYNTHESIZERS),
         default="stub",
-        help="stub (default), llm, or describe (stub body + model "
+        help="stub (default), llm, or describe (stub body + model-written "
         "description and tags)",
     )
     r.add_argument(
@@ -155,8 +164,8 @@ def main(argv: list[str] | None = None) -> int:
             info = connectors[name].kbforge_connector_info()
             print(f"{name}\t{info.source_system}")
         print("synthesizers:")
-        print("  stub\tdeterministic, no LLM")
-        print("  llm\tPydantic AI (needs kbforge[llm])")
+        for name, summary in SYNTHESIZERS.items():
+            print(f"  {name}\t{summary}")
         print("publishers:")
         for name in sorted(publishers):
             info = publishers[name].kbforge_publisher_info()

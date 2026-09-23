@@ -150,10 +150,14 @@ def test_cli_config_error_surfaces_nonzero(tmp_path: Path, capsys):
     assert "path" in capsys.readouterr().out  # the connector's config problem
 
 
-def test_list_shows_synthesizers(capsys):
+def test_list_shows_every_synthesizer_run_accepts(capsys):
+    """`list` and `--synthesizer` drew from two hand-kept lists, and `describe`
+    reached one but not the other. Both now read one table."""
     assert main(["list"]) == 0
     out = capsys.readouterr().out
-    assert "stub" in out and "llm" in out
+    listed = out.split("synthesizers:\n", 1)[1].split("publishers:", 1)[0]
+    names = [line.split("\t", 1)[0].strip() for line in listed.splitlines()]
+    assert names == ["stub", "llm", "describe"], listed
 
 
 def test_run_stub_synthesizer_default(tmp_path: Path, capsys):
