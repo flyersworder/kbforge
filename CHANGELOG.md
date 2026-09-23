@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [kbforge-okfquery-v0.3.0] - 2026-09-23
+
+### Added
+
+- `okfquery related <path>` lists what one concept connects to: its links, the
+  concepts linking to it (backlinks, which no single file shows), and the
+  concepts sharing a value of `--by` facets (default `tags`), ranked by how many
+  values they share and naming them. Derived at query time, as OKF §3.1 leaves
+  tag views to consumers, so nothing is stored in the bundle and nothing goes
+  stale. Lines use `okfquery index`'s format; an empty section prints `(none)`.
+
 ## [0.11.1] - 2026-09-19
 
 ### Fixed
@@ -688,6 +699,7 @@ production protocol.
 [0.11.1]: https://github.com/flyersworder/kbforge/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
+[kbforge-okfquery-v0.3.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.3.0
 [kbforge-okfquery-v0.2.2]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.2
 [kbforge-okfquery-v0.2.1]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.1
 [kbforge-okfquery-v0.2.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.0

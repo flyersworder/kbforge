@@ -1,4 +1,4 @@
-"""argparse over `load()`. Five verbs, no query logic of its own.
+"""argparse over `load()`. Six verbs, no query logic of its own.
 
 There is deliberately no --format parquet and no --output: DuckDB writes parquet
 from inside the SQL (`COPY (...) TO 'out.parquet'`), and a second export path
@@ -23,6 +23,7 @@ from okfquery.index import (
     write_index,
 )
 from okfquery.load import EmptyMirrorError, load
+from okfquery.related import render_related
 from okfquery.schema import SCHEMA_SQL
 
 
@@ -125,6 +126,19 @@ def _index_in(bundle: Path, args: argparse.Namespace) -> int:
     return 0
 
 
+def _related(args: argparse.Namespace) -> int:
+    if _bundle_missing(args.bundle):
+        print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)
+        return 2
+    by = [key.strip() for key in args.by.split(",") if key.strip()]
+    try:
+        print(render_related(Path(args.bundle), args.path, by, args.limit), end="")
+    except ValueError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="okfquery", description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
@@ -165,6 +179,24 @@ def main(argv: list[str] | None = None) -> int:
         "--force", action="store_true", help="replace a hand-written index.md"
     )
 
+    related = sub.add_parser(
+        "related", help="links, backlinks and shared-facet neighbours of a concept"
+    )
+    related.add_argument("path", help="the concept, e.g. concepts/x/overview.md")
+    related.add_argument("--bundle", default=".", help="bundle root (default: .)")
+    related.add_argument(
+        "--by",
+        default="tags",
+        metavar="FACETS",
+        help="comma-separated facets to match on (default: tags)",
+    )
+    related.add_argument(
+        "--limit",
+        type=int,
+        default=10,
+        help="most shared-facet neighbours to list (default: 10)",
+    )
+
     args = parser.parse_args(argv)
 
     if args.command == "schema":
@@ -174,6 +206,8 @@ def main(argv: list[str] | None = None) -> int:
         return _shell(args)
     if args.command == "index":
         return _index(args)
+    if args.command == "related":
+        return _related(args)
 
     if _bundle_missing(args.bundle):
         print(f"no concepts/ directory under {args.bundle}", file=sys.stderr)
