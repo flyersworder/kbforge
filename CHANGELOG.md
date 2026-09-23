@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added (kbforge-okfquery)
+
+- `okfquery related <path>` lists what one concept connects to: its links, the
+  concepts linking to it (backlinks, which no single file shows), and the
+  concepts sharing a value of `--by` facets (default `tags`), ranked by how many
+  values they share and naming them. Derived at query time, as OKF §3.1 leaves
+  tag views to consumers, so nothing is stored in the bundle and nothing goes
+  stale. Lines use `okfquery index`'s format; an empty section prints `(none)`.
+
 ## [0.11.1] - 2026-09-19
 
 ### Fixed

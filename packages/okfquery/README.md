@@ -135,6 +135,29 @@ every request that adds or retitles a concept would fail it, and fixing that on
 the sync branches makes several systems edit one whole-bundle file, the
 collision this job exists to avoid.
 
+## `related`: what one concept connects to
+
+```bash
+okfquery related concepts/gaps/redundant-supply/overview.md --bundle .
+okfquery related concepts/reports/q3/overview.md --by tags,scenario --limit 5
+```
+
+Three sections, each line in `index`'s `* [Title](path) - description` format:
+
+- **Links to**: the concept's `links`. A target not in the bundle is listed by
+  its path.
+- **Linked from**: concepts whose `links` name it. No single file shows these.
+- **Shares**: concepts sharing at least one value of the `--by` facets (default
+  `tags`), most shared values first, then by path, each naming what it shares
+  (`(shares tags: 800v, sic)`). Concepts already listed above are left out, and
+  `--limit` (default 10) caps this section only.
+
+An empty section prints `(none)`, so "nothing" reads differently from "not
+checked". These relations are derived when asked, not stored: OKF §3.1 leaves
+tag views to the consumer, and a derived view cannot go stale. A path with a
+leading `/` (OKF §6.1's bundle-absolute form) or `./` is accepted, in the
+argument and in `links`.
+
 ## Schema
 
 ```

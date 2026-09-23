@@ -38,7 +38,8 @@ def bundle(tmp_path: Path) -> Path:
         tmp_path,
         "deck",
         "type: deck\ntitle: Roadmap deck\ndescription: The plan.\n"
-        "links: [concepts/gap/overview.md]\ntags: [800v]\n",
+        # A bundle-absolute backlink must still count as linking to `gap`.
+        "links: [/concepts/gap/overview.md]\ntags: [800v]\n",
     )
     _concept(
         tmp_path,
@@ -90,6 +91,17 @@ def test_ranked_by_shared_value_count_then_path(bundle):
         " (shares tags: sic; scenario: ev)",
         "* [Redundant supply](concepts/gap/overview.md) - A missing backup rail."
         " (shares tags: sic)",
+    ]
+
+
+def test_more_shared_values_outrank_an_earlier_path(tmp_path):
+    a = _concept(tmp_path, "a", "type: x\ntags: [p, q]\n")
+    _concept(tmp_path, "b-one", "type: x\ntitle: One\ntags: [p]\n")
+    _concept(tmp_path, "z-two", "type: x\ntitle: Two\ntags: [p, q]\n")
+    shares = render_related(tmp_path, a).split("# Shares tags\n\n", 1)[1]
+    assert shares.splitlines() == [
+        "* [Two](concepts/z-two/overview.md) (shares tags: p, q)",
+        "* [One](concepts/b-one/overview.md) (shares tags: p)",
     ]
 
 
