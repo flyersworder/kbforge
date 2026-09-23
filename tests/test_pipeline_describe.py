@@ -158,7 +158,11 @@ def test_publish_writes_the_record_and_an_unchanged_rerun_is_a_free_noop(tmp_pat
     assert isinstance(result, NoOp) and calls == ["call"]
 
 
-def test_a_referrer_rebuild_reuses_the_record(tmp_path):
+def test_an_arrival_rebuild_reuses_the_record(tmp_path):
+    """`ref` links to `later`, which does not exist yet -- law 2 drops the
+    dangling link, so `ref` is republished once `later` arrives, purely to
+    restore the link. Its own source is unchanged, so the describe cache
+    must still hit: only `later` (new, never described) may call the model."""
     calls: list[str] = []
     mirror = tmp_path / "mirror"
     ref = _doc("ref.md", "Ref", relations=["sys:later.md"])
@@ -168,6 +172,27 @@ def test_a_referrer_rebuild_reuses_the_record(tmp_path):
                          synthesizer=_describer(mirror, calls))  # fmt: skip
     assert "concepts/ref/overview.md" in pub.last_change.files  # rebuilt (arrival)
     assert calls == ["call", "call"], "only `later` may call the model"
+
+
+def test_a_tombstone_referrer_rebuild_reuses_the_record(tmp_path):
+    """`keeper` links to `target`. Once `target` is tombstoned, law 2 requires
+    `keeper` to be re-synthesized to drop the now-dangling link -- but
+    `keeper`'s own source is unchanged, so the describe cache must still hit:
+    zero model calls for the rebuild, the record reused as-is."""
+    calls: list[str] = []
+    mirror = tmp_path / "mirror"
+    keeper = _doc("keeper.md", "Keeper", relations=["sys:target.md"])
+    target = _doc("target.md", "Target")
+    _run_result(tmp_path, [keeper, target], synthesizer=_describer(mirror, calls))
+    assert calls == ["call", "call"]
+    _, pub = _run_result(
+        tmp_path,
+        [_doc("target.md", "Target", deleted=True)],
+        synthesizer=_describer(mirror, calls),
+    )
+    # rebuilt (tombstone referrer), link to the removed concept dropped
+    assert "concepts/keeper/overview.md" in pub.last_change.files
+    assert calls == ["call", "call"], "keeper's record is reused; zero new model calls"
 
 
 def test_a_tombstone_deletes_the_record(tmp_path):
@@ -215,7 +240,7 @@ def test_a_failed_publish_writes_no_record(tmp_path):
             raise RuntimeError("publish failed")
 
     mirror = tmp_path / "mirror"
-    with pytest.raises(RuntimeError):
+    with pytest.raises(RuntimeError, match="publish failed"):
         run(_FakeConnector([_doc("a.md", "A")]), Boom(), config={}, mirror=str(mirror),
             state_dir=str(tmp_path / "state"), publish_config={},
             synthesizer=_describer(mirror, []))  # fmt: skip

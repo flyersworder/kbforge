@@ -1361,20 +1361,22 @@ keyword tags are drawn from the vocabulary by construction, so nothing there
 needs re-checking.
 
 Model output — `description` and the model's tags — is cached in
-`mirror/_described/`, keyed by the document's `content_hash` alone. Two
-things deliberately do *not* invalidate the cache: editing `instructions`,
-and switching `model`. The no-op rule already means "the source did not
-change"; re-describing on every config edit would make a cache that saves no
-model calls on the runs that matter (referrer/arrival/drift re-renders,
-which are the majority of what `describe` costs money on) — the same
-posture `LLMSynthesizer` takes toward its own prompt. A cache hit also
-requires the *stored* description to still pass the current description
-checks (non-blank, one line, `len <= description_max_chars`) — not just a
-matching `content_hash` — so lowering the cap re-describes cached concepts
-on their next render rather than shipping a description no run of the
-current config could produce. `generated.by` follows the same split:
-`actor_for(model)` on a miss, the record's stored `actor` on a hit, so a
-model switch does not relabel descriptions the previous model wrote.
+`mirror/_described/`, keyed by the document's `content_hash`, but a matching
+hash is not by itself a hit: the cached model tags must also be a subset of
+the *currently* allowed tags (narrowing `tags_vocabulary` or turning
+`model_tags` off makes a previously-valid record a miss), and the stored
+description must still pass the current description checks (non-blank, one
+line, `len <= description_max_chars`). Both checks re-describe a cached
+concept on its next render rather than ship a description or tag set no run
+of the current config could produce. Two things deliberately do *not*
+invalidate the cache: editing `instructions`, and switching `model`. The
+no-op rule already means "the source did not change"; re-describing on every
+config edit would make a cache that saves no model calls on the runs that
+matter (referrer/arrival/drift re-renders, which are the majority of what
+`describe` costs money on) — the same posture `LLMSynthesizer` takes toward
+its own prompt. `generated.by` follows the same split: `actor_for(model)` on
+a miss, the record's stored `actor` on a hit, so a model switch does not
+relabel descriptions the previous model wrote.
 
 Vocabulary membership and the length/single-line checks are enforced inside
 the synthesizer (an output validator, retried, then `SynthesisError`), never
@@ -1399,7 +1401,7 @@ same as `links` and `generated.at` — see "the dual-carrier rule" in
 CLAUDE.md. Shipped tags are the sorted union of source tags, keyword tags,
 and model tags.
 
-**Deferred**, per the original design note:
+**Deferred**:
 
 - Keyword tags for every synthesizer, not just `describe` — worth doing if
   keyword tagging proves useful on its own; needs a pipeline-level
