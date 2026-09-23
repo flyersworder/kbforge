@@ -13,7 +13,6 @@ import json
 import os
 import re
 import tempfile
-import unicodedata
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from kbforge.mirror import slot_key
 from kbforge.models import CanonicalDocument, resource_key
 from kbforge.synthesize import concept_path
+from kbforge.tagging import nfc, phrase_pattern
 
 DEFAULT_MAX_GROUNDING_DOCS = 5
 
@@ -100,10 +100,6 @@ def template_fields(template: str) -> list[str] | None:
     if "{" in rest or "}" in rest:
         return None
     return _FIELD.findall(template)
-
-
-def _nfc(text: str) -> str:
-    return unicodedata.normalize("NFC", text)
 
 
 def _field(owner: CanonicalDocument, name: str) -> str | None:
@@ -195,14 +191,7 @@ def rule_matches(
         if not _applies(rule, owner):
             continue
         phrases = [(t, p) for t in rule.match if (p := fill(t, owner)) is not None]
-        patterns = [
-            (
-                t,
-                p,
-                re.compile(rf"(?<!\w){re.escape(_nfc(p))}(?!\w)", re.IGNORECASE),
-            )
-            for t, p in phrases
-        ]
+        patterns = [(t, p, phrase_pattern(p)) for t, p in phrases]
         if not patterns:
             continue
         ranked: list[tuple[datetime | None, str, str]] = []
@@ -221,7 +210,7 @@ def rule_matches(
                 or resource_key(doc.anchor) in taken
             ):
                 continue
-            haystack = _nfc(f"{doc.title}\n{doc.text}")
+            haystack = nfc(f"{doc.title}\n{doc.text}")
             hit = next(((t, p) for t, p, rx in patterns if rx.search(haystack)), None)
             if hit is None:
                 continue
