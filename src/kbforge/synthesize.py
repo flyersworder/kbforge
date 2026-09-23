@@ -25,11 +25,13 @@ _SCALAR = (str, int, float, bool)
 
 # Frontmatter keys the emitter owns on a rendered concept. A facet must never
 # occupy one: the laws check the projection, the bundle receives the file, and a
-# shadowed key makes those two disagree. `validate` checks all six on the rendered
-# file and binds the four with a projection counterpart (type, links, generated.at,
-# sources) back to it; `title`/`description` live only in the file, so they are
-# checked for shape alone. `tags` joins because more than one writer (the source
-# and a synthesizer) now produces it, so a facet copy would shadow the bound value.
+# shadowed key makes those two disagree. `validate` checks all seven on the
+# rendered file and binds the five with a projection counterpart (type, links,
+# tags, generated.at, sources) back to it; `title`/`description` live only in
+# the file, so they are checked for shape alone. `tags` joins because more than
+# one writer (the source and a synthesizer) now produces it, so a facet copy
+# would shadow the bound value; it is both checked for shape on the file
+# (`_check_tags_shape`) and bound to the projection (`_check_carriers_agree`).
 OKF_OWNED = frozenset(
     {"type", "title", "description", "generated", "sources", "links", "tags"}
 )
