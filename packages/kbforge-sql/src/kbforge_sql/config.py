@@ -128,7 +128,13 @@ def problems_for(config: dict) -> list[str]:
         problems.append(
             f"config 'exclude' names column(s) the source also uses: {sorted(clash)}"
         )
-    if owned := sorted(set(cfg.facets) & OKF_OWNED):
+    # `tags` is exempted: unlike every other OKF-owned key, the emitter does not
+    # drop it. `assemble` (kbforge.synthesize) reads `structured["tags"]` and
+    # ships it as the concept's own tags, normalized by `_source_tags` (a
+    # string becomes one tag). A `tags` facet reaches the rendered concept, so
+    # rejecting it here would be a false positive -- exactly the failure mode
+    # this check exists to prevent for every OTHER owned key.
+    if owned := sorted(set(cfg.facets) & (OKF_OWNED - {"tags"})):
         problems.append(
             f"config 'facets' must not use OKF-owned key(s) {owned}: the emitter "
             "drops them, so the facet would silently never appear"

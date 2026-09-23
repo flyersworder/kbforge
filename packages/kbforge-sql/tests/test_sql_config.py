@@ -105,6 +105,16 @@ def test_a_facet_named_like_an_okf_key_is_rejected():
     )
 
 
+def test_a_tags_facet_is_allowed():
+    # `tags` is OKF-owned too, but unlike the other owned keys the emitter does
+    # not drop it: `assemble` reads `structured["tags"]` and ships it,
+    # normalized (kbforge.synthesize._source_tags). Rejecting it here would be
+    # a false positive -- a deployment exposing a `tags` column worked before
+    # `tags` joined OKF_OWNED and must keep working.
+    problems = problems_for(_cfg(facets=["tags"]))
+    assert not any("facets" in p for p in problems)
+
+
 def test_group_children_must_not_include_id_columns():
     problems = problems_for(_cfg(group={"children": ["product_id", "x"]}))
     assert (

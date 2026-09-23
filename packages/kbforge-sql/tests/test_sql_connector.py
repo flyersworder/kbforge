@@ -42,6 +42,35 @@ def test_a_flat_source_yields_one_document_per_row(tmp_path, monkeypatch):
     assert_fetch_contract(list(docs.values()), complete=True)
 
 
+def test_a_tags_facet_ships_as_the_concept_top_level_tags(tmp_path, monkeypatch):
+    """Important 1 (#40 review): `tags` is OKF-owned but not dropped -- unlike
+    every other owned key, `assemble` (kbforge.synthesize) reads
+    `structured["tags"]` and ships it, normalized. A single string column
+    value becomes the single tag `["MOTIX"]`, not a split-on-comma list."""
+    import yaml
+
+    from kbforge.models import ChangeSet
+    from kbforge.synthesize import StubSynthesizer, concept_path
+
+    make_db(tmp_path, monkeypatch)
+    cfg = flat_cfg(
+        query=(
+            "SELECT product_id, product_name, family AS tags, status, "
+            "description, last_refreshed FROM product"
+        ),
+        facets=["tags", "status"],
+    )
+    _, docs = _docs(cfg)
+    doc = docs["products:IMC300"]
+    assert doc.structured["tags"] == "MOTIX"  # a SQL string, not a list
+
+    proposal = StubSynthesizer().synthesize([doc], ChangeSet(added=[doc.doc_id]))
+    rendered = proposal.files[concept_path(doc.doc_id)]
+    front = yaml.safe_load(rendered.split("---\n")[1])
+    assert front["tags"] == ["MOTIX"]  # one string is one tag, not split on ","
+    assert "tags" not in {**proposal.concepts[concept_path(doc.doc_id)].facets}
+
+
 def test_a_null_text_column_leaves_no_lead(tmp_path, monkeypatch):
     make_db(tmp_path, monkeypatch)
     _, docs = _docs(flat_cfg())
