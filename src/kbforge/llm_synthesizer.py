@@ -385,7 +385,7 @@ def _describe_instructions(config: DescribeConfig) -> str:
 
 class DescribeSynthesizer:
     """Stub body, model-written one-sentence description, keyword + model tags
-    (design/2026-09-23-describe-synthesizer-design.md)."""
+    (architecture.md §7.3)."""
 
     grounds = False
     """The description is written from the document alone; citing grounding

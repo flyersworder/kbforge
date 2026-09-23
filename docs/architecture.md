@@ -973,9 +973,10 @@ never the additive `kbforge_extra_validators` hook (§5.3). They are trust guara
 of the standard, so making them opt-in would make them optional — the same posture
 as the no-op and never-auto-merge rules. `synthesize` is a stage backed by a
 `Synthesizer` object injected into `run` — `StubSynthesizer` by default,
-`LLMSynthesizer` or `DescribeSynthesizer` (§7.3) optionally; when the LLM is used, it writes prose inside a
-kbforge-owned frame, and you *check* its output against the laws, you do not trust
-it to emit them (same posture as `assert_stability` for §4.3 law 1). A concept
+`LLMSynthesizer` or `DescribeSynthesizer` (§7.3) optionally; when the LLM is
+used, it writes prose inside a kbforge-owned frame, and you *check* its
+output against the laws, you do not trust it to emit them (same posture as
+`assert_stability` for §4.3 law 1). A concept
 that violates any law fails the run; no MR opens for a non-conformant artifact.
 The LLM synthesizer is deliberately minimal — one canonical doc → one concept, a
 per-concept token budget, oversized sources truncated with a `grounding_notes` flag,
