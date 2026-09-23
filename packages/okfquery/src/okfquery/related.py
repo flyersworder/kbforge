@@ -35,6 +35,10 @@ def render_related(
     """Links to, linked from, and up to `limit` concepts sharing a value of any
     `by` facet (default `tags`), ranked by how many values they share, then by
     path. Deterministic: every ordering is total."""
+    if limit < 1:
+        # A slice would take a negative limit from the END, dropping neighbours
+        # silently, and 0 would print a "(none)" that claims nothing is shared.
+        raise ValueError(f"--limit must be at least 1, not {limit}")
     by = by or ["tags"]
     for key in by:
         if key in OKF_OWNED:

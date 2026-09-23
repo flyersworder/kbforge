@@ -112,6 +112,19 @@ def test_limit_applies_to_shares_only(bundle):
     assert "concepts/gone/" in text and "concepts/deck/" in text
 
 
+@pytest.mark.parametrize("limit", [0, -1])
+def test_a_limit_below_one_is_an_error(bundle, limit):
+    # -1 would slice off the last neighbour silently, and 0 would print a
+    # "(none)" that claims nothing shares a tag.
+    with pytest.raises(ValueError, match=f"--limit must be at least 1, not {limit}"):
+        render_related(bundle, GAP, limit=limit)
+
+
+def test_cli_limit_below_one_is_a_message(bundle, capsys):
+    assert main(["related", GAP, "--bundle", str(bundle), "--limit", "0"]) == 2
+    assert "--limit must be at least 1, not 0" in capsys.readouterr().err
+
+
 def test_empty_sections_say_none(bundle):
     assert render_related(bundle, "concepts/none/overview.md") == (
         "# Links to\n\n(none)\n\n# Linked from\n\n(none)\n\n# Shares tags\n\n(none)\n"
