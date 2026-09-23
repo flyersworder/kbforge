@@ -75,6 +75,18 @@ class ChangeSummary(BaseModel):
     grounding_notes: list[str] = Field(default_factory=list)
 
 
+class DescribedRecord(BaseModel):
+    """What a describing synthesizer's model wrote for one document, cached by
+    the pipeline in `mirror/_described/` after a successful publish. `tags` are
+    the MODEL's tags only: source and keyword tags are recomputed each render."""
+
+    doc_id: str
+    content_hash: str
+    actor: str
+    description: str
+    tags: list[str] = Field(default_factory=list)
+
+
 class ProposedChange(BaseModel):
     """What synthesis hands to a publisher: rendered files, the validated
     frontmatter projection, and a reviewable summary (§3, §4.4)."""
@@ -88,6 +100,10 @@ class ProposedChange(BaseModel):
     must not be able to delete a file it dislikes."""
     concepts: dict[str, ConceptFrontmatter] = Field(default_factory=dict)
     summary: ChangeSummary = Field(default_factory=ChangeSummary)
+    described: dict[str, DescribedRecord] = Field(default_factory=dict)
+    """Keyed by concept path. Persisted by the pipeline after publish, only for
+    paths in `files` whose record names the document that path belongs to; a
+    synthesizer never writes mirror state itself."""
 
 
 class Cursor(BaseModel):
