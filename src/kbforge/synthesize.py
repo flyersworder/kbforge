@@ -73,12 +73,27 @@ def _facets(structured: dict) -> dict:
 
 
 def _source_tags(structured: dict) -> list[str]:
-    """A source's own `tags`, normalized: a string is one tag, non-strings and
-    blanks are dropped. Normalized rather than rejected -- a source's tags are
-    its data, and one odd value must not fail the whole concept."""
+    """A source's own `tags`, normalized: a string is one tag, an int or float
+    is coerced with `str()` (a SQL source's numeric column is exactly this --
+    a year, a version number), and everything else -- including `bool`, which
+    `isinstance(v, int)` would otherwise catch since `bool` subclasses `int` --
+    is dropped. Normalized rather than rejected -- a source's tags are its
+    data, and one odd value must not fail the whole concept."""
     raw = structured.get("tags")
     values = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
-    return sorted({v.strip() for v in values if isinstance(v, str) and v.strip()})
+    out: set[str] = set()
+    for v in values:
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, str):
+            v = v.strip()
+        elif isinstance(v, (int, float)):
+            v = str(v)
+        else:
+            continue
+        if v:
+            out.add(v)
+    return sorted(out)
 
 
 def _generated(fm: ConceptFrontmatter) -> dict:

@@ -284,10 +284,11 @@ def test_the_stub_declares_that_it_does_not_ground():
     "raw, expected",
     [
         ("sic", ["sic"]),
-        (["sic", "sic", "", "  ", 3, "800v"], ["800v", "sic"]),
+        (["sic", "sic", "", "  ", 3, "800v"], ["3", "800v", "sic"]),
         ([" gan "], ["gan"]),
         (None, []),
         ({"a": 1}, []),
+        ([2024, True, 1.5, "v2"], ["1.5", "2024", "v2"]),
     ],
 )
 def test_source_tags_are_normalized(raw, expected):
