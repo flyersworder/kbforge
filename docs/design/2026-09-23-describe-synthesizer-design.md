@@ -102,7 +102,9 @@ sidecar:
   and only for concepts that are in `proposal.files`;
 - read tolerantly: unreadable is a miss, never an error that wedges later runs;
 - deleted when the owning document is tombstoned;
-- lives in the mirror so the `rm -rf` that resets the mirror resets it too.
+- lives in the mirror so the `rm -rf` that resets the mirror resets it too;
+- added to `chunking`'s per-document file list (today slot + `_grounding/` +
+  `_first_seen/`), so `redo` restores it with the rest of a rolled-back chunk.
 
 The synthesizer reads the cache but never writes it. It is constructed with the
 mirror path (the CLI has `--mirror`) and returns every entry it used or
