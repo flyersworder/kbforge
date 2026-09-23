@@ -90,22 +90,19 @@ docs — the whole change was `kbforge-okfquery` 0.1.0 arriving — and a consum
 diffing those two kbforge releases finds nothing. Don't repeat that: if only a
 companion changed, only the companion's version moves.
 
-- **Tags name what is being released.** `vX.Y.Z` is kbforge. A companion gets its
-  full *distribution* name: `kbforge-okfquery-v0.2.0`, not `okfquery-v0.2.0` — the
-  publish guard parses the tag to know what to check. The workflow triggers on any
-  release event, so a companion-only tag publishes with kbforge untouched.
+- **Tags name what is being released, and only that uploads.** `vX.Y.Z` is
+  kbforge. A companion gets its full *distribution* name: `kbforge-okfquery-v0.2.0`,
+  not `okfquery-v0.2.0` — the publish guard parses the tag to know what to check,
+  then moves every other built distribution out of `dist/`. Two releases from one
+  commit (kbforge + a companion) are two tags, each publishing its own.
 - **CHANGELOG sections are keyed by tag**, not by kbforge's version, for the same
   reason. Everything through `[0.9.0]` predates this rule and stays as it is.
-- **`skip-existing: true` is a safety net, not the mechanism.** It exists so one
-  job publishing several distributions cannot half-fail: a duplicate file 400s,
-  and without the flag that failure can land *after* other files uploaded. Do not
-  lean on it to mean "kbforge had no changes, so nothing uploads" — a forgotten
-  version bump then produces the same green job as a correct no-op release, and
-  the job reports success having published nothing.
-  `.github/scripts/check_release_target.py` closes that: it runs after the build
-  and fails the release unless the tagged distribution was built at the tagged
-  version *and* that version is absent from PyPI. A first release of a new
-  distribution (404 on PyPI) passes.
+- **The guard fails a release that would publish nothing.**
+  `.github/scripts/check_release_target.py` runs after the build and fails unless
+  the tagged distribution was built at the tagged version *and* that version is
+  absent from PyPI (a first release, 404 on PyPI, passes) — a forgotten bump must
+  not look like a green release. `skip-existing: true` remains only for a manual
+  `workflow_dispatch` publish, which has no tag and uploads every distribution.
 
 ## Docs layout
 
