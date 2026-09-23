@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-09-23
+
 ### Added
 
 - `--synthesizer describe` (#40): keeps the stub's body byte-for-byte and has a
@@ -23,14 +25,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `links`. A source's `tags` still ship, normalized (a string becomes a list;
   blanks are dropped; `int`/`float` values are coerced with `str()`, and
   `bool` and every other type are dropped), and render after `sources`/`links`.
-- kbforge-sql: a `tags` facet is now allowed (previously rejected as an
-  OKF-owned key with a message that was false for `tags` specifically — unlike
-  every other owned key, the emitter does not drop it). A `tags` column ships
-  as the concept's own top-level `tags`, normalized the same as any other
-  source's: one string is one tag, not split on `,`.
 - `SynthesisError` messages (both `llm` and `describe`) now end with the
   model's last retry reason, as field/message pairs — never the model's own
   output, which could echo an entire rejected body back.
+
+## [kbforge-sql-v0.1.1] - 2026-09-23
+
+### Fixed
+
+- A `tags` facet is allowed again. kbforge 0.12.0 made `tags` a kbforge-owned
+  frontmatter key, and this package's check rejected every OKF-owned facet with
+  a message that is false for `tags`: unlike the other owned keys, the emitter
+  does not drop it. A `tags` column ships as the concept's top-level `tags`,
+  normalized like any source's: one string is one tag, not split on `,`.
 
 ## [kbforge-okfquery-v0.3.0] - 2026-09-23
 
@@ -720,10 +727,12 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.11.1...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/flyersworder/kbforge/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/flyersworder/kbforge/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/flyersworder/kbforge/compare/v0.9.0...v0.10.0
+[kbforge-sql-v0.1.1]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-sql-v0.1.1
 [kbforge-okfquery-v0.3.0]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.3.0
 [kbforge-okfquery-v0.2.2]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.2
 [kbforge-okfquery-v0.2.1]: https://github.com/flyersworder/kbforge/releases/tag/kbforge-okfquery-v0.2.1

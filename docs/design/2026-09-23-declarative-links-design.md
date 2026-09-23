@@ -250,7 +250,7 @@ cross-system target, `links to db_apps:applications/777-commercial-vehicles
 path, one owner" text changes: the collision abort stays; the cross-system
 abort is replaced by a pointer to this section.
 
-## 8. Derived relations: `okfquery related` (kbforge-okfquery)
+## 8. Derived relations: `okfquery related` (kbforge-okfquery) — shipped in 0.3.0
 
 ```
 okfquery related concepts/reports/q3-800v/overview.md [--limit 10] [--by tags,scenario]
@@ -269,7 +269,7 @@ Prints, for one concept:
 Each line is `* [Title](path) - description`, the `okfquery index` format, so an
 agent reads it the same way. It is pure SQL over the existing `concepts`,
 `links` and `facets` columns: no schema change, no mirror. `tags` is a facet to
-okfquery (describe design §5), so no special case.
+okfquery (architecture.md §7.3), so no special case.
 
 This is a kbforge-okfquery feature and releases on its own (`kbforge-okfquery`
 0.3.0), independently of kbforge (CLAUDE.md, Releasing). It depends on nothing

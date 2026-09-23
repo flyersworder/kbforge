@@ -646,7 +646,7 @@ wheels = [
 
 [[package]]
 name = "kbforge"
-version = "0.11.1"
+version = "0.12.0"
 source = { editable = "." }
 dependencies = [
     { name = "pluggy" },
@@ -736,7 +736,7 @@ dev = [{ name = "kbforge", editable = "." }]
 
 [[package]]
 name = "kbforge-sql"
-version = "0.1.0"
+version = "0.1.1"
 source = { editable = "packages/kbforge-sql" }
 dependencies = [
     { name = "kbforge" },
