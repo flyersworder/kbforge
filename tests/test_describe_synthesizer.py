@@ -180,3 +180,48 @@ def test_a_stale_cache_is_a_miss(
 
 def test_describe_does_not_ground():
     assert DescribeSynthesizer.grounds is False
+
+
+def _problems(**cfg):
+    """`validate_env` must report, never raise (#40 review, Important 2): an
+    `--llm-set` value is YAML-typed, so a config an operator can actually type
+    can hold an int key or a bare scalar, and validate_env is the one place
+    that has to survive that before anything touches the model."""
+    return DescribeConfig(**cfg).validate_env()
+
+
+def test_non_positive_description_max_chars_is_reported():
+    assert "description_max_chars must be positive" in _problems(
+        description_max_chars=0
+    )
+    assert "description_max_chars must be positive" in _problems(
+        description_max_chars=-1
+    )
+
+
+def test_a_blank_tag_is_reported_without_raising():
+    problems = _problems(tags_vocabulary={"  ": ["x"]})
+    assert "tags_vocabulary has a non-string or blank tag: '  '" in problems
+
+
+def test_a_non_string_tag_is_reported_without_raising():
+    # A YAML-typed `--llm-set` value can hold an int key
+    # (`tags_vocabulary={2024: [x]}`); the old code silently accepted it, then
+    # crashed later in `_describe_instructions` or `assemble`'s sort/join.
+    problems = _problems(tags_vocabulary={2024: ["x"]})
+    assert "tags_vocabulary has a non-string or blank tag: 2024" in problems
+
+
+def test_a_non_dict_vocabulary_is_reported_without_raising():
+    # `tags_vocabulary=sic` (a bare scalar) used to raise AttributeError out of
+    # validate_env itself, before the CLI's `problems = validate_env()` line
+    # could turn it into a sentence.
+    problems = _problems(tags_vocabulary="sic")
+    assert "tags_vocabulary must be a mapping of tag to phrase list" in problems
+
+
+def test_a_bad_phrase_list_is_still_reported():
+    problems = _problems(tags_vocabulary={"sic": ["SiC", ""]})
+    assert "tags_vocabulary['sic'] must be a list of non-blank phrases" in problems
+    problems = _problems(tags_vocabulary={"sic": "SiC"})
+    assert "tags_vocabulary['sic'] must be a list of non-blank phrases" in problems

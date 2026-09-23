@@ -513,3 +513,24 @@ def test_describe_rejects_a_bad_vocabulary(tmp_path: Path, capsys, monkeypatch):
         "tags_vocabulary['x'] must be a list of non-blank phrases"
         in capsys.readouterr().out
     )
+
+
+def test_describe_rejects_a_non_string_vocabulary_key(
+    tmp_path: Path, capsys, monkeypatch
+):
+    """Important 2 (#40 review): `--llm-set` values are YAML-typed, so
+    `tags_vocabulary={2024: [x]}` gives an int key. That used to pass
+    `validate_env` unchecked and crash later with a raw traceback (a
+    TypeError sorting or joining a set of tags that mixes `int` and `str`).
+    It must instead exit 2 with one sentence, like every other operator
+    mistake this file covers."""
+    pytest.importorskip("pydantic_ai")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    code = main(["run", "--connector", "local_files", "--set", f"path={tmp_path}",
+                 "--synthesizer", "describe",
+                 "--llm-set", "tags_vocabulary={2024: [x]}",
+                 *_plumbing(tmp_path)])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "tags_vocabulary has a non-string or blank tag: 2024" in out
+    assert "Traceback" not in out

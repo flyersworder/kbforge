@@ -324,18 +324,34 @@ class DescribeConfig(LLMConfig):
     description_max_chars: int = 240
 
     def validate_env(self) -> list[str]:
+        """Reports problems, never raises: `--llm-set` values are YAML-typed
+        (`kbforge.__main__._parse_settings`), so `tags_vocabulary` can arrive
+        as anything -- a bare scalar (`tags_vocabulary=sic`), or a dict with a
+        non-string key (`tags_vocabulary={2024: [x]}`). Either used to reach
+        the model config unchecked and crash later: a scalar raised
+        AttributeError right here (`.items()` on a `str`), and a non-string
+        key passed this check silently and then blew up in
+        `_describe_instructions`'s `", ".join(sorted(allowed_tags))` or
+        `assemble`'s tag sort -- both require every tag to be a `str`."""
         problems = super().validate_env()
         if self.description_max_chars <= 0:
             problems.append("description_max_chars must be positive")
-        for tag, phrases in (self.tags_vocabulary or {}).items():
-            if not str(tag).strip():
-                problems.append("tags_vocabulary has a blank tag")
-            if not isinstance(phrases, list) or not all(
-                isinstance(p, str) and p.strip() for p in phrases
-            ):
-                problems.append(
-                    f"tags_vocabulary[{tag!r}] must be a list of non-blank phrases"
-                )
+        vocab = self.tags_vocabulary
+        if vocab is not None and not isinstance(vocab, dict):
+            problems.append("tags_vocabulary must be a mapping of tag to phrase list")
+        else:
+            for tag, phrases in (vocab or {}).items():
+                if not isinstance(tag, str) or not tag.strip():
+                    problems.append(
+                        f"tags_vocabulary has a non-string or blank tag: {tag!r}"
+                    )
+                    continue
+                if not isinstance(phrases, list) or not all(
+                    isinstance(p, str) and p.strip() for p in phrases
+                ):
+                    problems.append(
+                        f"tags_vocabulary[{tag!r}] must be a list of non-blank phrases"
+                    )
         return problems
 
     @property
@@ -398,6 +414,11 @@ class DescribeSynthesizer:
         mirror: Path | None = None,
         agent: Agent[Any, Any] | None = None,
     ) -> None:
+        """`mirror` must be the same path passed to `pipeline.run(mirror=...)`:
+        it is where `_cached` reads `_described/` records from. With
+        `mirror=None` this synthesizer never reads the cache -- every document
+        is a miss -- but the pipeline still writes `_described/` regardless,
+        silently, rather than erroring. The CLI wires the two together."""
         self.config = config
         self.mirror = mirror
         self.agent: Agent[Any, Any] = (
