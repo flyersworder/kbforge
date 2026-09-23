@@ -166,6 +166,7 @@ def assemble(
     generated_by: str = _DEFAULT_ACTOR,
     grounding: dict[str, list[CanonicalDocument]] | None = None,
     tags: dict[str, list[str]] | None = None,
+    actors: dict[str, str] | None = None,
 ) -> ProposedChange:
     """Build the ProposedChange frame from per-doc prose (doc, title, description,
     body). Both synthesizers produce `items` differently and share this assembly, so
@@ -193,7 +194,7 @@ def assemble(
                 | set((tags or {}).get(doc.doc_id, []))
             ),
             generated_at=doc.anchor.retrieved_at,
-            generated_by=generated_by,
+            generated_by=(actors or {}).get(doc.doc_id, generated_by),
         )
         concepts[path] = fm
         files[path] = _render(doc, fm, title=title, description=description, body=body)
