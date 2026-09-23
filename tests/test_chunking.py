@@ -124,25 +124,27 @@ def test_owned_paths_are_where_the_three_writers_actually_write(tmp_path: Path):
     write_sidecar(mirror, doc.doc_id, {})
     record_first_seen(mirror, [doc])
     written = {p.relative_to(mirror).as_posix() for p in mirror.rglob("*.json")}
-    assert written == set(owned_paths(doc.doc_id))
+    # Written files should be a subset of owned_paths (described is added later).
+    assert written <= set(owned_paths(doc.doc_id))
 
 
 def test_snapshot_keeps_present_files_verbatim_and_absent_ones_as_none(tmp_path):
     mirror = tmp_path / "mirror"
-    slot, sidecar, first_seen = owned_paths("sys:a")
+    slot, sidecar, first_seen, described = owned_paths("sys:a")
     mirror.mkdir()
     (mirror / slot).write_text("OLD", "utf-8")
     assert snapshot(mirror, {"sys:a"}) == {
         slot: "OLD",
         sidecar: None,
         first_seen: None,
+        described: None,
     }
 
 
 def test_restore_puts_contents_back_and_removes_what_did_not_exist(tmp_path):
     mirror = tmp_path / "mirror"
     cursor = tmp_path / "state" / "cursor-fake-0.json"
-    slot, sidecar, _ = owned_paths("sys:a")
+    slot, sidecar, _, _ = owned_paths("sys:a")
     (mirror / "_grounding").mkdir(parents=True)
     (mirror / slot).write_text("NEW", "utf-8")
     (mirror / sidecar).write_text("NEW", "utf-8")
@@ -222,3 +224,10 @@ def test_an_unreadable_record_names_its_path(tmp_path: Path, garbage: bytes):
         read_record(path)
     assert caught.value.path == path
     assert str(caught.value).startswith(f"chunk record {path}: ")
+
+
+def test_owned_paths_cover_the_described_sidecar():
+    from kbforge.chunking import owned_paths
+    from kbforge.mirror import slot_key
+
+    assert f"_described/{slot_key('sys:x.md')}.json" in owned_paths("sys:x.md")

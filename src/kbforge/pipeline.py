@@ -21,6 +21,7 @@ from kbforge.chunking import (
     snapshot,
     write_record,
 )
+from kbforge.described import delete_described, write_described
 from kbforge.grounding import (
     GroundingConfig,
     declared_ids,
@@ -691,6 +692,16 @@ def run(
             # neither recording nor clearing its sidecar would describe the
             # bundle: leave whatever the last successful build recorded.
             continue
+        described_record = proposal.described.get(concept_path(doc.doc_id))
+        if described_record is not None and described_record.doc_id == doc.doc_id:
+            write_described(mirror_path, described_record)
+        else:
+            # Delete, not skip, for the grounding sidecar's reason: a record
+            # left behind describes a concept that no longer ships its text,
+            # and #41's tag reads would trust it. A record naming another
+            # document is not written anywhere -- a synthesizer does not get
+            # to write another concept's mirror state.
+            delete_described(mirror_path, doc.doc_id)
         docs_for = grounding_map.get(doc.doc_id) if grounds else None
         if docs_for:
             write_sidecar(
@@ -720,6 +731,7 @@ def run(
     for doc_id in changeset.removed:
         delete_sidecar(mirror_path, doc_id)
         delete_first_seen(mirror_path, doc_id)
+        delete_described(mirror_path, doc_id)
     # Held while a backlog remains: the next chunk re-fetches from the same
     # cursor, which §4.2's at-least-once replay makes harmless (§4.2 of the
     # design note).

@@ -332,6 +332,24 @@ def test_invalid_output_below_the_budget_says_invalid_not_truncated():
     assert "max_tokens" not in message
 
 
+def test_invalid_output_names_the_field_without_echoing_large_values():
+    """A pydantic `missing` error's `input` is the whole *remaining* args
+    dict, not just the failing field — so a tool call missing `body` reports
+    `input: {title: ..., description: ...}`. `RetryPromptPart.model_response()`
+    would dump that whole dict into `SynthesisError`; the retry reason must
+    name what failed (`body`) without repeating any of the model's own field
+    values. A distinctive marker planted in `title` stands in for anything
+    large or sensitive the model wrote that must not leak."""
+    marker = "MARKER" * 50
+    bad = {"title": marker, "description": "About X."}  # `body` missing
+    synth = _synth_with([(bad, 200)] * 3, max_tokens=1500)
+    with pytest.raises(SynthesisError) as err:
+        synth.synthesize([_doc()], ChangeSet(added=["local_files:apps/x.md"]))
+    message = str(err.value)
+    assert marker not in message
+    assert "body" in message
+
+
 def test_a_bad_output_is_retried_within_the_budget():
     synth = _synth_with([(_EMPTY_BODY, 200), (_EMPTY_BODY, 200), (_GOOD, 200)])
     change = synth.synthesize([_doc()], ChangeSet(added=["local_files:apps/x.md"]))

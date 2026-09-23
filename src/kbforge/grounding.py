@@ -13,7 +13,6 @@ import json
 import os
 import re
 import tempfile
-import unicodedata
 from datetime import UTC, date, datetime
 from pathlib import Path
 
@@ -23,6 +22,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from kbforge.mirror import slot_key
 from kbforge.models import CanonicalDocument, resource_key
 from kbforge.synthesize import concept_path
+from kbforge.tagging import nfc, phrase_pattern
 
 DEFAULT_MAX_GROUNDING_DOCS = 5
 
@@ -100,10 +100,6 @@ def template_fields(template: str) -> list[str] | None:
     if "{" in rest or "}" in rest:
         return None
     return _FIELD.findall(template)
-
-
-def _nfc(text: str) -> str:
-    return unicodedata.normalize("NFC", text)
 
 
 def _field(owner: CanonicalDocument, name: str) -> str | None:
@@ -195,14 +191,7 @@ def rule_matches(
         if not _applies(rule, owner):
             continue
         phrases = [(t, p) for t in rule.match if (p := fill(t, owner)) is not None]
-        patterns = [
-            (
-                t,
-                p,
-                re.compile(rf"(?<!\w){re.escape(_nfc(p))}(?!\w)", re.IGNORECASE),
-            )
-            for t, p in phrases
-        ]
+        patterns = [(t, p, phrase_pattern(p)) for t, p in phrases]
         if not patterns:
             continue
         ranked: list[tuple[datetime | None, str, str]] = []
@@ -221,7 +210,7 @@ def rule_matches(
                 or resource_key(doc.anchor) in taken
             ):
                 continue
-            haystack = _nfc(f"{doc.title}\n{doc.text}")
+            haystack = nfc(f"{doc.title}\n{doc.text}")
             hit = next(((t, p) for t, p, rx in patterns if rx.search(haystack)), None)
             if hit is None:
                 continue
@@ -438,7 +427,7 @@ def read_sidecar(mirror: Path, doc_id: str) -> dict[str, str] | None:
         return None
 
 
-def _write_atomic(path: Path, payload: dict) -> None:
+def write_atomic(path: Path, payload: dict) -> None:
     """Through a unique temp file in the same directory, so a process killed
     mid-write leaves the old file or the new one, never a truncated one, and two
     writers on the shared mirror never `os.replace` each other's half-written
@@ -461,10 +450,10 @@ def _write_atomic(path: Path, payload: dict) -> None:
 
 
 def write_sidecar(mirror: Path, doc_id: str, recorded: dict[str, str]) -> None:
-    """Written atomically (`_write_atomic`); `read_sidecar` tolerates a torn file
+    """Written atomically (`write_atomic`); `read_sidecar` tolerates a torn file
     anyway, and this keeps them from being made."""
     payload = {"doc_id": doc_id, "grounding": dict(sorted(recorded.items()))}
-    _write_atomic(_sidecar(mirror, doc_id), payload)
+    write_atomic(_sidecar(mirror, doc_id), payload)
 
 
 def delete_sidecar(mirror: Path, doc_id: str) -> None:
@@ -575,7 +564,7 @@ def record_first_seen(mirror: Path, docs: list[CanonicalDocument]) -> None:
         if _read_first_seen(path) is not None:
             continue
         when = first_seen_time(doc)
-        _write_atomic(path, {"doc_id": doc.doc_id, "first_seen": when.isoformat()})
+        write_atomic(path, {"doc_id": doc.doc_id, "first_seen": when.isoformat()})
 
 
 def load_first_seen(mirror: Path) -> dict[str, datetime]:

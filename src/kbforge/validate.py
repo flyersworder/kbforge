@@ -353,6 +353,26 @@ def _check_sources_shape(
     return failures
 
 
+def _check_tags_shape(path: str, front: dict) -> list[Failure]:
+    """OKF §4.1: `tags` is a list of short strings. The file is what ships, so
+    the file is what is checked; `_check_carriers_agree` binds it to the
+    projection."""
+    tags = front.get("tags")
+    if tags is None:
+        return []
+    if not isinstance(tags, list) or not all(
+        isinstance(t, str) and t.strip() for t in tags
+    ):
+        return [
+            Failure(
+                path,
+                "okf-strict",
+                "rendered 'tags' must be a list of non-blank strings (OKF §4.1)",
+            )
+        ]
+    return []
+
+
 def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
     failures: list[Failure] = []
     for path, content in proposal.files.items():
@@ -381,6 +401,7 @@ def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
         if front.get("generated") is not None:
             failures += _check_generated_shape(path, front, concept)
         failures += _check_sources_shape(path, front, concept)
+        failures += _check_tags_shape(path, front)
         if concept is not None:
             failures += _check_carriers_agree(path, front, concept)
     return failures
@@ -417,6 +438,16 @@ def _check_carriers_agree(
                 "okf-strict",
                 "rendered 'links' disagree with the projection's; law 2 resolves "
                 "the projection, so a link only in the file is never checked",
+            )
+        )
+    if front.get("tags", []) != concept.tags:
+        failures.append(
+            Failure(
+                path,
+                "okf-strict",
+                "rendered 'tags' disagree with the projection's; a vocabulary or "
+                "filter check reads the projection, so a tag only in the file is "
+                "never checked",
             )
         )
     return failures

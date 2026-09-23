@@ -150,10 +150,14 @@ def test_cli_config_error_surfaces_nonzero(tmp_path: Path, capsys):
     assert "path" in capsys.readouterr().out  # the connector's config problem
 
 
-def test_list_shows_synthesizers(capsys):
+def test_list_shows_every_synthesizer_run_accepts(capsys):
+    """`list` and `--synthesizer` drew from two hand-kept lists, and `describe`
+    reached one but not the other. Both now read one table."""
     assert main(["list"]) == 0
     out = capsys.readouterr().out
-    assert "stub" in out and "llm" in out
+    listed = out.split("synthesizers:\n", 1)[1].split("publishers:", 1)[0]
+    names = [line.split("\t", 1)[0].strip() for line in listed.splitlines()]
+    assert names == ["stub", "llm", "describe"], listed
 
 
 def test_run_stub_synthesizer_default(tmp_path: Path, capsys):
@@ -460,3 +464,77 @@ def test_a_synthesis_failure_is_one_line_not_a_traceback(tmp_path, capsys, monke
         "Synthesis failed: concepts/x/overview.md: model output hit max_tokens=1500"
         " (nothing was published; the next run retries)"
     ), out
+
+
+def test_run_describe_synthesizer_offline(tmp_path: Path, capsys, monkeypatch):
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from kbforge import llm_synthesizer
+
+    real = llm_synthesizer.DescribeSynthesizer._build_agent
+
+    def fake_agent(config, model=None):
+        def fn(messages, info: AgentInfo):
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        info.output_tools[0].name,
+                        {"description": "Says what X is.", "tags": []},
+                    )
+                ]
+            )
+
+        return real(config, model=FunctionModel(fn))
+
+    monkeypatch.setattr(
+        llm_synthesizer.DescribeSynthesizer, "_build_agent", staticmethod(fake_agent)
+    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(["run", "--connector", "local_files", "--set", f"path={src}",
+                 "--synthesizer", "describe",
+                 "--llm-set", "tags_vocabulary={x: [App X]}",
+                 *_plumbing(tmp_path)])  # fmt: skip
+    assert code == 0 and "Published" in capsys.readouterr().out
+    text = (
+        tmp_path / "out" / "sync-local_files" / "concepts/x/overview.md"
+    ).read_text()
+    assert "description: Says what X is." in text and "- x" in text
+
+
+def test_describe_rejects_a_bad_vocabulary(tmp_path: Path, capsys, monkeypatch):
+    pytest.importorskip("pydantic_ai")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    code = main(["run", "--connector", "local_files", "--set", f"path={tmp_path}",
+                 "--synthesizer", "describe", "--llm-set", "tags_vocabulary={x: [' ']}",
+                 *_plumbing(tmp_path)])  # fmt: skip
+    assert code == 2
+    assert (
+        "tags_vocabulary['x'] must be a list of non-blank phrases"
+        in capsys.readouterr().out
+    )
+
+
+def test_describe_rejects_a_non_string_vocabulary_key(
+    tmp_path: Path, capsys, monkeypatch
+):
+    """Important 2 (#40 review): `--llm-set` values are YAML-typed, so
+    `tags_vocabulary={2024: [x]}` gives an int key. That used to pass
+    `validate_env` unchecked and crash later with a raw traceback (a
+    TypeError sorting or joining a set of tags that mixes `int` and `str`).
+    It must instead exit 2 with one sentence, like every other operator
+    mistake this file covers."""
+    pytest.importorskip("pydantic_ai")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    code = main(["run", "--connector", "local_files", "--set", f"path={tmp_path}",
+                 "--synthesizer", "describe",
+                 "--llm-set", "tags_vocabulary={2024: [x]}",
+                 *_plumbing(tmp_path)])  # fmt: skip
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "tags_vocabulary has a non-string or blank tag: 2024" in out
+    assert "Traceback" not in out

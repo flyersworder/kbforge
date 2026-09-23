@@ -53,8 +53,10 @@ checked against a real service has a live suite (`--run-live`) rather than a moc
   grounding documents from other systems.
 - **Gate** — the §4.4 emit-side laws plus a projection↔files coherence check, so
   nothing ships unvalidated.
-- **Synthesis** — a deterministic stub (default, no LLM) or an opt-in grounded LLM
-  synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra).
+- **Synthesis** — a deterministic stub (default, no LLM), an opt-in grounded LLM
+  synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra), or
+  `--synthesizer describe`: the stub's verbatim body with a model-written
+  one-sentence description and tags from a vocabulary.
 - **Publishers** — `dry-run` built in; GitHub and GitLab opt-in via `--publisher`
   with the token from an env var. kbforge opens review requests and never merges.
 - **Reading a bundle back** — [`kbforge-okfquery`](packages/okfquery) loads a
@@ -114,6 +116,20 @@ kbforge run --connector local_files --set path=./docs \
 
 The synthesizer reaches models through a LiteLLM provider, so OpenRouter and a
 self-hosted LiteLLM gateway share one config path.
+
+For a stub concept that also carries a real description and tags — without
+rewriting its body — use `--synthesizer describe` instead:
+
+```bash
+kbforge run --connector local_files --set path=./docs \
+  --synthesizer describe --llm-set model=deepseek/deepseek-v4-flash \
+  --llm-set 'tags_vocabulary={sic: [SiC], 800v: ["800 V"]}' \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```
+
+The body ships byte-for-byte; only `description` and `tags` are model-written,
+and the model's output is cached per document so an unchanged source makes no
+model call even when its concept is re-rendered.
 
 ## Publishing to GitHub or GitLab
 

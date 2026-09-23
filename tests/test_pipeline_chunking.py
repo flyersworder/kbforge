@@ -383,6 +383,40 @@ def test_redo_restores_mirror_first_seen_and_cursor_byte_for_byte(tmp_path):
     assert _tree(tmp_path / "mirror", tmp_path / "state") == before
 
 
+def test_redo_restores_the_described_sidecar(tmp_path):
+    """`_described/` is in `owned_paths` (Task 3), so the chunk record already
+    covers it — this just confirms the pipeline's post-publish writes (Task 5)
+    round-trip through snapshot/restore like the mirror files do."""
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from kbforge.described import read_described
+    from kbforge.llm_synthesizer import DescribeConfig, DescribeSynthesizer
+
+    def fn(messages, info: AgentInfo):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"description": "One sentence.", "tags": []},
+                )
+            ]
+        )
+
+    mirror = tmp_path / "mirror"
+    config = DescribeConfig()
+    agent = DescribeSynthesizer._build_agent(config, model=FunctionModel(fn))
+    describer = DescribeSynthesizer(config, mirror=mirror, agent=agent)
+
+    assert read_described(mirror, "sys:a") is None  # pre-chunk state: first chunk
+    _run(tmp_path, [_doc("a"), _doc("b"), _doc("c")], cap=2, synthesizer=describer)
+    assert read_described(mirror, "sys:a") is not None
+
+    _redo(tmp_path)
+    assert read_described(mirror, "sys:a") is None
+
+
 def test_after_redo_the_next_run_proposes_the_same_chunk_again(tmp_path):
     docs = [_doc("a"), _doc("b")]
     _, pub1, _ = _run(tmp_path, docs, cap=1)

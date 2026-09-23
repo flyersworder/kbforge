@@ -112,16 +112,70 @@ def test_facets_are_exactly_the_source_fields_okf_does_not_own(tmp_path):
     assert json.loads(raw) == {"owner": "platform"}
 
 
+def test_describe_synthesizer_description_reaches_the_index(tmp_path):
+    """The whole point of #40: a stub concept's `okfquery index` line carries a
+    model-written description instead of nothing. Scripted model, no network --
+    `test_pipeline_describe.py` already proves the pipeline/cache mechanics;
+    this proves the rendered file is what okfquery's index reads."""
+    pytest.importorskip("pydantic_ai")
+    from pydantic_ai.messages import ModelResponse, ToolCallPart
+    from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+    from kbforge.connectors.local_files import LocalFilesConnector
+    from kbforge.llm_synthesizer import DescribeConfig, DescribeSynthesizer
+    from kbforge.pipeline import Published, run
+    from kbforge.publishers.dry_run import DryRunPublisher
+    from okfquery.index import render_bundle
+
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text("---\ntitle: X\n---\nX body.\n", "utf-8")
+
+    def fn(messages, info: AgentInfo):
+        return ModelResponse(
+            parts=[
+                ToolCallPart(
+                    info.output_tools[0].name,
+                    {"description": "Says what X is.", "tags": []},
+                )
+            ]
+        )
+
+    config = DescribeConfig()
+    agent = DescribeSynthesizer._build_agent(config, model=FunctionModel(fn))
+    synthesizer = DescribeSynthesizer(config, mirror=tmp_path / "mirror", agent=agent)
+
+    result = run(
+        LocalFilesConnector(),
+        DryRunPublisher(),
+        config={"path": str(src)},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={"out_dir": str(tmp_path / "out")},
+        synthesizer=synthesizer,
+    )
+    assert isinstance(result, Published), result
+    bundle = Path(result.url)
+
+    assert "- Says what X is." in render_bundle(bundle)
+
+
 def test_replicated_constants_have_not_drifted():
     """The duplication in parse.py is justified by this test existing.
 
     okfquery cannot import kbforge at runtime (that is the whole boundary), so it
     copies two constants. A copy with no equality check is just a stale value
     waiting to happen -- the same defect the dual-carrier rule exists to prevent.
+
+    `tags` is the one deliberate divergence: kbforge owns and writes the key, but
+    to a reader it is a filterable facet like any other, so okfquery's OKF_OWNED
+    must never gain it (see the comment above okfquery's OKF_OWNED). Everything
+    else must still match exactly.
     """
     from kbforge.synthesize import OKF_OWNED as KB_OWNED
     from kbforge.validate import _RESERVED as KB_RESERVED
     from okfquery import parse
 
     assert parse.RESERVED == KB_RESERVED
-    assert parse.OKF_OWNED == KB_OWNED
+    assert parse.OKF_OWNED == KB_OWNED - {"tags"}
+    assert "tags" not in parse.OKF_OWNED

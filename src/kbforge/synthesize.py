@@ -25,11 +25,16 @@ _SCALAR = (str, int, float, bool)
 
 # Frontmatter keys the emitter owns on a rendered concept. A facet must never
 # occupy one: the laws check the projection, the bundle receives the file, and a
-# shadowed key makes those two disagree. `validate` checks all six on the rendered
-# file and binds the four with a projection counterpart (type, links, generated.at,
-# sources) back to it; `title`/`description` live only in the file, so they are
-# checked for shape alone.
-OKF_OWNED = frozenset({"type", "title", "description", "generated", "sources", "links"})
+# shadowed key makes those two disagree. `validate` checks all seven on the
+# rendered file and binds the five with a projection counterpart (type, links,
+# tags, generated.at, sources) back to it; `title`/`description` live only in
+# the file, so they are checked for shape alone. `tags` joins because more than
+# one writer (the source and a synthesizer) now produces it, so a facet copy
+# would shadow the bound value; it is both checked for shape on the file
+# (`_check_tags_shape`) and bound to the projection (`_check_carriers_agree`).
+OKF_OWNED = frozenset(
+    {"type", "title", "description", "generated", "sources", "links", "tags"}
+)
 
 # OKF §7 actor for the stub synthesizer. The LLM synthesizer overrides it with
 # the model, matching the spec's own `reference_agent/gemini-2.5-pro` example
@@ -65,6 +70,30 @@ def _facets(structured: dict) -> dict:
         for k, v in structured.items()
         if k not in OKF_OWNED and v not in (None, "", [], {}) and ok(v)
     }
+
+
+def _source_tags(structured: dict) -> list[str]:
+    """A source's own `tags`, normalized: a string is one tag, an int or float
+    is coerced with `str()` (a SQL source's numeric column is exactly this --
+    a year, a version number), and everything else -- including `bool`, which
+    `isinstance(v, int)` would otherwise catch since `bool` subclasses `int` --
+    is dropped. Normalized rather than rejected -- a source's tags are its
+    data, and one odd value must not fail the whole concept."""
+    raw = structured.get("tags")
+    values = [raw] if isinstance(raw, str) else raw if isinstance(raw, list) else []
+    out: set[str] = set()
+    for v in values:
+        if isinstance(v, bool):
+            continue
+        if isinstance(v, str):
+            v = v.strip()
+        elif isinstance(v, (int, float)):
+            v = str(v)
+        else:
+            continue
+        if v:
+            out.add(v)
+    return sorted(out)
 
 
 def _generated(fm: ConceptFrontmatter) -> dict:
@@ -138,6 +167,8 @@ def _render(
     front["sources"] = [_source_entry(a) for a in fm.sources]
     if fm.links:
         front["links"] = fm.links
+    if fm.tags:
+        front["tags"] = fm.tags
     head = yaml.safe_dump(front, sort_keys=False, allow_unicode=True).strip()
     return f"---\n{head}\n---\n\n# {title}\n\n{body}\n"
 
@@ -149,6 +180,8 @@ def assemble(
     *,
     generated_by: str = _DEFAULT_ACTOR,
     grounding: dict[str, list[CanonicalDocument]] | None = None,
+    tags: dict[str, list[str]] | None = None,
+    actors: dict[str, str] | None = None,
 ) -> ProposedChange:
     """Build the ProposedChange frame from per-doc prose (doc, title, description,
     body). Both synthesizers produce `items` differently and share this assembly, so
@@ -171,8 +204,12 @@ def assemble(
                 *(g.anchor for g in (grounding or {}).get(doc.doc_id, [])),
             ],
             links=sorted(p for p in links if p in known),  # drop dangling (law 2)
+            tags=sorted(
+                set(_source_tags(doc.structured))
+                | set((tags or {}).get(doc.doc_id, []))
+            ),
             generated_at=doc.anchor.retrieved_at,
-            generated_by=generated_by,
+            generated_by=(actors or {}).get(doc.doc_id, generated_by),
         )
         concepts[path] = fm
         files[path] = _render(doc, fm, title=title, description=description, body=body)
