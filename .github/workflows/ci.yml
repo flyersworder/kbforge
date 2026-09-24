@@ -97,11 +97,12 @@ jobs:
       # out of the built metadata, so kbforge-mcp's dependency on kbforge is
       # published as the PyPI requirement, not a workspace path.
       - run: uv build --all-packages --no-sources
-      # The counterpart to `skip-existing` below. That flag stops a duplicate file
-      # from failing the job AFTER other files uploaded, but it also makes "nothing
-      # needed publishing" and "the version bump was forgotten" the same green job.
-      # This asserts the distribution the tag names is actually about to publish
-      # something -- built at the tagged version, and not already on PyPI.
+      # Asserts the distribution the tag names is actually about to publish
+      # something -- built at the tagged version, and not already on PyPI -- and
+      # then moves every OTHER distribution out of dist/, so a release uploads
+      # what its tag names and nothing else. Publishing all of dist/ let the
+      # kbforge 0.12.0 tag release kbforge-sql 0.1.1 as a side effect, and would
+      # ship any companion bumped for a later release early.
       # Skipped on workflow_dispatch, which has no release tag to check.
       # The tag arrives via `env:`, never interpolated into the `run:` text.
       # `${{ }}` substitutes BEFORE the shell sees the line, so a tag containing
@@ -115,12 +116,9 @@ jobs:
           "$RELEASE_TAG" dist
       - uses: pypa/gh-action-pypi-publish@dc37677b2e1c63e2034f94d8a5b11f265b73ba33 # v1.14.2
         with:
-          # `--all-packages` puts all THREE distributions in dist/, but
-          # kbforge-mcp and kbforge-okfquery each version independently of
-          # kbforge: the next kbforge release that does not also bump one of
-          # their pyproject.toml files would re-upload an already-published
-          # sdist/wheel, PyPI would 400, and the job could fail AFTER
-          # kbforge's own files uploaded -- a half-published release.
-          # Skipping an existing file is the only safe default once one job
-          # publishes more than one distribution.
+          # On a release, dist/ now holds one distribution, already checked to
+          # be new, so this never fires there. It remains for workflow_dispatch,
+          # which runs no guard and uploads every workspace distribution: an
+          # unbumped one would otherwise 400 and could fail the job AFTER other
+          # files uploaded -- a half-published release.
           skip-existing: true

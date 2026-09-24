@@ -15,6 +15,12 @@ different reasons:
    never bumped, or the tag is wrong.
 2. PyPI does not already serve that version — otherwise this is a re-release.
 
+When both pass, every OTHER distribution's artifacts are moved out of the dist
+directory (into `<dist-dir>-held/`), so the publish step uploads what the tag
+names and nothing else. `uv build --all-packages` builds every workspace member;
+publishing all of them let a kbforge tag release kbforge-sql 0.1.1 as a side
+effect, and would have shipped any companion bumped for a later release early.
+
 Usage:  check_release_target.py <tag> <dist-dir>
 
 Tags name what is being released: `vX.Y.Z` is kbforge, `<distribution>-vX.Y.Z`
@@ -56,22 +62,42 @@ def parse_tag(tag: str) -> tuple[str, str]:
     return (m["dist"] or ROOT_DIST), m["version"]
 
 
-def built_versions(dist_dir: Path, distribution: str) -> set[str]:
-    """Versions present in dist/ for one distribution.
+def _artifact(name: str) -> tuple[str, str] | None:
+    """(normalised distribution stem, version) for a wheel or sdist file name,
+    or None for anything else in dist/ (uv writes a .gitignore there).
 
-    Wheel and sdist names normalise `-` to `_`, so `kbforge-okfquery` is looked
-    up as `kbforge_okfquery`."""
+    Wheel and sdist names normalise `-` to `_`, so `kbforge-okfquery` appears as
+    `kbforge_okfquery`, and the first `-` always ends the stem."""
+    if name.endswith(".whl"):
+        parts = name[: -len(".whl")].split("-")
+        return (parts[0], parts[1]) if len(parts) >= 2 else None
+    if name.endswith(".tar.gz"):
+        stem, sep, version = name[: -len(".tar.gz")].partition("-")
+        return (stem, version) if sep else None
+    return None
+
+
+def built_versions(dist_dir: Path, distribution: str) -> set[str]:
+    """Versions present in dist/ for one distribution."""
     stem = distribution.replace("-", "_")
-    found = set()
-    for path in dist_dir.iterdir():
-        name = path.name
-        if name.endswith(".whl"):
-            parts = name[: -len(".whl")].split("-")
-            if len(parts) >= 2 and parts[0] == stem:
-                found.add(parts[1])
-        elif name.endswith(".tar.gz") and name.startswith(f"{stem}-"):
-            found.add(name[len(stem) + 1 : -len(".tar.gz")])
-    return found
+    return {
+        art[1]
+        for path in dist_dir.iterdir()
+        if (art := _artifact(path.name)) is not None and art[0] == stem
+    }
+
+
+def keep_only(dist_dir: Path, distribution: str, held: Path) -> None:
+    """Move every other distribution's artifacts from `dist_dir` to `held`.
+
+    Moved, not deleted, so a failed publish can still be inspected. Files that
+    are not artifacts stay where they are."""
+    stem = distribution.replace("-", "_")
+    held.mkdir(parents=True, exist_ok=True)
+    for path in sorted(dist_dir.iterdir()):
+        art = _artifact(path.name)
+        if art is not None and art[0] != stem:
+            path.rename(held / path.name)
 
 
 def pypi_versions(distribution: str) -> set[str] | None:
@@ -118,15 +144,18 @@ def main(argv: list[str]) -> int:
     published = pypi_versions(distribution)
     if published is None:
         print(f"{distribution} is not yet on PyPI — first release, nothing to compare")
-        return 0
-    if version in published:
+    elif version in published:
         fail(
             f"{distribution} {version} is already on PyPI. skip-existing would "
             f"swallow every file and the job would report success having published "
             f"nothing. Bump the version, or drop this distribution from the release."
         )
+    else:
+        print(f"{distribution} {version} is new to PyPI — release will publish it")
 
-    print(f"{distribution} {version} is new to PyPI — release will publish it")
+    held = dist_dir.parent / f"{dist_dir.name}-held"
+    keep_only(dist_dir, distribution, held)
+    print(f"publishing only {distribution}; other distributions held in {held}")
     return 0
 
 
