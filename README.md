@@ -117,6 +117,11 @@ kbforge run --connector local_files --set path=./docs \
 
 The synthesizer reaches models through a LiteLLM provider, so OpenRouter and a
 self-hosted LiteLLM gateway share one config path.
+`--llm-set 'instructions="..."'` appends deployment-specific guidance to the
+fixed prompt. Changing it alone re-synthesizes nothing; it reaches a concept the
+next time that concept is rebuilt. Quote the value: it is YAML, so unquoted text
+containing `: ` or ` #` would be read as a mapping or cut at a comment (both are
+rejected with exit 2).
 
 For a stub concept that also carries a real description and tags — without
 rewriting its body — use `--synthesizer describe` instead:

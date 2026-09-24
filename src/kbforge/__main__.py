@@ -78,7 +78,23 @@ def _parse_settings(pairs: list[str]) -> dict:
         if not sep:
             raise ValueError(f"--set expects KEY=VALUE, got {pair!r}")
         config[key] = yaml.safe_load(raw)
+        if _drops_a_comment(raw):
+            raise ValueError(
+                f"{key}: YAML reads ' #' as a comment and would drop the rest of "
+                f"{raw!r}; quote the value: {key}='\"...\"'"
+            )
     return config
+
+
+def _drops_a_comment(raw: str) -> bool:
+    """True when YAML discards part of `raw` as a comment. Comments are the one
+    thing the scanner emits no token for, so any non-blank character outside
+    every token's span was dropped."""
+    covered = [False] * len(raw)
+    for token in yaml.scan(raw):
+        for i in range(token.start_mark.index, token.end_mark.index):
+            covered[i] = True
+    return any(not c and not ch.isspace() for c, ch in zip(covered, raw, strict=True))
 
 
 def _source_args(p: argparse.ArgumentParser) -> None:

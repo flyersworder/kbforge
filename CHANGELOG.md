@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `--llm-set instructions=...` for `--synthesizer llm` (#44), appended to the
+  fixed prompt as for `describe`. Editing it alone re-synthesizes nothing.
+
 ## [0.13.1] - 2026-09-24
 
 ### Fixed

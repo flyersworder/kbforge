@@ -85,6 +85,15 @@ class LLMConfig:
     # Extra attempts after an output fails validation: for a genuinely flaky
     # model. They do not help a truncated one, which fails the same way again.
     output_retries: int = 2
+    # Appended to the fixed prompt, never replacing it. Not part of any cache or
+    # drift key: editing it alone re-synthesizes nothing (architecture.md §7.3).
+    instructions: str = ""
+
+    def __post_init__(self) -> None:
+        # `--llm-set instructions=` is YAML null: a wrapper passing an unset
+        # variable means "no extra guidance", not a malformed value.
+        if self.instructions is None:
+            self.instructions = ""
 
     def validate_env(self) -> list[str]:
         problems: list[str] = []
@@ -98,6 +107,14 @@ class LLMConfig:
             problems.append("output_retries must be >= 0")
         if self.output_mode not in ("tool", "native", "prompted"):
             problems.append("output_mode must be tool, native, or prompted")
+        # `--llm-set` values are YAML-typed: unquoted text containing `: ` is a
+        # mapping, and prompt assembly would crash on it.
+        if not isinstance(self.instructions, str):
+            problems.append(
+                "instructions must be a string; YAML read it as "
+                f"{type(self.instructions).__name__}, so quote the value: "
+                "--llm-set 'instructions=\"...\"'"
+            )
         return problems
 
 
@@ -219,7 +236,7 @@ class LLMSynthesizer:
             model,
             output_type=_wrap_output(config.output_mode),
             retries=config.output_retries,
-            instructions=_INSTRUCTIONS,
+            instructions=_with_instructions(_INSTRUCTIONS, config),
             model_settings=ModelSettings(
                 temperature=config.temperature, max_tokens=config.max_tokens
             ),
@@ -308,6 +325,11 @@ class LLMSynthesizer:
         return proposal
 
 
+def _with_instructions(fixed: str, config: LLMConfig) -> str:
+    extra = config.instructions.strip()
+    return f"{fixed}\n\n{extra}" if extra else fixed
+
+
 _DESCRIBE_INSTRUCTIONS = (
     "You describe one source document for a knowledge-base index. Write ONLY "
     "from the provided text; add no outside knowledge and invent no facts. "
@@ -318,7 +340,6 @@ _DESCRIBE_INSTRUCTIONS = (
 
 @dataclass
 class DescribeConfig(LLMConfig):
-    instructions: str = ""
     tags_vocabulary: dict[str, list[str]] | None = None
     model_tags: bool = True
     description_max_chars: int = 240
@@ -394,9 +415,7 @@ def _describe_instructions(config: DescribeConfig) -> str:
         )
     else:
         parts.append("Return `tags` as an empty list.")
-    if config.instructions.strip():
-        parts.append(config.instructions.strip())
-    return "\n\n".join(parts)
+    return _with_instructions("\n\n".join(parts), config)
 
 
 class DescribeSynthesizer:
