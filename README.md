@@ -209,8 +209,10 @@ section at the end of each concept, which an OKF reader follows and which
 holds the note that says why the two relate; connector `relations` get the
 same section. Each system's run rebuilds only its own concepts, so a
 cross-system link lands on each side on that side's run. The review note names
-the other system, so its request can be merged first. For concepts that share
-tags or facets, use `okfquery related` rather than declaring links. See
+the other system, so its request can be merged first. Every system's run that
+shares a mirror must pass the same `--links`: a run without it strips that
+system's editorial links on its next run. For concepts that share tags or
+facets, use `okfquery related` rather than declaring links. See
 `docs/architecture.md` §7.4.
 
 ## Consuming a bundle

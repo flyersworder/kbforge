@@ -1439,8 +1439,12 @@ qualified `doc_id`s, for §7.1's reason. A `note` is one line and renders after
 the link; a symmetric entry's note renders on both sides. `links_problems`
 rejects bad shape, self-links and duplicates before any fetch. A reference to a
 document not in the mirror is not an error. Its system may not have synced
-yet, so the run drops the link and says so in a review note, and the link
-appears once the target does.
+yet, or it may be in this fetch but deferred to a later chunk, so the run drops
+the link with a review note (`<path>: link to <id> (links.yaml) is not
+published yet and was dropped; it is added once its target is`), and the link
+appears once the target does. Every system's run that shares a mirror must
+pass the same `--links`: a run without it strips that system's editorial links
+on its next run, as a `links.yaml` edit would.
 
 **Resolution is by `doc_id`**, over `by_id` (the whole mirror overlaid with
 this run, tombstones removed), as grounding resolves. A concept's declared
@@ -1454,8 +1458,10 @@ protects against is resolution *by path*, which this is not. The old abort on
 a relation that crosses out of its system is therefore lifted, for connector
 `relations` and `links.yaml` alike. Keeping it for relations would make the same link legal or
 fatal depending on where it was declared. A same-system relation whose target
-is missing is still dropped silently, as before; only a missing `links.yaml`
-target gets a note. Links reach the synthesis copy only, never the mirror:
+is missing is still dropped silently, as before. A missing `links.yaml` target
+gets the note above, and so does a missing cross-system relation, as
+`(relation into system <system>)`, so a relation the abort used to protect
+never vanishes silently. Links reach the synthesis copy only, never the mirror:
 `commit()` receives the connector's own documents, so no config-dependent
 content lands there (§7.1's subject-map rule).
 
@@ -1471,9 +1477,11 @@ than the synthesizer because it is frame, not prose: every synthesizer, a
 third-party one included, gets the same section, and none can forge it. The
 section is a second carrier of `links`, so `_check_related_section` binds it to
 the projection. The targets after the **last** marker must equal
-`concept.links`, and a concept with no links must have no marker. A source body
-that contains the marker text therefore fails loudly instead of shipping
-ambiguous links. Titles can go stale by design. A retitled target shows its old
+`concept.links`, and a concept with no links must have no marker. The marker
+counts only as a whole line, so a title or prose line that merely contains its
+text is not a section, but a source body with a line that is the marker alone
+fails loudly instead of shipping ambiguous links. Titles and notes are escaped,
+so neither can add a body link the projection does not carry. Titles can go stale by design. A retitled target shows its old
 title in referrers until they are next rendered, because OKF readers follow the
 path, not the text, and rebuilding every referrer for a cosmetic change is not
 worth it. Existing bundles, `local_files` relations included, gain the section
@@ -1516,7 +1524,9 @@ restores `_links/` with the rest of a chunk.
 system A's request links to `B:x` while B's request is still open, merging A
 first puts a link on `main` that dangles until B merges, or until B
 re-proposes if its request is closed. Within one system this cannot happen,
-because target and referrer ride one sync branch. OKF readers must tolerate
+because target and referrer ride one sync branch: a concept whose recorded
+managed links name a document this run tombstones is a referrer (§7), rebuilt
+in the same chunk regardless of the cap. OKF readers must tolerate
 broken links (§6.1), so this is legal OKF; law 2 is stricter on purpose. The
 window widens an existing hazard (the mirror ahead of `main` after a close,
 which `redo` exists for) rather than adding a new kind. It is disclosed rather

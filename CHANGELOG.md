@@ -11,8 +11,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `--links links.yaml` (#41): editorial links no source carries, as a plain
   `doc_id` or `{to, note, symmetric}`, resolved by `doc_id` across systems. A
-  reference to a system that has not synced yet is a review note, not an error,
-  and the link appears once its target does.
+  reference to a document that is not published yet is a review note, not an
+  error, and the link appears once its target does. Every system's run sharing
+  a mirror must pass the same `--links`.
 - Every concept with links gets a kbforge-owned `## Related` section at the end
   of its body (OKF §6.1), with the target's title and the link's note. It is
   bound to the `links` frontmatter by a new validator, so the two can't
@@ -22,7 +23,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - A relation into another system no longer aborts the run: it resolves by
-  `doc_id` like an editorial link. The bundle-path-collision abort is unchanged.
+  `doc_id` like an editorial link; if its target has not synced yet, the link
+  is dropped with a review note. The bundle-path-collision abort is unchanged.
 - The no-op rule has one more clause: a run with no source change, no grounding
   drift and no link drift is still `NoOp`. Link drift (a `links.yaml` edit, or a
   target added or removed by another system's run) rebuilds only the concepts

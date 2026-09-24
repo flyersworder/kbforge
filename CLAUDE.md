@@ -26,9 +26,10 @@ than one held up by convention.
   `ChangeSet.is_noop` **and** no grounding drift (§7.1) and no link drift
   (§7.4) — grounding added a second thing a concept is built from, and
   `links.yaml` and other systems' documents added a third, so the rule covers
-  all of them or it stops meaning anything. It is still never "open a review request and see": no
-  review request is ever opened for a concept nothing changed under. This is
-  also what makes `generated.at` honest and the token bill bounded.
+  all of them or it stops meaning anything. It is still never "open a review
+  request and see": no review request is ever opened for a concept nothing
+  changed under. This is also what makes `generated.at` honest and the token
+  bill bounded.
 - **kbforge never merges.** No publisher defines a merge method — check with
   `grep -rn 'def .*merge' src/kbforge/publishers/`. Keep it that way; don't add
   one "just for tests".
@@ -43,8 +44,9 @@ than one held up by convention.
   rather than letting one system's concept overwrite another's on merge.
   Cross-system links resolve by `doc_id` (architecture.md §7.4), which that
   abort keeps unambiguous; the merge-order window they open is disclosed in the
-  review note, not solved by merging. System-qualified paths would fix this at the root; that
-  rewrites every published path, so it is its own release, not a patch.
+  review note, not solved by merging. System-qualified paths would fix this
+  at the root; that rewrites every published path, so it is its own release,
+  not a patch.
 - **Deletions are explicit tombstones** (`CanonicalDocument.deleted=True`).
   Absence from an incremental fetch never implies deletion; `FetchResult.complete`
   exists so a rate-limited partial fetch can't manufacture removals.
