@@ -538,3 +538,90 @@ def test_describe_rejects_a_non_string_vocabulary_key(
     assert code == 2
     assert "tags_vocabulary has a non-string or blank tag: 2024" in out
     assert "Traceback" not in out
+
+
+def _two_docs(tmp_path: Path) -> Path:
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "a.md").write_text("---\ntitle: A\n---\nA.\n", "utf-8")
+    (src / "b.md").write_text("---\ntitle: B\n---\nB.\n", "utf-8")
+    return src
+
+
+def test_links_flag_renders_a_related_section(tmp_path: Path, capsys):
+    src = _two_docs(tmp_path)
+    links = tmp_path / "links.yaml"
+    links.write_text(
+        "links:\n  local_files:a.md:\n    - to: local_files:b.md\n"
+        "      note: why they relate\n",
+        "utf-8",
+    )
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--links",
+            str(links),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 0, capsys.readouterr().out
+    page = tmp_path / "out" / "sync-local_files" / "concepts" / "a" / "overview.md"
+    assert "- [B](/concepts/b/overview.md) — why they relate" in page.read_text("utf-8")
+
+
+def test_a_malformed_links_file_exits_2_before_fetching(tmp_path: Path, capsys):
+    src = _two_docs(tmp_path)
+    links = tmp_path / "links.yaml"
+    links.write_text("links:\n  a.md:\n    - local_files:b.md\n", "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--links",
+            str(links),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    out = capsys.readouterr().out
+    assert "links config: links key 'a.md' must be a qualified doc_id" in out
+    assert not (tmp_path / "mirror").exists()
+
+
+@pytest.mark.parametrize(
+    ("name", "body"),
+    [
+        ("missing.yaml", None),
+        ("bad.yaml", "links: [unclosed\n"),
+        ("wrong.yaml", "link: {}\n"),
+    ],
+)
+def test_an_unreadable_links_file_exits_2_with_a_message(
+    tmp_path: Path, capsys, name: str, body: str | None
+):
+    src = _two_docs(tmp_path)
+    links = tmp_path / name
+    if body is not None:
+        links.write_text(body, "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--links",
+            str(links),
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    out = capsys.readouterr().out
+    assert f"links config {links}" in out
