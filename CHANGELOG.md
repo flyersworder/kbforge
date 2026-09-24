@@ -7,10 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-09-24
+
 ### Added
 
-- `--llm-set instructions=...` for `--synthesizer llm` (#44), appended to the
-  fixed prompt as for `describe`. Editing it alone re-synthesizes nothing.
+- `--llm-set 'instructions="..."'` for `--synthesizer llm` (#44), appended to
+  the fixed prompt as for `describe`. Editing it alone re-synthesizes nothing.
+
+### Fixed
+
+- An `instructions` value YAML reads as a mapping (unquoted text containing
+  `: `) exits 2 with a hint to quote it, instead of crashing prompt assembly.
+  This affected `describe` since 0.12.0.
+- A `--set`, `--publish-set` or `--llm-set` value that YAML would cut at a
+  ` #` comment exits 2 instead of silently losing its tail.
+- An empty `instructions=` means no extra guidance rather than an error.
 
 ## [0.13.1] - 2026-09-24
 
@@ -769,7 +780,10 @@ production protocol.
   --set KEY=VALUE ...` resolves the connector from the registry and takes YAML-typed
   config, with no per-connector knowledge in the CLI.
 
-[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/flyersworder/kbforge/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/flyersworder/kbforge/compare/v0.13.1...v0.14.0
+[0.13.1]: https://github.com/flyersworder/kbforge/compare/v0.13.0...v0.13.1
+[0.13.0]: https://github.com/flyersworder/kbforge/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/flyersworder/kbforge/compare/v0.11.1...v0.12.0
 [0.11.1]: https://github.com/flyersworder/kbforge/compare/v0.11.0...v0.11.1
 [0.11.0]: https://github.com/flyersworder/kbforge/compare/v0.10.0...v0.11.0
