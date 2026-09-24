@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `--links links.yaml` (#41): editorial links no source carries, as a plain
   `doc_id` or `{to, note, symmetric}`, resolved by `doc_id` across systems. A
-  reference to a document that is not published yet is a review note, not an
+  reference to a document not in the bundle is a review note, not an
   error, and the link appears once its target does. Every system's run sharing
   a mirror must pass the same `--links`.
 - Every concept with links gets a kbforge-owned `## Related` section at the end

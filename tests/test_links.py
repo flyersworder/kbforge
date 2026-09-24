@@ -142,8 +142,9 @@ def test_a_missing_editorial_target_is_dropped_with_a_note():
     assert res.links == res.managed == []
     assert res.declares_managed  # so the pipeline writes an EMPTY sidecar
     assert res.notes == [
-        "concepts/x/overview.md: link to b:z (links.yaml) is not published yet "
-        "and was dropped; it is added once its target is"
+        "concepts/x/overview.md: link to b:z (links.yaml) was dropped: its "
+        "target is not in the bundle (not synced yet, deferred to a later "
+        "chunk, or deleted); the link returns if the target is published"
     ]
 
 
@@ -153,8 +154,9 @@ def test_a_missing_cross_system_relation_is_dropped_with_a_note():
     assert res.links == res.managed == []
     assert res.declares_managed
     assert res.notes == [
-        "concepts/x/overview.md: link to b:z (relation into system b) is not "
-        "published yet and was dropped; it is added once its target is"
+        "concepts/x/overview.md: link to b:z (relation into system b) was "
+        "dropped: its target is not in the bundle (not synced yet, deferred to "
+        "a later chunk, or deleted); the link returns if the target is published"
     ]
 
 

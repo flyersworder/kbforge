@@ -1439,10 +1439,10 @@ qualified `doc_id`s, for §7.1's reason. A `note` is one line and renders after
 the link; a symmetric entry's note renders on both sides. `links_problems`
 rejects bad shape, self-links and duplicates before any fetch. A reference to a
 document not in the mirror is not an error. Its system may not have synced
-yet, or it may be in this fetch but deferred to a later chunk, so the run drops
-the link with a review note (`<path>: link to <id> (links.yaml) is not
-published yet and was dropped; it is added once its target is`), and the link
-appears once the target does. Every system's run that shares a mirror must
+yet, it may be in this fetch but deferred to a later chunk, or it may have been
+deleted, so the run drops the link with a review note that names all three
+(`<path>: link to <id> (links.yaml) was dropped: its target is not in the
+bundle …`), and the link appears once the target does. Every system's run that shares a mirror must
 pass the same `--links`: a run without it strips that system's editorial links
 on its next run, as a `links.yaml` edit would.
 

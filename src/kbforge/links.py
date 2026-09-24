@@ -167,8 +167,10 @@ def resolve_links(
             )
             if origin is not None:
                 notes.append(
-                    f"{path}: link to {target} ({origin}) is not published yet "
-                    "and was dropped; it is added once its target is"
+                    f"{path}: link to {target} ({origin}) was dropped: its "
+                    "target is not in the bundle (not synced yet, deferred to a "
+                    "later chunk, or deleted); the link returns if the target "
+                    "is published"
                 )
             continue
         entry = (target, declared[target])

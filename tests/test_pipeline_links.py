@@ -135,8 +135,9 @@ def test_a_symmetric_link_lands_on_the_targets_own_run(tmp_path):
     _, first = _run(tmp_path, [_doc("x")], links=links)  # b has not synced yet
     assert first.concepts[X].links == []
     assert (
-        f"{X}: link to b:y (links.yaml) is not published yet and was dropped; "
-        "it is added once its target is"
+        f"{X}: link to b:y (links.yaml) was dropped: its target is not in the "
+        "bundle (not synced yet, deferred to a later chunk, or deleted); the "
+        "link returns if the target is published"
     ) in first.summary.grounding_notes
 
     result, second = _run(tmp_path, [_doc("y", system="b")], name="b", links=links)
