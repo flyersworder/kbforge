@@ -79,6 +79,31 @@ def test_parse_settings_rejects_missing_equals():
         _parse_settings(["justakey"])
 
 
+@pytest.mark.parametrize(
+    "value", ["Keep it short #mandatory", "[a, b] # c", '"quoted" # c', "x #"]
+)
+def test_parse_settings_rejects_a_value_yaml_would_cut_at_a_comment(value):
+    """YAML reads ` #` as a comment and drops the rest, so an unquoted
+    `instructions=Keep it short #mandatory` reached the model as `Keep it
+    short`, with nothing to say text was lost (#44 review)."""
+    with pytest.raises(ValueError, match="comment") as err:
+        _parse_settings([f"instructions={value}"])
+    assert "instructions" in str(err.value) and "quote" in str(err.value)
+
+
+@pytest.mark.parametrize(
+    ("value", "parsed"),
+    [
+        ('"Keep it short #mandatory"', "Keep it short #mandatory"),
+        ("issue#44", "issue#44"),  # no space before '#': not a comment
+        ("[a, '#b']", ["a", "#b"]),
+        ("", None),
+    ],
+)
+def test_parse_settings_keeps_a_hash_yaml_does_not_read_as_a_comment(value, parsed):
+    assert _parse_settings([f"k={value}"]) == {"k": parsed}
+
+
 def test_list_command_shows_connectors(capsys):
     assert main(["list"]) == 0
     out = capsys.readouterr().out

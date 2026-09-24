@@ -89,6 +89,12 @@ class LLMConfig:
     # drift key: editing it alone re-synthesizes nothing (architecture.md §7.3).
     instructions: str = ""
 
+    def __post_init__(self) -> None:
+        # `--llm-set instructions=` is YAML null: a wrapper passing an unset
+        # variable means "no extra guidance", not a malformed value.
+        if self.instructions is None:
+            self.instructions = ""
+
     def validate_env(self) -> list[str]:
         problems: list[str] = []
         if not self.model:

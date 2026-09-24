@@ -389,3 +389,10 @@ def test_instructions_are_appended_to_the_fixed_prompt():
 def test_blank_instructions_leave_the_fixed_prompt_alone():
     assert _prompt_seen() == _INSTRUCTIONS
     assert _prompt_seen(instructions="   ") == _INSTRUCTIONS
+
+
+def test_an_empty_instructions_value_means_none():
+    """`--llm-set instructions=` is YAML `None`: a wrapper passing an unset
+    `$EXTRA` must run with no extra guidance, not exit 2 (#44 review)."""
+    assert LLMConfig(instructions=None).validate_env() == LLMConfig().validate_env()  # ty: ignore[invalid-argument-type]
+    assert _prompt_seen(instructions=None) == _INSTRUCTIONS
