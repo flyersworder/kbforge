@@ -18,6 +18,7 @@ from pydantic import ValidationError
 from kbforge.canonical import FetchContractError, StabilityError
 from kbforge.chunking import ChunkRecordError, load_chunking
 from kbforge.grounding import load_grounding, problems_for
+from kbforge.links import links_problems, load_links
 from kbforge.llm_synthesizer import SynthesisError
 from kbforge.pipeline import (
     Aborted,
@@ -145,6 +146,12 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help="chunked review config (YAML: max_concepts, group_by); "
         "see docs/architecture.md §7.2",
+    )
+    r.add_argument(
+        "--links",
+        default=None,
+        metavar="PATH",
+        help="editorial links (YAML); see docs/architecture.md §7.4",
     )
     rd = sub.add_parser(
         "redo", help="roll the last chunk back so the next run proposes it again"
@@ -300,6 +307,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        links_config = load_links(Path(args.links) if args.links else None)
+    except (OSError, UnicodeDecodeError, yaml.YAMLError, ValidationError) as exc:
+        # Same four operator mistakes, same handling, as --grounding above.
+        print(f"links config {args.links}: {exc}")
+        return 2
+    if links_config is not None:
+        problems = links_problems(links_config)
+        if problems:
+            print(f"links config: {'; '.join(problems)}")
+            return 2
+
+    try:
         result = run(
             connectors[args.connector],
             publishers[args.publisher],
@@ -310,6 +329,7 @@ def main(argv: list[str] | None = None) -> int:
             synthesizer=synthesizer,
             grounding_config=grounding_config,
             chunking=chunking,
+            links_config=links_config,
         )
     except (ConfigError, ChunkRecordError) as exc:
         print(str(exc))

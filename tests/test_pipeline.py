@@ -891,10 +891,8 @@ def test_another_systems_referrer_is_never_pulled_into_scope(tmp_path: Path):
     and because `existing` IS scoped to A, every one of B's own links is then
     dropped as dangling by §4.4 law 2, republished on A's branch."""
     _run_once(tmp_path, [_doc("gone", "Gone"), _doc("keep", "Keep", system="other")])
-    # Seeded straight into the mirror: a cross-system relation is now rejected at
-    # the run boundary, so the only way one exists is a mirror written before that
-    # rule -- which is exactly the state an upgrade produces, and exactly what
-    # this scope has to survive.
+    # Seeded straight into the mirror: another system's document naming this
+    # system's doc_id, which is exactly what this scope has to survive.
     commit(
         tmp_path / "mirror",
         [_doc("x", "X", system="other", relations=["sys:gone", "other:keep"])],
@@ -955,18 +953,6 @@ def test_two_systems_claiming_one_bundle_path_abort_the_run(tmp_path: Path):
     slugs = {f.law for f in result.failures}
     assert "bundle-path-collision" in slugs
     assert any("other:readme" in f.message for f in result.failures)
-
-
-def test_a_cross_system_relation_aborts_instead_of_vanishing(tmp_path: Path):
-    """A link whose target is in another system cannot survive: `existing` is
-    scoped to this run's systems, so law 2 drops it. Dropping it silently loses
-    an author's stated relation with no note anywhere in the review."""
-    _run_once(tmp_path, [_doc("b", "B", system="other")])
-    result, _ = _run_result(tmp_path, [_doc("a", "A", relations=["other:b"])])
-    assert isinstance(result, Aborted)
-    slugs = {f.law for f in result.failures}
-    assert "cross-system-relation" in slugs
-    assert any("other:b" in f.message for f in result.failures)
 
 
 def test_two_instances_of_one_connector_keep_separate_cursors(tmp_path: Path):

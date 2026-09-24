@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from kbforge.described import DESCRIBED_DIR
 from kbforge.grounding import FIRST_SEEN_DIR, SIDECAR_DIR
+from kbforge.links import LINKS_DIR
 from kbforge.mirror import slot_key
 from kbforge.models import CanonicalDocument
 
@@ -102,13 +103,15 @@ def merge_records(older: ChunkRecord, newer: ChunkRecord) -> ChunkRecord:
 
 def owned_paths(doc_id: str) -> list[str]:
     """Every mirror-relative file a run writes or deletes on behalf of `doc_id`:
-    its slot, its grounding sidecar, its first-seen record, its described record."""
+    its slot, its grounding sidecar, its first-seen record, its described record,
+    its links sidecar."""
     name = f"{slot_key(doc_id)}.json"
     return [
         name,
         f"{SIDECAR_DIR}/{name}",
         f"{FIRST_SEEN_DIR}/{name}",
         f"{DESCRIBED_DIR}/{name}",
+        f"{LINKS_DIR}/{name}",
     ]
 
 

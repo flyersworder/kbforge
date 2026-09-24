@@ -36,6 +36,17 @@ from kbforge.grounding import (
     write_sidecar,
 )
 from kbforge.hookspecs import PublisherSpec
+from kbforge.links import (
+    LinkResolution,
+    LinksConfig,
+    delete_links,
+    expand,
+    has_links_sidecars,
+    links_drifted,
+    read_links,
+    resolve_links,
+    write_links,
+)
 from kbforge.mirror import commit, diff, load_all
 from kbforge.models import (
     CanonicalDocument,
@@ -45,6 +56,7 @@ from kbforge.models import (
     ProposedChange,
     RawRecord,
 )
+from kbforge.related import with_related
 from kbforge.synthesize import (
     GroundingSynthesizer,
     StubSynthesizer,
@@ -198,28 +210,17 @@ def _drift_candidates(
     ]
 
 
-def _scope_failures(
-    changed_docs: list[CanonicalDocument],
-    by_id: dict[str, CanonicalDocument],
-) -> list[Failure]:
-    """Two ways the shared mirror can silently lose a concept, both reported
-    rather than published into.
+def _scope_failures(by_id: dict[str, CanonicalDocument]) -> list[Failure]:
+    """A path collision on the shared mirror, reported rather than published
+    into.
 
-    `concept_path` drops the system prefix, so the bundle has one namespace where
-    the mirror has one per system. Under the shared mirror grounding requires,
-    that is reachable two ways, and both used to be silent:
-
-    - **A path collision.** `wiki:readme` and `notes:readme` render one file on
-      two sync branches; whichever merges second overwrites the other with no
-      validator, no conflict, and no note.
-    - **A cross-system relation.** `existing` is scoped to this run's systems --
-      it must be, or a link resolves through a collision against a document this
-      system does not have -- so `assemble` drops the link under §4.4 law 2. An
-      author's stated relation vanishes with nothing anywhere saying so.
-
-    Both abort. System-qualified bundle paths would remove the collision at its
-    root and let cross-system links work, but that rewrites every published path,
-    so it is its own release rather than a patch (architecture.md §5.4)."""
+    `concept_path` drops the system prefix, so `wiki:readme` and `notes:readme`
+    render one file on two sync branches; whichever merges second overwrites the
+    other with no validator, no conflict, and no note. This check is also what
+    makes resolving links by doc_id unambiguous across systems (#41): one doc_id
+    per bundle path. System-qualified bundle paths would remove the collision at
+    its root, but that rewrites every published path, so it is its own release
+    (#42)."""
     failures: list[Failure] = []
 
     owners: dict[str, str] = {}
@@ -238,20 +239,6 @@ def _scope_failures(
                     "overwrite the other",
                 )
             )
-
-    for doc in changed_docs:
-        system = doc.doc_id.partition(":")[0]
-        for target in doc.relations:
-            if target.partition(":")[0] != system:
-                failures.append(
-                    Failure(
-                        concept_path(doc.doc_id),
-                        "cross-system-relation",
-                        f"relation to {target} crosses out of {system}; kbforge "
-                        "links within one system only, and publishing would drop "
-                        "it silently under §4.4 law 2",
-                    )
-                )
     return failures
 
 
@@ -298,6 +285,7 @@ def run(
     synthesizer: Synthesizer | None = None,
     grounding_config: GroundingConfig | None = None,
     chunking: ChunkingConfig | None = None,
+    links_config: LinksConfig | None = None,
 ) -> NoOp | Aborted | Published | Waiting:
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
@@ -333,6 +321,8 @@ def run(
 
     grounds = getattr(synthesizer, "grounds", False)
     grounding_cfg = grounding_config or GroundingConfig()
+    # Expanded once: symmetric reverses are what let B's run find A's entry.
+    expanded = expand(links_config) if links_config is not None else {}
 
     changeset = diff(mirror_path, docs)
 
@@ -347,7 +337,11 @@ def run(
         or any(d.grounded_by for d in docs)
         or has_sidecars(mirror_path)
     )
-    if changeset.is_noop and not scan:
+    # Link drift (§7.4) is gated like grounding drift: `--links` given, or a
+    # sidecar from before. Unlike grounding it runs under every synthesizer,
+    # because links are frame, not prose.
+    link_scan = links_config is not None or has_links_sidecars(mirror_path)
+    if changeset.is_noop and not scan and not link_scan:
         return NoOp()
 
     # Read once per run, and only past the first no-op gate. The mirror is
@@ -431,6 +425,18 @@ def run(
             _resolutions[doc.doc_id] = cached
         return cached
 
+    # Links, memoised for the same reason as grounding: the link-drift scan,
+    # the synthesis copy, the note loop, `with_related` and the sidecar write
+    # all resolve the same document from the same `by_id`.
+    _link_resolutions: dict[str, LinkResolution] = {}
+
+    def _links_of(doc: CanonicalDocument) -> LinkResolution:
+        cached = _link_resolutions.get(doc.doc_id)
+        if cached is None:
+            cached = resolve_links(doc, expanded, by_id)
+            _link_resolutions[doc.doc_id] = cached
+        return cached
+
     # This run's systems. Used three times: to scope the drift scan, `referrers`,
     # and `existing` — grounding requires one shared mirror, so all three see
     # every system's documents and all three must filter to this run's own.
@@ -445,14 +451,16 @@ def run(
     # closed in the first place.
     systems = {d.anchor.system for d in docs} or set(prior.systems if prior else ())
 
+    # `changed | backlog`: a backlog document is rebuilt whole in its own
+    # chunk, so rebuilding its stale mirror copy for drift now is waste.
+    candidates = (
+        _drift_candidates(mirror_docs, by_id, systems, changed | backlog, removed_ids)
+        if scan or link_scan
+        else []
+    )
     drift: list[str] = []
     deferred_drift: set[str] = set()
     if scan:
-        # `changed | backlog`: a backlog document is rebuilt whole in its own
-        # chunk, so rebuilding its stale mirror copy for drift now is waste.
-        candidates = _drift_candidates(
-            mirror_docs, by_id, systems, changed | backlog, removed_ids
-        )
         drift = drifted(
             mirror_path,
             candidates,
@@ -473,7 +481,34 @@ def run(
             drift = [x for x in drift if x not in deferred_drift]
         changed_docs += drifted_docs
 
-    if changeset.is_noop and not drift:
+    # A concept whose managed links (targets or notes) moved since its last
+    # publish: a links.yaml edit, or a target added or tombstoned by another
+    # system's run. Rebuilt on its own system's run, never the other's. Never
+    # changes `relations`, the mirror or links.yaml, so it converges.
+    link_drift: list[str] = []
+    deferred_link_drift: set[str] = set()
+    if link_scan:
+        already = set(drift) | deferred_drift
+        link_drift = [
+            x
+            for x in links_drifted(
+                mirror_path,
+                candidates,
+                {d.doc_id: _links_of(d).managed for d in candidates},
+            )
+            if x not in already
+        ]
+        link_ids = set(link_drift)
+        link_docs = [d for d in candidates if d.doc_id in link_ids]
+        if chunking is not None:
+            # After changed documents and grounding drift, into what remains.
+            room = max(chunking.max_concepts - len(changed) - len(drift), 0)
+            link_docs, _ = admit(link_docs, chunking, room)
+            deferred_link_drift = link_ids - {d.doc_id for d in link_docs}
+            link_drift = [x for x in link_drift if x not in deferred_link_drift]
+        changed_docs += link_docs
+
+    if changeset.is_noop and not drift and not link_drift:
         return NoOp()
 
     # A concept linking to a deleted one must be re-synthesized, or its link
@@ -490,15 +525,30 @@ def run(
     # comes from the first item and a deletion-only run has no other.
     # Under chunking, `changed` is the admitted set, so a backlog document that
     # links to a removed concept is rebuilt here from its mirror copy (§4.1).
+    #
+    # A recorded managed link counts as well as a relation: a same-system
+    # links.yaml link to a removed concept is link drift, which the cap can
+    # defer, and a deferred referrer would keep its dangling link on `main`
+    # while this chunk deletes the target. Read from the `_links/` sidecar, not
+    # re-resolved: it records what the published file carries.
     referrers: list[CanonicalDocument] = []
     if removed_ids:
+        recorded = has_links_sidecars(mirror_path)
         referrers = [
             d
             for d in mirror_docs
             if d.anchor.system in systems
             and d.doc_id not in changed
             and d.doc_id not in removed_ids
-            and removed_ids.intersection(d.relations)
+            and (
+                removed_ids.intersection(d.relations)
+                or (
+                    recorded
+                    and removed_ids.intersection(
+                        t for t, _ in read_links(mirror_path, d.doc_id)
+                    )
+                )
+            )
         ]
         changed_docs += referrers
 
@@ -531,10 +581,15 @@ def run(
     # stuck `pending: True` even once nothing is actually left to redo.
     # Promoted back into `drift` rather than left alone, so the note loop and
     # the `pending`/"carries" accounting below see it as delivered.
-    rebuilt_deferred = deferred_drift & {d.doc_id for d in referrers + arrivals}
+    rebuilt = {d.doc_id for d in referrers + arrivals}
+    rebuilt_deferred = deferred_drift & rebuilt
     if rebuilt_deferred:
         drift += sorted(rebuilt_deferred)
         deferred_drift -= rebuilt_deferred
+    rebuilt_link = deferred_link_drift & rebuilt
+    if rebuilt_link:
+        link_drift += sorted(rebuilt_link)
+        deferred_link_drift -= rebuilt_link
 
     # The drift scan and `referrers` can both select the same document — drift
     # knows nothing about `referrers`' filter and vice versa. Deduped once,
@@ -547,6 +602,22 @@ def run(
         seen_ids.add(d.doc_id)
         deduped.append(d)
     changed_docs = deduped
+
+    # Every concept this run renders gets its links resolved by doc_id over the
+    # whole mirror (§7.4): connector relations and editorial links alike, across
+    # systems. The synthesizer receives a COPY whose `relations` are the
+    # resolved targets, never the original: `commit()` below writes `docs`, and
+    # config-dependent content must not reach the mirror (§7.1's rule).
+    link_notes: list[str] = []
+    link_targets: set[str] = set()
+    synth_docs: list[CanonicalDocument] = []
+    for doc in changed_docs:
+        res = _links_of(doc)
+        link_notes += res.notes
+        link_targets |= {target for target, _ in res.links}
+        synth_docs.append(
+            doc.model_copy(update={"relations": [t for t, _ in res.links]})
+        )
 
     # Existing bundle paths feed §4.4 law 2: assemble() drops any link that is
     # not in here, so a link to an unchanged-but-still-published concept would
@@ -563,17 +634,20 @@ def run(
     # `wiki:readme.md` and `notes:readme.md` occupy one bundle path. Unscoped, a
     # link to a document that does not exist in this system publishes as
     # *surviving* because another system happens to hold one with the same
-    # native_id, and law 2 never sees the dangling link.
+    # native_id, and law 2 never sees the dangling link. Resolved link targets
+    # are unioned in on top: they were resolved by doc_id, not by path, so they
+    # cannot be rescued by another system's document.
     tombstoned = {concept_path(doc_id) for doc_id in changeset.removed}
     existing = (
         frozenset(
             {concept_path(d.doc_id) for d in mirror_docs if d.anchor.system in systems}
             | {concept_path(d.doc_id) for d in admitted_docs if not d.deleted}
+            | {concept_path(t) for t in link_targets}
         )
         - tombstoned
     )
 
-    scope_failures = _scope_failures(changed_docs, by_id)
+    scope_failures = _scope_failures(by_id)
     if scope_failures:
         return Aborted(failures=scope_failures)
 
@@ -604,11 +678,12 @@ def run(
         # really does implement `GroundingSynthesizer` (every shipped
         # implementation sets `grounds = True` exactly when it does).
         proposal = cast(GroundingSynthesizer, synthesizer).synthesize(
-            changed_docs, chunk_changeset, existing, grounding=grounding_map
+            synth_docs, chunk_changeset, existing, grounding=grounding_map
         )
     else:
-        proposal = synthesizer.synthesize(changed_docs, chunk_changeset, existing)
+        proposal = synthesizer.synthesize(synth_docs, chunk_changeset, existing)
     proposal.summary.grounding_notes.extend(grounding_notes)
+    proposal.summary.grounding_notes.extend(link_notes)
 
     # Assigned here, never taken from the synthesizer: deletion is structure,
     # not prose, so an LLM synthesizer cannot delete a file it dislikes.
@@ -638,6 +713,14 @@ def run(
                 "it was last published; its own source is unchanged"
             )
 
+    for doc_id in link_drift:
+        path = concept_path(doc_id)
+        if path in proposal.files:
+            proposal.summary.grounding_notes.append(
+                f"{path}: re-synthesized because its links changed since it was "
+                "last published; its own source is unchanged"
+            )
+
     for doc in arrivals:
         path = concept_path(doc.doc_id)
         if path in proposal.files:
@@ -646,12 +729,45 @@ def run(
                 "this run; its own source is unchanged"
             )
 
-    pending = bool(backlog or deferred_drift)
+    # The merge-order window (§7.4): the mirror advances on publish, not merge,
+    # so a cross-system link dangles on `main` until its target's request
+    # merges. kbforge never merges; it tells the reviewer instead.
+    for doc in changed_docs:
+        path = concept_path(doc.doc_id)
+        concept = proposal.concepts.get(path)
+        if path not in proposal.files or concept is None:
+            continue
+        own = doc.doc_id.partition(":")[0]
+        for target, _ in _links_of(doc).links:
+            other = target.partition(":")[0]
+            if other != own and concept_path(target) in concept.links:
+                proposal.summary.grounding_notes.append(
+                    f"{path}: links to {target} (system {other}); merge that "
+                    "system's review request first, or the link dangles until "
+                    "it does"
+                )
+
+    # Frame, not prose: rendered here so every synthesizer gets the same
+    # section and none can forge it. Bound to the projection by
+    # `validate._check_related_section` (architecture.md §7.4).
+    with_related(
+        proposal,
+        {concept_path(i): d.title for i, d in by_id.items()},
+        {
+            concept_path(d.doc_id): {
+                concept_path(t): note for t, note in _links_of(d).links if note
+            }
+            for d in changed_docs
+        },
+    )
+
+    pending = bool(backlog or deferred_drift or deferred_link_drift)
     if pending:
-        carried = len(changed) + len(drift)
+        carried = len(changed) + len(drift) + len(link_drift)
+        waiting = len(backlog) + len(deferred_drift) + len(deferred_link_drift)
         proposal.summary.grounding_notes.append(
             f"chunked review: this request carries {carried} of "
-            f"{carried + len(backlog) + len(deferred_drift)} changed concepts; "
+            f"{carried + waiting} changed concepts; "
             "the rest follow once it is merged or closed"
         )
 
@@ -679,6 +795,7 @@ def run(
             changed
             | removed_ids
             | set(drift)
+            | set(link_drift)
             | {d.doc_id for d in referrers + arrivals}
         )
         prior_mirror = snapshot(mirror_path, touched)
@@ -702,6 +819,14 @@ def run(
             # document is not written anywhere -- a synthesizer does not get
             # to write another concept's mirror state.
             delete_described(mirror_path, doc.doc_id)
+        resolution = _links_of(doc)
+        if resolution.declares_managed:
+            # Written even when empty, for the grounding sidecar's reason: a
+            # declared link unresolvable today must still be rescanned when its
+            # target arrives, and the sidecar is what trips the scan.
+            write_links(mirror_path, doc.doc_id, resolution.managed)
+        else:
+            delete_links(mirror_path, doc.doc_id)
         docs_for = grounding_map.get(doc.doc_id) if grounds else None
         if docs_for:
             write_sidecar(
@@ -732,6 +857,7 @@ def run(
         delete_sidecar(mirror_path, doc_id)
         delete_first_seen(mirror_path, doc_id)
         delete_described(mirror_path, doc_id)
+        delete_links(mirror_path, doc_id)
     # Held while a backlog remains: the next chunk re-fetches from the same
     # cursor, which §4.2's at-least-once replay makes harmless (§4.2 of the
     # design note).
