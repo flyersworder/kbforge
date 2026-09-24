@@ -10,6 +10,7 @@ from pydantic_ai.messages import ModelResponse, ToolCallPart  # noqa: E402
 from pydantic_ai.models.function import AgentInfo, FunctionModel  # noqa: E402
 
 from kbforge.llm_synthesizer import (  # noqa: E402
+    _INSTRUCTIONS,
     LLMConfig,
     LLMSynthesizer,
     SynthesizedConcept,
@@ -359,3 +360,32 @@ def test_a_bad_output_is_retried_within_the_budget():
 def test_output_retries_is_configurable_and_positive():
     assert LLMConfig().output_retries == 2
     assert "output_retries must be >= 0" in LLMConfig(output_retries=-1).validate_env()
+
+
+def _prompt_seen(**cfg) -> str:
+    """The instructions the model actually received through a built agent."""
+    seen: list[str] = []
+
+    def fn(messages, info: AgentInfo):
+        seen.append(messages[-1].instructions or "")
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, _GOOD)])
+
+    config = LLMConfig(**cfg)
+    synth = LLMSynthesizer(
+        config, agent=LLMSynthesizer._build_agent(config, model=FunctionModel(fn))
+    )
+    synth.synthesize([_doc()], ChangeSet(added=["local_files:apps/x.md"]))
+    return seen[0]
+
+
+def test_instructions_are_appended_to_the_fixed_prompt():
+    """`instructions` extends the prompt; it cannot replace the part that says
+    to write only from the provided text (#44)."""
+    prompt = _prompt_seen(instructions="  Cite every claim as [n].  ")
+    assert prompt.startswith(_INSTRUCTIONS), prompt
+    assert prompt.endswith("\n\nCite every claim as [n]."), prompt
+
+
+def test_blank_instructions_leave_the_fixed_prompt_alone():
+    assert _prompt_seen() == _INSTRUCTIONS
+    assert _prompt_seen(instructions="   ") == _INSTRUCTIONS
