@@ -10,6 +10,7 @@ from kbforge import pipeline
 from kbforge.canonical import content_hash
 from kbforge.chunking import ChunkingConfig
 from kbforge.connectors.local_files import LocalFilesConnector
+from kbforge.grounding import GroundingConfig
 from kbforge.links import LINKS_DIR, LinksConfig, read_links
 from kbforge.mirror import slot_key
 from kbforge.models import (
@@ -333,6 +334,11 @@ def test_a_target_tombstoned_in_another_system_drops_the_link_next_run(tmp_path)
     assert isinstance(result, Published)
     assert change.concepts[X].links == []
     assert MARKER not in change.files[X]
+    assert (
+        f"{X}: re-synthesized because its links changed since it was last "
+        "published; its own source is unchanged"
+    ) in change.summary.grounding_notes
+    assert isinstance(_run(tmp_path, [_doc("x")], links=links)[0], NoOp)
 
 
 def test_an_unchanged_world_with_links_is_a_noop(tmp_path):
@@ -383,6 +389,8 @@ def test_link_drift_counts_toward_the_cap_and_waits_its_turn(tmp_path):
     ) in first.summary.grounding_notes
     _, second = _chunked(tmp_path, docs, 1, links=links)
     assert set(second.files) == {Z}
+    assert not any("chunked review" in n for n in second.summary.grounding_notes)
+    assert isinstance(_chunked(tmp_path, docs, 1, links=links)[0], NoOp)
 
 
 def test_redo_restores_the_links_sidecar(tmp_path):
@@ -453,3 +461,55 @@ def test_a_title_holding_the_marker_publishes(tmp_path):
     assert isinstance(result, Published)
     assert change.concepts[X].links == [Y]
     assert change.concepts[Z].links == []
+
+
+def test_a_cross_system_relation_arrives_without_links_yaml(tmp_path):
+    # No --links at all: the empty sidecar the relation left is what trips the
+    # scan once b syncs.
+    x = _doc("x", relations=["b:y"])
+    _, first = _run(tmp_path, [x])
+    assert first.concepts[X].links == []
+    assert read_links(tmp_path / "mirror", "a:x") == []
+    assert _sidecar(tmp_path, "a:x").exists()
+
+    _run(tmp_path, [_doc("y", system="b")], name="b")
+    result, change = _run(tmp_path, [x])
+    assert isinstance(result, Published)
+    assert set(change.files) == {X}
+    assert change.concepts[X].links == [Y]
+    assert read_links(tmp_path / "mirror", "a:x") == [("b:y", None)]
+    assert isinstance(_run(tmp_path, [x])[0], NoOp)
+
+
+class _GroundingSynth:
+    grounds = True
+
+    def synthesize(
+        self, changed_docs, changeset, existing_paths=frozenset(), grounding=None
+    ):
+        items = [(d, d.title, d.title, d.text) for d in changed_docs]
+        return assemble(items, changeset, existing_paths, grounding=grounding)
+
+
+def test_grounding_and_link_drift_together_rebuild_once_with_the_grounding_note(
+    tmp_path,
+):
+    grounding = GroundingConfig(grounding={"a:x": ["b:t"]})
+    synth = _GroundingSynth()
+    kw = {"synthesizer": synth, "grounding_config": grounding}
+    _run(tmp_path, [_doc("t", system="b")], name="b", **kw)
+    docs = [_doc("x"), _doc("y")]
+    _run(tmp_path, docs, links=_links({"a:x": [{"to": "a:y", "note": "old"}]}), **kw)
+
+    _run(tmp_path, [_doc("t", system="b", text="t2")], name="b", **kw)
+    links = _links({"a:x": [{"to": "a:y", "note": "new"}]})
+    result, change = _run(tmp_path, docs, links=links, **kw)
+    assert isinstance(result, Published)
+    assert set(change.files) == {X}
+    assert change.files[X].rstrip().endswith("— new")
+    notes = [n for n in change.summary.grounding_notes if n.startswith(f"{X}:")]
+    assert notes == [
+        f"{X}: re-synthesized because its grounding changed since it was last "
+        "published; its own source is unchanged"
+    ]
+    assert isinstance(_run(tmp_path, docs, links=links, **kw)[0], NoOp)
