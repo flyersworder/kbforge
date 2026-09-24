@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-09-24
+
 ### Fixed
 
 - A run that appends to an open review request no longer replaces its
