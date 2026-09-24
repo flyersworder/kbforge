@@ -6,7 +6,9 @@ from pathlib import Path
 
 import pytest
 
+from kbforge import pipeline
 from kbforge.canonical import content_hash
+from kbforge.chunking import ChunkingConfig
 from kbforge.connectors.local_files import LocalFilesConnector
 from kbforge.links import LINKS_DIR, LinksConfig, read_links
 from kbforge.mirror import slot_key
@@ -18,7 +20,7 @@ from kbforge.models import (
     ProposedChange,
     ResourceAnchor,
 )
-from kbforge.pipeline import Published, run
+from kbforge.pipeline import NoOp, Published, redo, run
 from kbforge.publishers.dry_run import DryRunPublisher
 from kbforge.related import MARKER
 from kbforge.synthesize import assemble, concept_path
@@ -276,3 +278,124 @@ def test_a_document_the_synthesizer_dropped_keeps_its_sidecar(tmp_path):
         synthesizer=_DropX(),
     )
     assert read_links(tmp_path / "mirror", "a:x") == [("a:y", "n")]
+
+
+def _chunked(root, docs, cap, **kw):
+    return _run(root, docs, chunking=ChunkingConfig(max_concepts=cap), **kw)
+
+
+def test_the_other_side_of_a_symmetric_link_is_picked_up_on_its_own_run(tmp_path):
+    links = _links({"a:x": [{"to": "b:y", "note": "n", "symmetric": True}]})
+    _run(tmp_path, [_doc("x")], links=links)
+    _run(tmp_path, [_doc("y", system="b")], name="b", links=links)
+
+    result, change = _run(tmp_path, [_doc("x")], links=links)
+    assert isinstance(result, Published)
+    assert set(change.files) == {X}
+    assert change.concepts[X].links == [Y]
+    assert (
+        f"{X}: re-synthesized because its links changed since it was last "
+        "published; its own source is unchanged"
+    ) in change.summary.grounding_notes
+
+    assert isinstance(_run(tmp_path, [_doc("x")], links=links)[0], NoOp)
+    assert isinstance(
+        _run(tmp_path, [_doc("y", system="b")], name="b", links=links)[0], NoOp
+    )
+
+
+def test_editing_only_a_note_rebuilds_only_that_concept(tmp_path):
+    docs = [_doc("x"), _doc("y"), _doc("z")]
+    before = {"a:x": [{"to": "a:y", "note": "old"}], "a:z": ["a:y"]}
+    after = {"a:x": [{"to": "a:y", "note": "new"}], "a:z": ["a:y"]}
+    _run(tmp_path, docs, links=_links(before))
+    _, change = _run(tmp_path, docs, links=_links(after))
+    assert set(change.files) == {X}
+    assert change.files[X].rstrip().endswith("— new")
+
+
+def test_a_new_entry_rebuilds_its_source(tmp_path):
+    docs = [_doc("x"), _doc("y")]
+    _run(tmp_path, docs)
+    _, change = _run(tmp_path, docs, links=_links({"a:x": ["a:y"]}))
+    assert set(change.files) == {X}
+    assert change.concepts[X].links == [Y]
+
+
+def test_a_target_tombstoned_in_another_system_drops_the_link_next_run(tmp_path):
+    links = _links({"a:x": ["b:y"]})
+    _run(tmp_path, [_doc("y", system="b")], name="b", links=links)
+    _, linked = _run(tmp_path, [_doc("x")], links=links)
+    assert linked.concepts[X].links == [Y]
+
+    _run(tmp_path, [_doc("y", system="b", deleted=True)], name="b", links=links)
+    result, change = _run(tmp_path, [_doc("x")], links=links)
+    assert isinstance(result, Published)
+    assert change.concepts[X].links == []
+    assert MARKER not in change.files[X]
+
+
+def test_an_unchanged_world_with_links_is_a_noop(tmp_path):
+    docs = [_doc("x"), _doc("y")]
+    links = _links({"a:x": [{"to": "a:y", "note": "n"}]})
+    _run(tmp_path, docs, links=links)
+    assert isinstance(_run(tmp_path, docs, links=links)[0], NoOp)
+
+
+def test_retitling_a_target_does_not_rebuild_its_referrer(tmp_path):
+    links = _links({"a:x": ["b:y"]})
+    _run(tmp_path, [_doc("y", system="b", title="Old")], name="b", links=links)
+    _run(tmp_path, [_doc("x")], links=links)
+    _run(tmp_path, [_doc("y", system="b", title="New")], name="b", links=links)
+    assert isinstance(_run(tmp_path, [_doc("x")], links=links)[0], NoOp)
+
+
+def test_dropping_links_yaml_removes_editorial_links_once(tmp_path):
+    docs = [_doc("x"), _doc("y")]
+    _run(tmp_path, docs, links=_links({"a:x": ["a:y"]}))
+    result, change = _run(tmp_path, docs)  # no --links: the sidecar trips the scan
+    assert isinstance(result, Published)
+    assert change.concepts[X].links == []
+    assert not _sidecar(tmp_path, "a:x").exists()
+    assert isinstance(_run(tmp_path, docs)[0], NoOp)
+
+
+def test_without_links_or_sidecars_the_mirror_is_never_loaded(tmp_path, monkeypatch):
+    docs = [_doc("x", relations=["a:y"]), _doc("y")]
+    _run(tmp_path, docs)
+
+    def _never(mirror):
+        raise AssertionError("load_all ran: the link-drift gate is not holding")
+
+    monkeypatch.setattr(pipeline, "load_all", _never)
+    assert isinstance(_run(tmp_path, docs)[0], NoOp)
+
+
+def test_link_drift_counts_toward_the_cap_and_waits_its_turn(tmp_path):
+    docs = [_doc("x"), _doc("y"), _doc("z")]
+    _run(tmp_path, docs)
+    links = _links({"a:x": ["a:y"], "a:z": ["a:y"]})
+    _, first = _chunked(tmp_path, docs, 1, links=links)
+    assert set(first.files) == {X}
+    assert (
+        "chunked review: this request carries 1 of 2 changed concepts; the rest "
+        "follow once it is merged or closed"
+    ) in first.summary.grounding_notes
+    _, second = _chunked(tmp_path, docs, 1, links=links)
+    assert set(second.files) == {Z}
+
+
+def test_redo_restores_the_links_sidecar(tmp_path):
+    docs = [_doc("x"), _doc("y")]
+    _chunked(tmp_path, docs, 5)
+    _chunked(tmp_path, docs, 5, links=_links({"a:x": ["a:y"]}))
+    assert read_links(tmp_path / "mirror", "a:x") == [("a:y", None)]
+    redo(
+        _Connector([], "a"),
+        _Publisher(),
+        config={},
+        mirror=str(tmp_path / "mirror"),
+        state_dir=str(tmp_path / "state"),
+        publish_config={},
+    )
+    assert not _sidecar(tmp_path, "a:x").exists()

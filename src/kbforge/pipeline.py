@@ -41,6 +41,8 @@ from kbforge.links import (
     LinksConfig,
     delete_links,
     expand,
+    has_links_sidecars,
+    links_drifted,
     resolve_links,
     write_links,
 )
@@ -334,7 +336,11 @@ def run(
         or any(d.grounded_by for d in docs)
         or has_sidecars(mirror_path)
     )
-    if changeset.is_noop and not scan:
+    # Link drift (§7.4) is gated like grounding drift: `--links` given, or a
+    # sidecar from before. Unlike grounding it runs under every synthesizer,
+    # because links are frame, not prose.
+    link_scan = links_config is not None or has_links_sidecars(mirror_path)
+    if changeset.is_noop and not scan and not link_scan:
         return NoOp()
 
     # Read once per run, and only past the first no-op gate. The mirror is
@@ -418,8 +424,9 @@ def run(
             _resolutions[doc.doc_id] = cached
         return cached
 
-    # Links, memoised for the same reason as grounding: the drift scan and the
-    # synthesis copy below resolve the same document from the same `by_id`.
+    # Links, memoised for the same reason as grounding: the link-drift scan,
+    # the synthesis copy, the note loop, `with_related` and the sidecar write
+    # all resolve the same document from the same `by_id`.
     _link_resolutions: dict[str, LinkResolution] = {}
 
     def _links_of(doc: CanonicalDocument) -> LinkResolution:
@@ -443,14 +450,16 @@ def run(
     # closed in the first place.
     systems = {d.anchor.system for d in docs} or set(prior.systems if prior else ())
 
+    # `changed | backlog`: a backlog document is rebuilt whole in its own
+    # chunk, so rebuilding its stale mirror copy for drift now is waste.
+    candidates = (
+        _drift_candidates(mirror_docs, by_id, systems, changed | backlog, removed_ids)
+        if scan or link_scan
+        else []
+    )
     drift: list[str] = []
     deferred_drift: set[str] = set()
     if scan:
-        # `changed | backlog`: a backlog document is rebuilt whole in its own
-        # chunk, so rebuilding its stale mirror copy for drift now is waste.
-        candidates = _drift_candidates(
-            mirror_docs, by_id, systems, changed | backlog, removed_ids
-        )
         drift = drifted(
             mirror_path,
             candidates,
@@ -471,7 +480,34 @@ def run(
             drift = [x for x in drift if x not in deferred_drift]
         changed_docs += drifted_docs
 
-    if changeset.is_noop and not drift:
+    # A concept whose managed links (targets or notes) moved since its last
+    # publish: a links.yaml edit, or a target added or tombstoned by another
+    # system's run. Rebuilt on its own system's run, never the other's. Never
+    # changes `relations`, the mirror or links.yaml, so it converges.
+    link_drift: list[str] = []
+    deferred_link_drift: set[str] = set()
+    if link_scan:
+        already = set(drift) | deferred_drift
+        link_drift = [
+            x
+            for x in links_drifted(
+                mirror_path,
+                candidates,
+                {d.doc_id: _links_of(d).managed for d in candidates},
+            )
+            if x not in already
+        ]
+        link_ids = set(link_drift)
+        link_docs = [d for d in candidates if d.doc_id in link_ids]
+        if chunking is not None:
+            # After changed documents and grounding drift, into what remains.
+            room = max(chunking.max_concepts - len(changed) - len(drift), 0)
+            link_docs, _ = admit(link_docs, chunking, room)
+            deferred_link_drift = link_ids - {d.doc_id for d in link_docs}
+            link_drift = [x for x in link_drift if x not in deferred_link_drift]
+        changed_docs += link_docs
+
+    if changeset.is_noop and not drift and not link_drift:
         return NoOp()
 
     # A concept linking to a deleted one must be re-synthesized, or its link
@@ -529,10 +565,15 @@ def run(
     # stuck `pending: True` even once nothing is actually left to redo.
     # Promoted back into `drift` rather than left alone, so the note loop and
     # the `pending`/"carries" accounting below see it as delivered.
-    rebuilt_deferred = deferred_drift & {d.doc_id for d in referrers + arrivals}
+    rebuilt = {d.doc_id for d in referrers + arrivals}
+    rebuilt_deferred = deferred_drift & rebuilt
     if rebuilt_deferred:
         drift += sorted(rebuilt_deferred)
         deferred_drift -= rebuilt_deferred
+    rebuilt_link = deferred_link_drift & rebuilt
+    if rebuilt_link:
+        link_drift += sorted(rebuilt_link)
+        deferred_link_drift -= rebuilt_link
 
     # The drift scan and `referrers` can both select the same document — drift
     # knows nothing about `referrers`' filter and vice versa. Deduped once,
@@ -656,6 +697,14 @@ def run(
                 "it was last published; its own source is unchanged"
             )
 
+    for doc_id in link_drift:
+        path = concept_path(doc_id)
+        if path in proposal.files:
+            proposal.summary.grounding_notes.append(
+                f"{path}: re-synthesized because its links changed since it was "
+                "last published; its own source is unchanged"
+            )
+
     for doc in arrivals:
         path = concept_path(doc.doc_id)
         if path in proposal.files:
@@ -696,12 +745,13 @@ def run(
         },
     )
 
-    pending = bool(backlog or deferred_drift)
+    pending = bool(backlog or deferred_drift or deferred_link_drift)
     if pending:
-        carried = len(changed) + len(drift)
+        carried = len(changed) + len(drift) + len(link_drift)
+        waiting = len(backlog) + len(deferred_drift) + len(deferred_link_drift)
         proposal.summary.grounding_notes.append(
             f"chunked review: this request carries {carried} of "
-            f"{carried + len(backlog) + len(deferred_drift)} changed concepts; "
+            f"{carried + waiting} changed concepts; "
             "the rest follow once it is merged or closed"
         )
 
@@ -729,6 +779,7 @@ def run(
             changed
             | removed_ids
             | set(drift)
+            | set(link_drift)
             | {d.doc_id for d in referrers + arrivals}
         )
         prior_mirror = snapshot(mirror_path, touched)
