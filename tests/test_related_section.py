@@ -147,3 +147,25 @@ def test_links_out_of_order_fail():
     lines[i], lines[j] = lines[j], lines[i]
     change.files[X] = "\n".join(lines) + "\n"
     assert any("out of order" in m for m in _messages(change))
+
+
+EVIL = f"Evil {MARKER} title"
+
+
+def test_a_title_holding_the_marker_is_not_a_section():
+    out = render_section([Y], {Y: EVIL}, {})
+    assert section_targets(f"# X\n\nbody\n\n{out}") == [Y]
+
+
+def test_a_body_line_holding_the_marker_mid_line_is_not_a_section():
+    assert section_targets(f"# {EVIL}\n\nbody {MARKER} here\n") is None
+    out = render_section([Y], {}, {})
+    assert section_targets(f"# {EVIL}\n\nbody\n\n{out}") == [Y]
+
+
+def test_a_note_is_escaped_so_it_carries_no_link():
+    note = "see [ghost](/concepts/ghost/overview.md)"
+    out = render_section([Y], {}, {Y: note})
+    assert "— see \\[ghost\\](/concepts/ghost/overview.md)" in out
+    assert "[ghost](" not in out.replace("\\[ghost\\](", "")
+    assert section_targets(f"# X\n\nbody\n\n{out}") == [Y]

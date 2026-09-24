@@ -48,7 +48,9 @@ def render_section(
     for path in links:
         title = " ".join((titles.get(path) or "").split()) or path
         line = f"- [{_text(title)}](/{_target(path)})"
-        note = " ".join((notes.get(path) or "").split())
+        # Escaped like a title: a note holding `[x](/y)` would otherwise ship
+        # a body link the projection never carried.
+        note = _text(" ".join((notes.get(path) or "").split()))
         lines.append(f"{line} — {note}" if note else line)
     return "\n".join(lines) + "\n"
 
@@ -78,11 +80,19 @@ def _body(content: str) -> str:
 
 
 def section_targets(content: str) -> list[str] | None:
-    """Bundle-relative targets listed after the last marker, in order; None when
-    the body has no marker."""
-    _, sep, tail = _body(content).rpartition(MARKER)
-    if not sep:
+    """Bundle-relative targets listed after the last marker line, in order; None
+    when the body has no marker line.
+
+    A whole line, not a substring: escaping leaves the marker text intact, so a
+    title or prose line that merely contains it is not a section. A line that
+    is the marker alone still is, which is what fails a source body carrying
+    one loudly (architecture.md §7.4)."""
+    lines = _body(content).splitlines()
+    starts = [i for i, line in enumerate(lines) if line.strip() == MARKER]
+    if not starts:
         return None
     return [
-        unquote(m.group(1)) for line in tail.splitlines() if (m := _LINE.match(line))
+        unquote(m.group(1))
+        for line in lines[starts[-1] + 1 :]
+        if (m := _LINE.match(line))
     ]

@@ -443,3 +443,13 @@ def test_deferred_link_drift_pulled_in_by_a_referrer_is_not_left_pending(tmp_pat
     ) in change.summary.grounding_notes
     assert not any("chunked review" in n for n in change.summary.grounding_notes)
     assert isinstance(_chunked(tmp_path, now, 1, links=links)[0], NoOp)
+
+
+def test_a_title_holding_the_marker_publishes(tmp_path):
+    evil = f"Evil {MARKER} title"
+    docs = [_doc("x", title=evil, relations=["a:y"]), _doc("y", title=evil)]
+    docs.append(_doc("z", title=evil, text=f"a line with {MARKER} inside it"))
+    result, change = _run(tmp_path, docs)
+    assert isinstance(result, Published)
+    assert change.concepts[X].links == [Y]
+    assert change.concepts[Z].links == []
