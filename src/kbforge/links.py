@@ -8,12 +8,17 @@ must not know other systems exist (`normalize` is pure)."""
 
 from __future__ import annotations
 
+import json
+from dataclasses import dataclass
 from pathlib import Path
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
-from kbforge.grounding import is_qualified
+from kbforge.grounding import is_qualified, write_atomic
+from kbforge.mirror import slot_key
+from kbforge.models import CanonicalDocument
+from kbforge.synthesize import concept_path
 
 
 class LinkEntry(BaseModel):
@@ -99,3 +104,117 @@ def expand(cfg: LinksConfig) -> dict[str, dict[str, str | None]]:
         note = note.strip() if note else None
         out.setdefault(source, {}).setdefault(target, note)
     return out
+
+
+LINKS_DIR = "_links"
+"""A subdirectory: `load_all` globs `mirror/*.json`."""
+
+
+def _system(doc_id: str) -> str:
+    return doc_id.partition(":")[0]
+
+
+@dataclass(frozen=True)
+class LinkResolution:
+    links: list[tuple[str, str | None]]
+    """Resolved (target doc_id, note), sorted by doc_id: every link it ships."""
+    managed: list[tuple[str, str | None]]
+    """The subset the `_links/` sidecar records. A same-system connector
+    relation is left out: referrers and arrivals already keep it current."""
+    declares_managed: bool
+    """Anything managed was declared, resolved or not. The pipeline then
+    writes a sidecar even when it is empty, or a concept whose only link was
+    unresolvable at publish would never be rescanned (grounding's rule)."""
+    notes: list[str]
+
+
+def resolve_links(
+    doc: CanonicalDocument,
+    expanded: dict[str, dict[str, str | None]],
+    by_id: dict[str, CanonicalDocument],
+) -> LinkResolution:
+    """`doc`'s connector relations plus its editorial links, resolved by doc_id
+    against `by_id` (the whole mirror overlaid with this run, tombstones out).
+
+    By doc_id, never by path: `bundle-path-collision` guarantees one doc_id per
+    bundle path, which is what lets this look across systems (spec §4)."""
+    editorial = expanded.get(doc.doc_id, {})
+    declared: dict[str, str | None] = dict.fromkeys(doc.relations)
+    declared.update(editorial)
+    path = concept_path(doc.doc_id)
+    own = _system(doc.doc_id)
+    links: list[tuple[str, str | None]] = []
+    managed: list[tuple[str, str | None]] = []
+    notes: list[str] = []
+    declares = False
+    for target in sorted(declared):
+        if target == doc.doc_id:
+            continue
+        is_managed = target in editorial or _system(target) != own
+        declares = declares or is_managed
+        found = by_id.get(target)
+        if found is None or found.deleted:
+            if target in editorial:
+                notes.append(
+                    f"{path}: link to {target} (links.yaml) was not found in the "
+                    "mirror or this fetch and was dropped"
+                )
+            continue
+        entry = (target, declared[target])
+        links.append(entry)
+        if is_managed:
+            managed.append(entry)
+    return LinkResolution(links, managed, declares, notes)
+
+
+def _sidecar(mirror: Path, doc_id: str) -> Path:
+    return mirror / LINKS_DIR / f"{slot_key(doc_id)}.json"
+
+
+def read_links(mirror: Path, doc_id: str) -> list[tuple[str, str | None]]:
+    """What the concept's managed links were at its last publish. A missing or
+    unreadable sidecar is empty, not exempt: an empty record against a current
+    link is drift, which is exactly the repair."""
+    try:
+        payload = json.loads(_sidecar(mirror, doc_id).read_text("utf-8"))
+        return [
+            (str(target), None if note is None else str(note))
+            for target, note in payload["links"]
+        ]
+    except (OSError, UnicodeDecodeError, ValueError, TypeError, KeyError):
+        return []
+
+
+def write_links(
+    mirror: Path, doc_id: str, managed: list[tuple[str, str | None]]
+) -> None:
+    write_atomic(
+        _sidecar(mirror, doc_id),
+        {"doc_id": doc_id, "links": [[t, n] for t, n in managed]},
+    )
+
+
+def delete_links(mirror: Path, doc_id: str) -> None:
+    """Idempotent. A stale sidecar would drift its concept on every run."""
+    _sidecar(mirror, doc_id).unlink(missing_ok=True)
+
+
+def has_links_sidecars(mirror: Path) -> bool:
+    """Cheap gate for the link-drift scan: a directory listing, not a load."""
+    directory = mirror / LINKS_DIR
+    return directory.is_dir() and any(directory.glob("*.json"))
+
+
+def links_drifted(
+    mirror: Path,
+    candidates: list[CanonicalDocument],
+    current: dict[str, list[tuple[str, str | None]]],
+) -> list[str]:
+    """Candidates whose managed links (targets and notes) differ from what their
+    sidecar recorded. Titles are not compared: a retitled target does not
+    rebuild its referrers (spec §5)."""
+    return sorted(
+        d.doc_id
+        for d in candidates
+        if read_links(mirror, d.doc_id) != current.get(d.doc_id, [])
+    )
