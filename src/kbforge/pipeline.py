@@ -43,6 +43,7 @@ from kbforge.links import (
     expand,
     has_links_sidecars,
     links_drifted,
+    read_links,
     resolve_links,
     write_links,
 )
@@ -524,15 +525,30 @@ def run(
     # comes from the first item and a deletion-only run has no other.
     # Under chunking, `changed` is the admitted set, so a backlog document that
     # links to a removed concept is rebuilt here from its mirror copy (§4.1).
+    #
+    # A recorded managed link counts as well as a relation: a same-system
+    # links.yaml link to a removed concept is link drift, which the cap can
+    # defer, and a deferred referrer would keep its dangling link on `main`
+    # while this chunk deletes the target. Read from the `_links/` sidecar, not
+    # re-resolved: it records what the published file carries.
     referrers: list[CanonicalDocument] = []
     if removed_ids:
+        recorded = has_links_sidecars(mirror_path)
         referrers = [
             d
             for d in mirror_docs
             if d.anchor.system in systems
             and d.doc_id not in changed
             and d.doc_id not in removed_ids
-            and removed_ids.intersection(d.relations)
+            and (
+                removed_ids.intersection(d.relations)
+                or (
+                    recorded
+                    and removed_ids.intersection(
+                        t for t, _ in read_links(mirror_path, d.doc_id)
+                    )
+                )
+            )
         ]
         changed_docs += referrers
 

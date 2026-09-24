@@ -142,8 +142,19 @@ def test_a_missing_editorial_target_is_dropped_with_a_note():
     assert res.links == res.managed == []
     assert res.declares_managed  # so the pipeline writes an EMPTY sidecar
     assert res.notes == [
-        "concepts/x/overview.md: link to b:z (links.yaml) was not found in the "
-        "mirror or this fetch and was dropped"
+        "concepts/x/overview.md: link to b:z (links.yaml) is not published yet "
+        "and was dropped; it is added once its target is"
+    ]
+
+
+def test_a_missing_cross_system_relation_is_dropped_with_a_note():
+    x = _doc("a:x", ("b:z",))
+    res = resolve_links(x, {}, _by_id(x))
+    assert res.links == res.managed == []
+    assert res.declares_managed
+    assert res.notes == [
+        "concepts/x/overview.md: link to b:z (relation into system b) is not "
+        "published yet and was dropped; it is added once its target is"
     ]
 
 

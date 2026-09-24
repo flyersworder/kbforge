@@ -154,10 +154,21 @@ def resolve_links(
         declares = declares or is_managed
         found = by_id.get(target)
         if found is None or found.deleted:
-            if target in editorial:
+            # Not "not found": the target may be in this fetch but deferred to
+            # a later chunk. A cross-system relation gets a note too, or a
+            # stated relation would vanish silently; a same-system one stays
+            # silent, as it always was.
+            origin = (
+                "links.yaml"
+                if target in editorial
+                else f"relation into system {_system(target)}"
+                if is_managed
+                else None
+            )
+            if origin is not None:
                 notes.append(
-                    f"{path}: link to {target} (links.yaml) was not found in the "
-                    "mirror or this fetch and was dropped"
+                    f"{path}: link to {target} ({origin}) is not published yet "
+                    "and was dropped; it is added once its target is"
                 )
             continue
         entry = (target, declared[target])

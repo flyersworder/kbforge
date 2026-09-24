@@ -134,8 +134,8 @@ def test_a_symmetric_link_lands_on_the_targets_own_run(tmp_path):
     _, first = _run(tmp_path, [_doc("x")], links=links)  # b has not synced yet
     assert first.concepts[X].links == []
     assert (
-        f"{X}: link to b:y (links.yaml) was not found in the mirror or this "
-        "fetch and was dropped"
+        f"{X}: link to b:y (links.yaml) is not published yet and was dropped; "
+        "it is added once its target is"
     ) in first.summary.grounding_notes
 
     result, second = _run(tmp_path, [_doc("y", system="b")], name="b", links=links)
@@ -399,3 +399,47 @@ def test_redo_restores_the_links_sidecar(tmp_path):
         publish_config={},
     )
     assert not _sidecar(tmp_path, "a:x").exists()
+
+
+def test_a_chunk_that_tombstones_a_linked_target_rebuilds_its_referrer(tmp_path):
+    # links.yaml, not a relation: `referrers` must still pull x in past the cap,
+    # or the chunk removes y while x's published file keeps a link to it.
+    links = _links({"a:x": ["a:y"]})
+    _run(tmp_path, [_doc("x"), _doc("y"), _doc("z")], links=links)
+    docs = [_doc("x"), _doc("y", deleted=True), _doc("z", text="z2")]
+    result, change = _chunked(tmp_path, docs, 1, links=links)
+    assert isinstance(result, Published)
+    assert Z in change.files and Y in change.files_removed
+    assert X in change.files
+    assert change.concepts[X].links == []
+    assert MARKER not in change.files[X]
+    assert (
+        f"{X}: re-synthesized to drop links to concepts removed in this run; "
+        "its own source is unchanged"
+    ) in change.summary.grounding_notes
+    assert not any("chunked review" in n for n in change.summary.grounding_notes)
+    assert isinstance(_chunked(tmp_path, docs, 1, links=links)[0], NoOp)
+
+
+def test_deferred_link_drift_pulled_in_by_a_referrer_is_not_left_pending(tmp_path):
+    # x's link drift (a note edit) is deferred by the cap, but x is a relation
+    # referrer of the tombstoned y, so it rides this chunk regardless.
+    docs = [_doc("x", relations=["a:y"]), _doc("y"), _doc("z"), _doc("w")]
+    _run(tmp_path, docs, links=_links({"a:x": [{"to": "a:w", "note": "old"}]}))
+    links = _links({"a:x": [{"to": "a:w", "note": "new"}]})
+    now = [
+        _doc("x", relations=["a:y"]),
+        _doc("y", deleted=True),
+        _doc("z", text="z2"),
+        _doc("w"),
+    ]
+    result, change = _chunked(tmp_path, now, 1, links=links)
+    assert isinstance(result, Published)
+    assert X in change.files
+    assert change.files[X].rstrip().endswith("— new")
+    assert (
+        f"{X}: re-synthesized because its links changed since it was last "
+        "published; its own source is unchanged"
+    ) in change.summary.grounding_notes
+    assert not any("chunked review" in n for n in change.summary.grounding_notes)
+    assert isinstance(_chunked(tmp_path, now, 1, links=links)[0], NoOp)
