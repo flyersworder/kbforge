@@ -45,6 +45,7 @@ from kbforge.models import (
     ProposedChange,
     RawRecord,
 )
+from kbforge.related import with_related
 from kbforge.synthesize import (
     GroundingSynthesizer,
     StubSynthesizer,
@@ -654,6 +655,11 @@ def run(
             f"{carried + len(backlog) + len(deferred_drift)} changed concepts; "
             "the rest follow once it is merged or closed"
         )
+
+    # Frame, not prose: rendered here so every synthesizer gets the same
+    # section and none can forge it. Bound to the projection by
+    # `validate._check_related_section` (architecture.md §7.4).
+    with_related(proposal, {concept_path(i): d.title for i, d in by_id.items()}, {})
 
     failures = run_validators(proposal, existing)
     if failures:

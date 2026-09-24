@@ -16,6 +16,7 @@ import yaml
 
 from kbforge.canonical import is_blank as _blank
 from kbforge.models import ConceptFrontmatter, ProposedChange, resource_key
+from kbforge.related import section_targets
 
 _SCALAR = (str, int, float, bool)
 
@@ -404,6 +405,7 @@ def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
         failures += _check_tags_shape(path, front)
         if concept is not None:
             failures += _check_carriers_agree(path, front, concept)
+            failures += _check_related_section(path, content, concept)
     return failures
 
 
@@ -448,6 +450,70 @@ def _check_carriers_agree(
                 "rendered 'tags' disagree with the projection's; a vocabulary or "
                 "filter check reads the projection, so a tag only in the file is "
                 "never checked",
+            )
+        )
+    return failures
+
+
+def _check_related_section(
+    path: str, content: str, concept: ConceptFrontmatter
+) -> list[Failure]:
+    """Bind the `## Related` body section to the projection's `links`.
+
+    The section is a second carrier of `links` (architecture.md §7.4): OKF §6.1
+    readers follow body links, while law 2 resolves the projection. If the two
+    disagree, a reader follows a link the gate never checked, or never sees one
+    it did. Read after the LAST marker, so a source body that carries the
+    marker text fails here loudly rather than shipping ambiguous links."""
+    listed = section_targets(content)
+    if listed is None:
+        if concept.links:
+            return [
+                Failure(
+                    path,
+                    "okf-strict",
+                    "concept has links but no '## Related' section; an OKF "
+                    "reader follows body links and would never see them",
+                )
+            ]
+        return []
+    if not concept.links:
+        return [
+            Failure(
+                path,
+                "okf-strict",
+                "'## Related' section on a concept with no links; a body link "
+                "the projection lacks is never checked by law 2",
+            )
+        ]
+    failures: list[Failure] = []
+    extra = sorted(set(listed) - set(concept.links))
+    if extra:
+        failures.append(
+            Failure(
+                path,
+                "okf-strict",
+                f"'## Related' lists {extra} that the projection's 'links' do "
+                "not; law 2 resolves the projection, so these were never checked",
+            )
+        )
+    missing = sorted(set(concept.links) - set(listed))
+    if missing:
+        failures.append(
+            Failure(
+                path,
+                "okf-strict",
+                f"'## Related' omits {missing} from the projection's 'links'; a "
+                "reader of the body never sees them",
+            )
+        )
+    if not failures and listed != concept.links:
+        failures.append(
+            Failure(
+                path,
+                "okf-strict",
+                "'## Related' lists the projection's links out of order or "
+                "more than once",
             )
         )
     return failures
