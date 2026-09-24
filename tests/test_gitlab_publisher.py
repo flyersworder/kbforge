@@ -2,7 +2,7 @@ import pytest
 
 from kbforge.publishers import gitlab as gitlab_module
 from kbforge.publishers._http import ForgeError, TreeListingTruncatedError
-from kbforge.publishers.forge import ForgeConfig
+from kbforge.publishers.forge import ForgeConfig, OpenPR
 from kbforge.publishers.gitlab import (
     _TREE_PAGE_SIZE,
     DEFAULTS,
@@ -277,11 +277,22 @@ def test_tree_listing_raises_instead_of_returning_a_partial_set(monkeypatch):
 
 def test_find_open_pr_returns_stringified_iid(monkeypatch):
     monkeypatch.setenv("GITLAB_TOKEN", "t")
-    client, transport = _client({("GET", "&state=opened"): [{"iid": 7}]})
+    client, transport = _client(
+        {("GET", "&state=opened"): [{"iid": 7, "description": "earlier"}]}
+    )
 
-    assert client.find_open_pr("sync/local-files") == "7"
+    found = client.find_open_pr("sync/local-files")
+    assert found is not None and found.id == "7"
+    assert found.body == "earlier"  # read back so a later run can merge into it
     assert "source_branch=sync%2Flocal-files" in transport.calls[0]["url"]
     assert "state=opened" in transport.calls[0]["url"]
+
+
+def test_find_open_pr_reads_a_null_description_as_empty(monkeypatch):
+    monkeypatch.setenv("GITLAB_TOKEN", "t")
+    client, _ = _client({("GET", "&state=opened"): [{"iid": 1, "description": None}]})
+    found = client.find_open_pr("b")
+    assert found is not None and found.body == ""
 
 
 def test_find_open_pr_returns_none_when_empty(monkeypatch):
@@ -453,7 +464,7 @@ def test_publisher_open_request_resolves_the_branch_and_asks_the_client(monkeypa
 
         def find_open_pr(self, branch):
             seen.append(branch)
-            return "9"
+            return OpenPR("9", "")
 
     monkeypatch.setattr(gitlab_module, "GitLabClient", _Client)
     config = {"repo": "acme/kb", "branch": "kb/sync"}

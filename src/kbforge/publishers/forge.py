@@ -16,10 +16,10 @@ import os
 import posixpath
 import re
 from dataclasses import dataclass, fields
-from typing import Protocol
+from typing import NamedTuple, Protocol
 
 from kbforge.models import ProposedChange
-from kbforge.publishers.summary import summary_md
+from kbforge.publishers.summary import merge_summaries, parse_summary_md, summary_md
 
 
 class PathError(ValueError):
@@ -123,6 +123,13 @@ def build_config(config: dict, defaults: dict) -> ForgeConfig:
     return ForgeConfig(**merged)
 
 
+class OpenPR(NamedTuple):
+    """An open PR/MR: its id as an opaque string, and its current description."""
+
+    id: str
+    body: str
+
+
 class ForgeClient(Protocol):
     """Every method names an intention, never a REST endpoint."""
 
@@ -151,8 +158,10 @@ class ForgeClient(Protocol):
         """
         ...
 
-    def find_open_pr(self, branch: str) -> str | None:
-        """The open PR/MR id for `branch` as an opaque string, or None."""
+    def find_open_pr(self, branch: str) -> OpenPR | None:
+        """The open PR/MR for `branch`, or None. Carries the description so a
+        run appending to it can merge rather than replace it (#43), at no extra
+        call: the lookup already returns it."""
         ...
 
     def create_pr(self, branch: str, base: str, title: str, body: str) -> str: ...
@@ -163,7 +172,8 @@ class ForgeClient(Protocol):
 def open_request(client: ForgeClient, branch_hint: str, cfg: ForgeConfig) -> str | None:
     """The open review request for `branch_hint`, resolved to a branch exactly as
     `publish_to_forge` resolves it, so a configured `branch` wins here too."""
-    return client.find_open_pr(cfg.branch or branch_hint)
+    found = client.find_open_pr(cfg.branch or branch_hint)
+    return None if found is None else found.id
 
 
 def publish_to_forge(
@@ -181,14 +191,24 @@ def publish_to_forge(
     files = {safe_join(cfg.base_path, rel): body for rel, body in change.files.items()}
     removed = sorted(safe_join(cfg.base_path, rel) for rel in change.files_removed)
     branch = cfg.branch or change.branch_hint
-    body = summary_md(change.summary)
 
     # Asked before put_files, not after: an open review request means the branch
     # must build on itself, or work from earlier runs is rebuilt away.
-    pr_id = client.find_open_pr(branch)
-    if pr_id is not None:
+    found = client.find_open_pr(branch)
+    if found is not None:
         client.put_files(branch, branch, files, removed, cfg.title)
-        return client.update_pr(pr_id, cfg.title, body)
+        # The branch accumulated, so the description must too (#43): this
+        # run's summary alone would stop accounting for earlier runs' files.
+        touched = (
+            set(change.files)
+            | set(change.files_removed)
+            | set(change.summary.claims_added)
+            | set(change.summary.claims_modified)
+            | set(change.summary.claims_removed)
+        )
+        merged = merge_summaries(parse_summary_md(found.body), change.summary, touched)
+        return client.update_pr(found.id, cfg.title, summary_md(merged))
+    body = summary_md(change.summary)
 
     # Resolved only here: on the update path `target` is never used, and
     # default_branch() is a network call that would fail an otherwise-viable

@@ -737,6 +737,11 @@ While a review request is open, a run sets the sync branch from the branch
 itself rather than from the default branch, so successive runs accumulate into
 one review request. When none is open the branch is rebuilt from the default
 branch, so a merged or abandoned request leaves no stale *branch* behind.
+The description accumulates with the branch: a run appending to an open request
+reads its description back, parses kbforge's own sections, and merges this
+run's summary in, per path and relative to the base (an addition later modified
+is still an addition; one later removed drops out), replacing the notes only for
+paths this run rewrote. Text kbforge did not render is not kept.
 
 That is a property of the branch only, and emphatically not of the content.
 The mirror advances after every successful publish, so a concept carried by a

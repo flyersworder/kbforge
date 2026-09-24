@@ -24,6 +24,7 @@ from kbforge.publishers._http import (
 )
 from kbforge.publishers.forge import (
     ForgeConfig,
+    OpenPR,
     build_config,
     open_request,
     publish_to_forge,
@@ -163,7 +164,7 @@ class GitLabClient:
             payload["allow_empty"] = True
         self._call("POST", f"/projects/{self._project}/repository/commits", payload)
 
-    def find_open_pr(self, branch: str) -> str | None:
+    def find_open_pr(self, branch: str) -> OpenPR | None:
         # A branch never reaches a URL *path* here — it is a query value (so
         # safe="" is right, slashes included) or a JSON payload field.
         source = quote(branch, safe="")
@@ -172,7 +173,9 @@ class GitLabClient:
             f"/projects/{self._project}/merge_requests"
             f"?source_branch={source}&state=opened",
         )
-        return str(mrs[0]["iid"]) if mrs else None
+        if not mrs:
+            return None
+        return OpenPR(str(mrs[0]["iid"]), mrs[0].get("description") or "")
 
     def create_pr(self, branch: str, base: str, title: str, body: str) -> str:
         mr = self._call(
