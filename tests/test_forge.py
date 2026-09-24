@@ -3,12 +3,14 @@ import pytest
 from kbforge.models import ChangeSummary, ProposedChange
 from kbforge.publishers.forge import (
     ForgeConfig,
+    OpenPR,
     PathError,
     build_config,
     open_request,
     publish_to_forge,
     safe_join,
 )
+from kbforge.publishers.summary import parse_summary_md, summary_md
 
 DEFAULTS = {"api_base": "https://api.example", "token_env": "EXAMPLE_TOKEN"}
 
@@ -16,9 +18,11 @@ DEFAULTS = {"api_base": "https://api.example", "token_env": "EXAMPLE_TOKEN"}
 class FakeForgeClient:
     """Records calls so the orchestration can be asserted without a network."""
 
-    def __init__(self, open_pr: str | None = None, default: str = "main") -> None:
+    def __init__(
+        self, open_pr: str | None = None, default: str = "main", body: str = ""
+    ) -> None:
         self.calls: list[tuple] = []
-        self._open_pr = open_pr
+        self._open_pr = None if open_pr is None else OpenPR(open_pr, body)
         self._default = default
 
     def default_branch(self) -> str:
@@ -199,6 +203,38 @@ def test_publish_updates_the_open_pr_when_one_exists():
     names = [c[0] for c in client.calls]
     assert names == ["find_open_pr", "put_files", "update_pr"]
     assert client.calls[-1][1] == "7"
+
+
+def test_appending_keeps_earlier_runs_in_the_description():
+    """#43: the description accounts for the whole accumulated diff, not just
+    the last run -- PR #90 lost run 1's Added list when run 3 appended."""
+    earlier = summary_md(
+        ChangeSummary(
+            claims_added=["concepts/a/overview.md", "concepts/x/overview.md"],
+            grounding_notes=["concepts/x/overview.md: link to z was dropped"],
+        )
+    )
+    client = FakeForgeClient(open_pr="7", body=earlier)
+    change = ProposedChange(
+        branch_hint="sync/local-files",
+        files={"concepts/x/overview.md": "# X\n"},
+        summary=ChangeSummary(
+            grounding_notes=["concepts/x/overview.md: re-synthesized, links changed"]
+        ),
+    )
+    publish_to_forge(client, change, _cfg(base="main"))
+
+    body = client.calls[-1][3]
+    assert parse_summary_md(body) == ChangeSummary(
+        claims_added=["concepts/a/overview.md", "concepts/x/overview.md"],
+        grounding_notes=["concepts/x/overview.md: re-synthesized, links changed"],
+    )
+
+
+def test_a_new_request_gets_only_this_runs_summary():
+    client = FakeForgeClient(open_pr=None)
+    publish_to_forge(client, _change(), _cfg(base="main"))
+    assert client.calls[-1][4] == summary_md(_change().summary)
 
 
 def test_publish_resolves_default_branch_when_base_is_unset():

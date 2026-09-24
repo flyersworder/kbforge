@@ -282,11 +282,22 @@ def test_traversing_base_ref_is_encoded(monkeypatch):
 
 def test_find_open_pr_returns_stringified_number(monkeypatch):
     monkeypatch.setenv("GITHUB_TOKEN", "t")
-    client, transport = _client({("GET", "&state=open"): [{"number": 42}]})
+    client, transport = _client(
+        {("GET", "&state=open"): [{"number": 42, "body": "earlier"}]}
+    )
 
-    assert client.find_open_pr("sync/local-files") == "42"
+    found = client.find_open_pr("sync/local-files")
+    assert found is not None and found.id == "42"
+    assert found.body == "earlier"  # read back so a later run can merge into it
     assert "head=acme%3Async%2Flocal-files" in transport.calls[0]["url"]
     assert "state=open" in transport.calls[0]["url"]
+
+
+def test_find_open_pr_reads_a_null_body_as_empty(monkeypatch):
+    monkeypatch.setenv("GITHUB_TOKEN", "t")
+    client, _ = _client({("GET", "&state=open"): [{"number": 1, "body": None}]})
+    found = client.find_open_pr("b")
+    assert found is not None and found.body == ""
 
 
 def test_find_open_pr_returns_none_when_empty(monkeypatch):

@@ -15,6 +15,7 @@ from kbforge.publishers._http import (
 )
 from kbforge.publishers.forge import (
     ForgeConfig,
+    OpenPR,
     build_config,
     open_request,
     publish_to_forge,
@@ -175,13 +176,15 @@ class GitHubClient:
                 {"ref": f"refs/heads/{branch}", "sha": sha},
             )
 
-    def find_open_pr(self, branch: str) -> str | None:
+    def find_open_pr(self, branch: str) -> OpenPR | None:
         # kbforge always pushes to the target repo itself, never a fork, so the
         # head owner is the first segment of repo by construction.
         owner = self._repo.split("/")[0]
         head = quote(f"{owner}:{branch}", safe="")
         prs = self._call("GET", f"/repos/{self._repo}/pulls?head={head}&state=open")
-        return str(prs[0]["number"]) if prs else None
+        if not prs:
+            return None
+        return OpenPR(str(prs[0]["number"]), prs[0].get("body") or "")
 
     def create_pr(self, branch: str, base: str, title: str, body: str) -> str:
         pr = self._call(
