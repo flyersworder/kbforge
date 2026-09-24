@@ -101,7 +101,7 @@ def test_each_problem_is_reported_by_text(links, message):
 
 
 def test_an_unresolvable_id_is_not_a_config_problem():
-    # It may live in a system that has not synced yet (§3.1).
+    # It may live in a system that has not synced yet (architecture.md §7.4).
     assert links_problems(_cfg({"a:x": ["never:synced"]})) == []
 
 

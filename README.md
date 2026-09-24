@@ -50,7 +50,8 @@ checked against a real service has a live suite (`--run-live`) rather than a moc
 - **Core** — canonicalization under a stability law, a replay-safe mirror and diff,
   change detection, the no-op rule, incremental sync via a real cursor, and
   cross-source grounding: one owning document per concept, cited alongside
-  grounding documents from other systems.
+  grounding documents from other systems, and editorial links across systems
+  (`--links`).
 - **Gate** — the §4.4 emit-side laws plus a projection↔files coherence check, so
   nothing ships unvalidated.
 - **Synthesis** — a deterministic stub (default, no LLM), an opt-in grounded LLM
@@ -189,6 +190,28 @@ redo a chunk after fixing the taxonomy or exemplars, close its request and run
 discards the chunk, and a run after closing moves on to the next one. Keep a
 connector instance either always chunked or never; redo after an unchunked run
 would roll back a stale record. See `docs/architecture.md` §7.2.
+
+**Links no source carries.** Two taxonomies with no join key, or a requirement
+that closes a gap on another slide: declare them in a reviewed `links.yaml` and
+pass `--links links.yaml`.
+
+```yaml
+links:
+  planning_deck:gaps/redundant-supply:
+    - to: db_apps:applications/777
+      note: the application this gap is about
+      symmetric: true
+    - planning_deck:requirements/diagnostics   # one-way, no note
+```
+
+Links resolve by `doc_id`, across systems too. They render in a `## Related`
+section at the end of each concept, which an OKF reader follows and which
+holds the note that says why the two relate; connector `relations` get the
+same section. Each system's run rebuilds only its own concepts, so a
+cross-system link lands on each side on that side's run. The review note names
+the other system, so its request can be merged first. For concepts that share
+tags or facets, use `okfquery related` rather than declaring links. See
+`docs/architecture.md` §7.4.
 
 ## Consuming a bundle
 

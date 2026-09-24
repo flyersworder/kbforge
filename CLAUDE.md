@@ -23,9 +23,10 @@ than one held up by convention.
   configurable would make them optional.
 - **The no-op rule.** A run synthesizes only when something a concept is built
   from has changed, and returns `NoOp()` *before* synthesis otherwise. That is
-  `ChangeSet.is_noop` **and** no grounding drift (§7.1) — grounding added a
-  second thing a concept is built from, so the rule covers both or it stops
-  meaning anything. It is still never "open a review request and see": no
+  `ChangeSet.is_noop` **and** no grounding drift (§7.1) and no link drift
+  (§7.4) — grounding added a second thing a concept is built from, and
+  `links.yaml` and other systems' documents added a third, so the rule covers
+  all of them or it stops meaning anything. It is still never "open a review request and see": no
   review request is ever opened for a concept nothing changed under. This is
   also what makes `generated.at` honest and the token bill bounded.
 - **kbforge never merges.** No publisher defines a merge method — check with
@@ -38,9 +39,11 @@ than one held up by convention.
   runs it twice per run and rejects a connector whose output differs.
 - **One bundle path, one owner.** `concept_path` drops the system prefix, so
   `wiki:readme` and `notes:readme` render the same file. The mirror is shared
-  across systems (§7.1 requires it), so the pipeline aborts on a collision and
-  on a cross-system relation rather than letting one system's concept overwrite
-  another's on merge. System-qualified paths would fix this at the root; that
+  across systems (§7.1 requires it), so the pipeline aborts on a collision
+  rather than letting one system's concept overwrite another's on merge.
+  Cross-system links resolve by `doc_id` (architecture.md §7.4), which that
+  abort keeps unambiguous; the merge-order window they open is disclosed in the
+  review note, not solved by merging. System-qualified paths would fix this at the root; that
   rewrites every published path, so it is its own release, not a patch.
 - **Deletions are explicit tombstones** (`CanonicalDocument.deleted=True`).
   Absence from an incremental fetch never implies deletion; `FetchResult.complete`
@@ -53,17 +56,20 @@ the publisher writes, `.concepts` is the `ConceptFrontmatter` projection the law
 check. **A consumer reads the file; the gate reads the projection.** If they
 disagree, a concept ships unvalidated while `run_validators() == []` says it's fine.
 
-Two mechanisms keep them honest, and both must survive any refactor:
+Three mechanisms keep them honest, and all must survive any refactor:
 
 - `_check_projection_coherence` binds the path *sets* — every non-reserved file has
   a projection and vice versa.
 - `_check_strict_okf` binds the *values* for the keys with a projection counterpart
   (`type`, `links`, `tags`, `generated.at`, `sources`).
+- `_check_related_section` binds the `## Related` body section to `links`. The
+  pipeline renders it after synthesis, so a synthesizer can't forge it.
 
 Facets merge into top-level frontmatter, so a source field named like an OKF key
 would shadow it in the file while the projection kept the good value. `_facets`
 drops anything in `OKF_OWNED` for exactly this reason. If you touch either side,
-re-read `synthesize._render` and `validate._check_carriers_agree` together.
+re-read `synthesize._render`, `related.render_section` and
+`validate._check_carriers_agree` together.
 
 ## Emit-side vocabulary is OKF v0.2
 

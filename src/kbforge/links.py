@@ -66,7 +66,7 @@ def _pairs(cfg: LinksConfig) -> list[tuple[str, str, str | None]]:
 
 def links_problems(cfg: LinksConfig) -> list[str]:
     """Shape only ([] = ok). Whether an id *resolves* is not a shape question:
-    it may live in a system that has not synced yet (§3.1)."""
+    it may live in a system that has not synced yet (architecture.md §7.4)."""
     problems: list[str] = []
     for source in sorted(cfg.links):
         if not is_qualified(source):
@@ -137,7 +137,7 @@ def resolve_links(
     against `by_id` (the whole mirror overlaid with this run, tombstones out).
 
     By doc_id, never by path: `bundle-path-collision` guarantees one doc_id per
-    bundle path, which is what lets this look across systems (spec §4)."""
+    bundle path, which is what lets this look across systems (architecture.md §7.4)."""
     editorial = expanded.get(doc.doc_id, {})
     declared: dict[str, str | None] = dict.fromkeys(doc.relations)
     declared.update(editorial)
@@ -212,7 +212,7 @@ def links_drifted(
 ) -> list[str]:
     """Candidates whose managed links (targets and notes) differ from what their
     sidecar recorded. Titles are not compared: a retitled target does not
-    rebuild its referrers (spec §5)."""
+    rebuild its referrers (architecture.md §7.4)."""
     return sorted(
         d.doc_id
         for d in candidates

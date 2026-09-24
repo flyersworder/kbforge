@@ -598,6 +598,9 @@ checked claim and a slogan:
   (`../y/overview.md`, a `#section` anchor, a self-link) is not what it handles.
   Until the normalizing renderer lands, law 2 protects the *declared* `links`
   field under that precondition, not arbitrary body links.
+  Part of that has since landed: the `## Related` section (§7.4) is a body
+  carrier of `links` that `_check_related_section` binds to the projection.
+  Other body links in a concept's prose are still unchecked.
 
 Law 4 runs at full strength and additionally requires a timezone-aware stamp (a
 naive one crashes `whats_stale`'s aware-minus-naive subtraction). Underneath the
@@ -832,13 +835,12 @@ The shared mirror has one cost the shared bundle does not absorb: `concept_path`
 drops the system prefix, so `wiki:readme.md` and `notes:readme.md` render one
 file on two sync branches, and whichever request merges second overwrites the
 other. The pipeline therefore **aborts** — before synthesis, so no review
-request opens — when two live documents claim one bundle path, and likewise on
-a relation that crosses out of its own system, which `existing`'s scoping would
-otherwise drop silently under §4.4 law 2. Both are reported as `Failure`s, in
-the register the emit-side laws already use. System-qualified bundle paths
-(`concepts/<system>/<native_id>/`) would remove the collision at its root and
-let cross-system links resolve; that rewrites every path in every published
-bundle, so it is its own deliberate release rather than a patch.
+request opens — when two live documents claim one bundle path. It is reported
+as a `Failure`, in the register the emit-side laws already use. Cross-system
+links resolve by `doc_id` (§7.4); this collision check is what keeps that
+unambiguous. System-qualified bundle paths (`concepts/<system>/<native_id>/`)
+would remove the collision at its root; that rewrites every path in every
+published bundle, so it is its own deliberate release rather than a patch.
 
 ---
 
@@ -1410,6 +1412,132 @@ and model tags.
   shaped so it can move to `LLMConfig` unchanged).
 - Re-describing on an `instructions` or `model` change: a config fingerprint
   in the sidecar and a drift rule like grounding rule 3.
+
+### 7.4 Editorial links
+
+`kbforge run --links links.yaml` declares links that no source's data carries:
+two taxonomies with no join key, or a requirement that closes a gap on another
+slide. It is a pipeline flag, not connector config, for `--grounding`'s reason:
+a connector must not know other systems exist (`normalize` is pure). Links
+*implied* by shared tags or facets are deliberately not declared or
+materialized here. OKF §3.1 puts such views on the consumer, so
+`okfquery related` derives them at query time. It is always current, with no
+mirror state, no drift and no every-pair rule evaluation to keep fresh.
+
+```yaml
+links:
+  planning_deck:gaps/redundant-supply:
+    - to: db_apps:applications/777
+      note: the application this gap is about
+      symmetric: true
+    - planning_deck:requirements/diagnostics   # one-way, no note
+```
+
+An entry is a plain `doc_id` or `{to, note?, symmetric?}` (`extra="forbid"`,
+so `symetric: true` is an error, not a one-way link). Keys and targets must be
+qualified `doc_id`s, for §7.1's reason. A `note` is one line and renders after
+the link; a symmetric entry's note renders on both sides. `links_problems`
+rejects bad shape, self-links and duplicates before any fetch. A reference to a
+document not in the mirror is not an error. Its system may not have synced
+yet, so the run drops the link and says so in a review note, and the link
+appears once the target does.
+
+**Resolution is by `doc_id`**, over `by_id` (the whole mirror overlaid with
+this run, tombstones removed), as grounding resolves. A concept's declared
+links are its connector `relations`, its `links.yaml` targets, and the reverses
+of symmetric entries that name it. Those that resolve become the `relations` of
+the copy the synthesizer receives, and their paths join `existing`, so
+`assemble` and law 2 accept a cross-system target unchanged. Resolution by id
+is unambiguous because `bundle-path-collision` (§5.4) already guarantees one
+live `doc_id` per bundle path across the whole mirror. What scoping `existing`
+protects against is resolution *by path*, which this is not. The old abort on
+a relation that crosses out of its system is therefore lifted, for connector
+`relations` and `links.yaml` alike. Keeping it for relations would make the same link legal or
+fatal depending on where it was declared. A same-system relation whose target
+is missing is still dropped silently, as before; only a missing `links.yaml`
+target gets a note. Links reach the synthesis copy only, never the mirror:
+`commit()` receives the connector's own documents, so no config-dependent
+content lands there (§7.1's subject-map rule).
+
+**`## Related`.** OKF §6.1 links are markdown in the body, and the prose around
+them says what kind of link it is. kbforge's `links` frontmatter is a producer
+extension a generic reader never follows, and it cannot say *why* two concepts
+relate. So after synthesis the pipeline appends, to every rendered concept
+whose projection has links, a section headed by the marker
+`<!-- kbforge:related -->`. It has one line per link, in `links` order, with
+the target's title as link text, a bundle-absolute path (`/concepts/…`, §6.1's
+recommended form) and the note after an em dash. The pipeline renders it rather
+than the synthesizer because it is frame, not prose: every synthesizer, a
+third-party one included, gets the same section, and none can forge it. The
+section is a second carrier of `links`, so `_check_related_section` binds it to
+the projection. The targets after the **last** marker must equal
+`concept.links`, and a concept with no links must have no marker. A source body
+that contains the marker text therefore fails loudly instead of shipping
+ambiguous links. Titles can go stale by design. A retitled target shows its old
+title in referrers until they are next rendered, because OKF readers follow the
+path, not the text, and rebuilding every referrer for a cosmetic change is not
+worth it. Existing bundles, `local_files` relations included, gain the section
+as each linked concept is next rendered; nothing is rewritten to add it.
+
+**Upkeep.** A same-system connector relation already stays current through
+`referrers` and `arrivals` (§7). Every other link is **managed**: editorial,
+or crossing into another system. `mirror/_links/<slot>.json` records a
+concept's managed links with their notes, as last published. It is written
+after a successful publish whenever the concept *declares* a managed link, even
+when none resolved and the record is empty. It is deleted when nothing managed
+is declared and when the owner is tombstoned. The empty record is grounding's
+rule again. A concept whose only link was unresolvable at publish must still be
+rescanned when its target arrives, and the sidecar is what trips the scan. The
+scan runs when `--links` is given or `_links/` is non-empty (a directory
+listing), so a deployment with neither pays nothing. It rebuilds a mirror
+document of this run's systems whose managed set (targets and notes) differs
+from its record. That covers a `links.yaml` edit, a note included; a target
+added or tombstoned by another system's run; and a symmetric reverse owned
+elsewhere. The referrer is always rebuilt on its own system's run, never on
+the other system's branch. Titles are not compared, so a retitle does not
+drift. Rebuilding never changes `relations`, the mirror or `links.yaml`, so it
+converges. A concept in both grounding drift and link drift is rebuilt once,
+with the grounding note. Unlike grounding drift, link drift runs under every
+synthesizer, because links are frame. `describe` rebuilds from its
+`_described/` cache with no model call, while `llm` re-synthesizes the body,
+as referrers and arrivals already do.
+
+**The no-op rule gains a clause, not an exception.** `links.yaml` and other
+systems' documents are now things a concept is built from, so `run` returns
+`NoOp()` before synthesis only when `ChangeSet.is_noop` and there is neither
+grounding drift nor link drift. Under the scan's gate a no-op run loads the
+mirror, as grounding's does; resolution itself is O(links declared). Under
+`--chunking`, link drift counts toward `max_concepts` and is admitted after
+changed documents and grounding drift, into the room that remains. A deferred
+concept writes no sidecar, so the next run finds the same drift, and `redo`
+restores `_links/` with the rest of a chunk.
+
+**The merge-order window.** The mirror advances on publish, not merge. If
+system A's request links to `B:x` while B's request is still open, merging A
+first puts a link on `main` that dangles until B merges, or until B
+re-proposes if its request is closed. Within one system this cannot happen,
+because target and referrer ride one sync branch. OKF readers must tolerate
+broken links (§6.1), so this is legal OKF; law 2 is stricter on purpose. The
+window widens an existing hazard (the mirror ahead of `main` after a close,
+which `redo` exists for) rather than adding a new kind. It is disclosed rather
+than solved: the review note names every cross-system target,
+`links to db_apps:applications/777 (system db_apps)`, so a reviewer can merge
+in order. kbforge still never merges.
+
+**Deferred**:
+
+- System-qualified bundle paths (#42). They fix path collisions, not the
+  merge-order window; links resolve by `doc_id` and render through
+  `concept_path`, so they follow that change unchanged.
+- Bundle-absolute paths in frontmatter `links`, to match the body; needs
+  okfquery to accept both forms first.
+- Relations from source data (e.g. a `relations` column in kbforge-sql):
+  connector work, separate.
+- Link-only rebuilds without re-synthesis under `llm`: re-render the frame
+  around the previously published body. Worth it only if link drift under
+  `llm` proves costly.
+- Materialized rule links (#41's original `rules:`): only if consumer-side
+  derivation proves insufficient, e.g. for readers that do not run okfquery.
 
 ---
 
