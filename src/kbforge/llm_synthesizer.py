@@ -101,6 +101,14 @@ class LLMConfig:
             problems.append("output_retries must be >= 0")
         if self.output_mode not in ("tool", "native", "prompted"):
             problems.append("output_mode must be tool, native, or prompted")
+        # `--llm-set` values are YAML-typed: unquoted text containing `: ` is a
+        # mapping, and prompt assembly would crash on it.
+        if not isinstance(self.instructions, str):
+            problems.append(
+                "instructions must be a string; YAML read it as "
+                f"{type(self.instructions).__name__}, so quote the value: "
+                "--llm-set 'instructions=\"...\"'"
+            )
         return problems
 
 

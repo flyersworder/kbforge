@@ -262,6 +262,36 @@ def test_run_llm_synthesizer_missing_extra_is_clean_cli_error(
     assert "install kbforge[llm]" in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("synthesizer", ["llm", "describe"])
+def test_instructions_that_yaml_reads_as_a_mapping_exit_2(
+    tmp_path: Path, capsys, monkeypatch, synthesizer
+):
+    """`--llm-set` values are YAML-typed, so an unquoted instruction containing
+    `: ` arrives as a dict. It crashed prompt assembly with AttributeError, for
+    `describe` since #40 and for `llm` in the first cut of #44, found live."""
+    pytest.importorskip("pydantic_ai")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    src = tmp_path / "src"
+    src.mkdir()
+    (src / "x.md").write_text(DOC, "utf-8")
+    code = main(
+        [
+            "run",
+            "--connector",
+            "local_files",
+            "--set",
+            f"path={src}",
+            "--synthesizer",
+            synthesizer,
+            "--llm-set",
+            "instructions=End with a line that reads: DONE",
+            *_plumbing(tmp_path),
+        ]
+    )
+    assert code == 2
+    assert "instructions must be a string" in capsys.readouterr().out
+
+
 def test_a_malformed_grounding_map_exits_2_before_fetching(tmp_path: Path, capsys):
     src = tmp_path / "src"
     src.mkdir()
