@@ -48,7 +48,7 @@ Spec §6.1 says the sidecar is written "only when the managed set is non-empty".
 **Files:**
 - Create: `src/kbforge/related.py`
 - Modify: `src/kbforge/validate.py`, where `_check_strict_okf` calls `_check_carriers_agree`, plus a new function after `_check_carriers_agree`
-- Test: `tests/test_related.py` (new)
+- Test: `tests/test_related_section.py` (new)
 
 **Interfaces:**
 - Produces:
@@ -61,7 +61,7 @@ Spec §6.1 says the sidecar is written "only when the managed set is non-empty".
 
 - [ ] **Step 1: Write the failing tests**
 
-`tests/test_related.py`:
+`tests/test_related_section.py`:
 
 ```python
 """The `## Related` section (#41, architecture.md §7.4): rendering, parsing,
@@ -217,7 +217,7 @@ def test_links_out_of_order_fail():
 
 - [ ] **Step 2: Run the tests to verify they fail**
 
-Run: `uv run pytest tests/test_related.py -q`
+Run: `uv run pytest tests/test_related_section.py -q`
 Expected: collection error, `ModuleNotFoundError: No module named 'kbforge.related'`.
 
 - [ ] **Step 3: Implement `src/kbforge/related.py`**
@@ -407,7 +407,7 @@ Without this, every pipeline run that publishes a link aborts on the new validat
 
 - [ ] **Step 6: Run the tests, then the whole suite**
 
-Run: `uv run pytest tests/test_related.py -q`, then `uv run pytest -q`.
+Run: `uv run pytest tests/test_related_section.py -q`, then `uv run pytest -q`.
 Expected: all pass.
 
 A test that fails with `no '## Related' section` is running `run_validators` over raw synthesizer output with links; only the pipeline appends the section. Fix each one by calling `with_related(change, {}, {})` before `run_validators`, with the comment `# the pipeline appends this after synthesis`. A test that asserts a published file's exact bytes may now see the section appended to a linked concept: update only that expectation. Name every test you touched in the report. Any other failure: stop and report.
@@ -423,7 +423,7 @@ Co-Authored-By: Claude Opus 5.5 (1M context) <noreply@anthropic.com>"
 
 - [ ] **Step 8: Mutation-check the validator**
 
-Do each mutation in place in `src/kbforge/validate.py`. Run `PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_related.py -q`, confirm that exactly the named test fails, then `git checkout -- src/kbforge/validate.py`:
+Do each mutation in place in `src/kbforge/validate.py`. Run `PYTHONDONTWRITEBYTECODE=1 uv run pytest tests/test_related_section.py -q`, confirm that exactly the named test fails, then `git checkout -- src/kbforge/validate.py`:
 - Delete the `failures += _check_related_section(...)` line. Expected: all five failure tests fail.
 - Change `if extra:` to `if False:`. Expected: only `test_a_link_only_in_the_section_fails` fails.
 - Change `if missing:` to `if False:`. Expected: only `test_a_link_only_in_the_frontmatter_fails` fails.
