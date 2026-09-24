@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- A run that appends to an open review request no longer replaces its
+  description with its own summary (#43). The GitHub and GitLab publishers read
+  the description back and merge: every file in the accumulated diff stays
+  accounted for, and notes about a file are the latest run's. Text kbforge did
+  not render is dropped on rewrite, as before.
+
 ## [0.13.0] - 2026-09-24
 
 ### Added
