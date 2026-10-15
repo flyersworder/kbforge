@@ -66,7 +66,7 @@ def test_parse_ignores_what_it_did_not_render():
 )
 def test_claims_are_relative_to_the_base_across_runs(prior, new, expected):
     def summary(kind):
-        return ChangeSummary(**({f"claims_{kind}": [A]} if kind else {}))
+        return ChangeSummary.model_validate({f"claims_{kind}": [A]} if kind else {})
 
     touched = {A} if new else set()
     merged = merge_summaries(summary(prior), summary(new), touched)
