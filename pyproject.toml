@@ -67,8 +67,11 @@ llm = [
 # resolvers outside this workspace may not find, breaking `pip install
 # kbforge[dev]`. A PEP 735 dependency group is never written into wheel
 # metadata, which is exactly the scope this needs: local development only.
+# `httpx` is here for the same reason: `examples/` declare it in their own
+# pyproject, but ty checks them from this environment, which only had httpx
+# transitively until openai 3 dropped it.
 [dependency-groups]
-dev = ["kbforge-mcp", "kbforge-okfquery", "kbforge-sql"]
+dev = ["kbforge-mcp", "kbforge-okfquery", "kbforge-sql", "httpx>=0.27"]
 
 [build-system]
 requires = ["hatchling"]
