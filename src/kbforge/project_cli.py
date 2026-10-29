@@ -445,17 +445,16 @@ def _plan_sources(project: Project, names: list[str]) -> int:
     return code
 
 
+def _count(n: int, noun: str) -> str:
+    return f"{n} {noun}" if n == 1 else f"{n} {noun}s"
+
+
 def _planned_lines(p: Planned) -> list[str]:
-    drifted = len(p.grounding_drift) + len(p.link_drift)
-    total = len(p.added) + len(p.modified) + drifted + len(p.rebuilt)
-    head = (
-        f"{len(p.added)} added, {len(p.modified)} modified, {len(p.removed)} removed, "
-        f"{drifted} drifted, {len(p.rebuilt)} rebuilt → would propose {total} concepts"
-    )
-    if p.deferred:
-        head += f"; {p.deferred} more follow in later chunks"
-    head += " (validation runs at publish)"
-    lines = [head]
+    # One document, one line, counted once, under its first kind below: a
+    # drifted document a removal or an arrival also rebuilds is in both its
+    # drift list and `rebuilt`.
+    seen: set[str] = set()
+    kinds: list[tuple[str, list[str], str]] = []
     for mark, ids, what in (
         ("+", p.added, "added"),
         ("~", p.modified, "modified"),
@@ -464,7 +463,28 @@ def _planned_lines(p: Planned) -> list[str]:
         ("↻", p.link_drift, "link drift"),
         ("↻", p.rebuilt, "rebuilt for links"),
     ):
-        lines += [f"  {mark} {doc_id}  {what}" for doc_id in sorted(ids)]
+        fresh = [doc_id for doc_id in sorted(set(ids)) if doc_id not in seen]
+        seen.update(fresh)
+        kinds.append((mark, fresh, what))
+    added, modified, removed, grounding, linked, rebuilt = (k[1] for k in kinds)
+    drifted = len(grounding) + len(linked)
+    proposed = len(added) + len(modified) + drifted + len(rebuilt)
+    # A removal is part of the proposal too (the request deletes the
+    # concept), so a deletion-only plan does not read as proposing nothing.
+    parts = [_count(proposed, "concept")] if proposed or not removed else []
+    if removed:
+        parts.append(_count(len(removed), "removal"))
+    head = (
+        f"{len(added)} added, {len(modified)} modified, {len(removed)} removed, "
+        f"{drifted} drifted, {len(rebuilt)} rebuilt → would propose "
+        + " and ".join(parts)
+    )
+    if p.deferred:
+        head += f"; {p.deferred} more follow in later chunks"
+    head += " (validation runs at publish)"
+    lines = [head]
+    for mark, ids, what in kinds:
+        lines += [f"  {mark} {doc_id}  {what}" for doc_id in ids]
     return lines
 
 

@@ -467,7 +467,7 @@ def test_plan_then_run_agree(at, capsys):
     assert main(["plan", "--project", str(yml)]) == 0
     assert _lines(capsys) == [
         "local_files  1 added, 0 modified, 0 removed, 0 drifted, 0 rebuilt "
-        "→ would propose 1 concepts (validation runs at publish)",
+        "→ would propose 1 concept (validation runs at publish)",
         "local_files    + local_files:a.md  added",
     ]
     assert main(["run", "--project", str(yml)]) == 0
@@ -503,7 +503,7 @@ def test_plan_writes_nothing_under_state_dir(at, capsys):
     assert _snapshot(at / ".kbforge") == before
     assert out == [
         "local_files  0 added, 1 modified, 0 removed, 0 drifted, 0 rebuilt "
-        "→ would propose 1 concepts; 2 more follow in later chunks "
+        "→ would propose 1 concept; 2 more follow in later chunks "
         "(validation runs at publish)",
         "local_files    ~ local_files:a.md  modified",
     ]
@@ -1099,3 +1099,108 @@ def test_init_reads_the_docs_path_relative_to_the_project_file(at, capsys):
         "note: ../handbook does not exist yet; "
         "create it or edit sources.docs.config.path"
     ) in _lines(capsys)
+
+
+def _tdoc(native_id: str, text: str = "", *, deleted: bool = False):
+    from datetime import UTC, datetime
+
+    from kbforge.canonical import content_hash
+    from kbforge.models import CanonicalDocument, ResourceAnchor
+
+    doc = CanonicalDocument(
+        anchor=ResourceAnchor(
+            system="t",
+            native_id=native_id,
+            retrieved_at=datetime(2024, 1, 1, tzinfo=UTC),
+            content_hash="",
+        ),
+        doc_id=f"t:{native_id}",
+        title=native_id,
+        text=text or native_id,
+        deleted=deleted,
+    )
+    doc.anchor.content_hash = content_hash(doc)
+    return doc
+
+
+class _TombConnector:
+    """Emits `docs`, which a test edits between runs (tombstones included)."""
+
+    def __init__(self, docs):
+        self.docs = docs
+
+    def kbforge_connector_info(self):
+        from kbforge.models import ConnectorInfo
+
+        return ConnectorInfo(name="tomb", version="0.1.0", source_system="t")
+
+    def kbforge_validate_config(self, config):
+        return []
+
+    def kbforge_fetch(self, config, cursor):
+        from kbforge.models import Cursor, FetchResult
+
+        return FetchResult(records=[], cursor=Cursor(connector="tomb"))
+
+    def kbforge_normalize(self, records):
+        return self.docs
+
+
+def test_plan_counts_a_removal_as_part_of_the_proposal(at, monkeypatch, capsys):
+    connector = _TombConnector([_tdoc("a"), _tdoc("b"), _tdoc("c")])
+    _registry_with(monkeypatch, connector)
+    yml = _project(at, {"t": {"connector": "tomb"}})
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys)[0] == (
+        "t  3 added, 0 modified, 0 removed, 0 drifted, 0 rebuilt "
+        "→ would propose 3 concepts (validation runs at publish)"
+    )
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+
+    connector.docs = [_tdoc("a"), _tdoc("b", deleted=True), _tdoc("c")]
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "t  0 added, 0 modified, 1 removed, 0 drifted, 0 rebuilt "
+        "→ would propose 1 removal (validation runs at publish)",
+        "t    - t:b  removed",
+    ]
+
+    connector.docs = [
+        _tdoc("a", "a, edited"),
+        _tdoc("b", deleted=True),
+        _tdoc("c", deleted=True),
+    ]
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "t  0 added, 1 modified, 2 removed, 0 drifted, 0 rebuilt "
+        "→ would propose 1 concept and 2 removals (validation runs at publish)",
+        "t    ~ t:a  modified",
+        "t    - t:b  removed",
+        "t    - t:c  removed",
+    ]
+
+
+def test_plan_lists_and_counts_each_document_once():
+    from kbforge.pipeline import Planned
+    from kbforge.project_cli import _planned_lines
+
+    # A deferred drift that a removal's referrers rebuild is promoted back into
+    # the drift list and is in `rebuilt` as well.
+    p = Planned(
+        added=[],
+        modified=[],
+        removed=["t:gone"],
+        grounding_drift=["t:x"],
+        link_drift=[],
+        rebuilt=["t:x", "t:y"],
+        deferred=0,
+        systems=frozenset({"t"}),
+    )
+    assert _planned_lines(p) == [
+        "0 added, 0 modified, 1 removed, 1 drifted, 1 rebuilt "
+        "→ would propose 2 concepts and 1 removal (validation runs at publish)",
+        "  - t:gone  removed",
+        "  ↻ t:x  grounding drift",
+        "  ↻ t:y  rebuilt for links",
+    ]
