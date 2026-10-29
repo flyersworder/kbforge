@@ -7,6 +7,7 @@ serialization with no network and no fakes.
 from __future__ import annotations
 
 from mcp.server import MCPServer
+from mcp.server.mcpserver.exceptions import ToolError
 from mcp.types import ToolAnnotations
 
 mcp = MCPServer("kbforge-mcp-fixture")
@@ -47,7 +48,7 @@ def read_doc(path: str) -> str:
     if path not in DOCS and f"{path}.md" in DOCS:
         path = f"{path}.md"
     if path not in DOCS:
-        raise ValueError(f"no such document: {path}")
+        raise ToolError(f"no such document: {path}")
     return DOCS[path]
 
 
@@ -68,7 +69,7 @@ def outline(query: str) -> str:
 def peek_doc(path: str) -> str:
     """Tier-3 reader with no annotations declared at all."""
     if path not in DOCS:
-        raise ValueError(f"no such document: {path}")
+        raise ToolError(f"no such document: {path}")
     return DOCS[path]
 
 
