@@ -20,6 +20,7 @@ from kbforge.chunking import ChunkRecordError, load_chunking
 from kbforge.grounding import load_grounding, problems_for
 from kbforge.links import links_problems, load_links
 from kbforge.llm_synthesizer import SynthesisError
+from kbforge.lock import MirrorLocked, mirror_lock
 from kbforge.pipeline import (
     Aborted,
     ConfigError,
@@ -124,6 +125,11 @@ def _source_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument("--mirror", required=True)
     p.add_argument("--state", required=True)
+
+
+def _locked(exc: MirrorLocked) -> int:
+    print(f"Locked: another kbforge run holds {exc.path}; nothing was read or written.")
+    return 3
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -238,14 +244,17 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd == "redo":
         try:
-            redone = redo(
-                connectors[args.connector],
-                publishers[args.publisher],
-                config=config,
-                mirror=args.mirror,
-                state_dir=args.state,
-                publish_config=publish_config,
-            )
+            with mirror_lock(Path(args.mirror)):
+                redone = redo(
+                    connectors[args.connector],
+                    publishers[args.publisher],
+                    config=config,
+                    mirror=args.mirror,
+                    state_dir=args.state,
+                    publish_config=publish_config,
+                )
+        except MirrorLocked as exc:
+            return _locked(exc)
         except (ConfigError, ChunkRecordError) as exc:
             print(str(exc))
             return 2
@@ -335,18 +344,21 @@ def main(argv: list[str] | None = None) -> int:
             return 2
 
     try:
-        result = run(
-            connectors[args.connector],
-            publishers[args.publisher],
-            config=config,
-            mirror=args.mirror,
-            state_dir=args.state,
-            publish_config=publish_config,
-            synthesizer=synthesizer,
-            grounding_config=grounding_config,
-            chunking=chunking,
-            links_config=links_config,
-        )
+        with mirror_lock(Path(args.mirror)):
+            result = run(
+                connectors[args.connector],
+                publishers[args.publisher],
+                config=config,
+                mirror=args.mirror,
+                state_dir=args.state,
+                publish_config=publish_config,
+                synthesizer=synthesizer,
+                grounding_config=grounding_config,
+                chunking=chunking,
+                links_config=links_config,
+            )
+    except MirrorLocked as exc:
+        return _locked(exc)
     except (ConfigError, ChunkRecordError) as exc:
         print(str(exc))
         return 2
