@@ -481,3 +481,54 @@ def test_resetting_an_old_name_before_the_renamed_source_has_run(at, capsys):
     assert _entries(at) == {}
     assert main(["run", "--project", str(yml)]) == 0
     assert _lines(capsys) == ["new  NoOp: no change detected; no MR opened."]
+
+
+@pytest.mark.parametrize("order", [["older", "old"], ["old", "older"]])
+def test_resetting_two_stale_names_spares_an_unrun_renamed_source(at, capsys, order):
+    """`older` on ./h1 runs, is renamed `old` on ./handbook and runs, then is
+    renamed `new` (old's config) and has not run. Neither stale name's reset,
+    in either order, may take new's slot's documents: nothing but the slot
+    itself ties local_files to new."""
+    _docs(at, "x")
+    h1 = at / "h1"
+    h1.mkdir()
+    (h1 / "z.md").write_text(DOC.format(title="z"), "utf-8")
+    yml = _project(
+        at, {"older": {"connector": "local_files", "config": {"path": "./h1"}}}
+    )
+    assert main(["run", "--project", str(yml)]) == 0
+    _project(at, {"old": A})
+    assert main(["run", "--project", str(yml)]) == 0
+    _project(at, {"new": A})
+    capsys.readouterr()
+    root = at / ".kbforge"
+    older_cursor = f"cursor-local_files-{instance_key({'path': './h1'})}.json"
+    before = _snapshot(root)
+    assert f"state/{older_cursor}" in before
+    assert _mirror_ids(at) == ["local_files:x.md", "local_files:z.md"]
+
+    expected = {
+        "older": [
+            "older: system 'local_files' belongs to source 'new'; "
+            "its documents were left in place",
+            "older: removed 0 mirror document(s) and 1 state file(s)",
+        ],
+        "old": [
+            "old: system 'local_files' belongs to source 'new'; "
+            "its documents were left in place",
+            "old: state slots shared with source 'new' were left in place",
+            "old: removed 0 mirror document(s) and 0 state file(s)",
+        ],
+    }
+    for name in order:
+        assert main(["reset", name, "--yes", "--project", str(yml)]) == 0
+        assert _lines(capsys) == expected[name]
+
+    # new's cursor and every mirror slot byte-identical; only older's own
+    # cursor is gone.
+    assert _without(_snapshot(root), "sources.json") == _without(
+        before, "sources.json", older_cursor
+    )
+    assert _entries(at) == {}
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["new  NoOp: no change detected; no MR opened."]

@@ -656,13 +656,24 @@ def _reset(project: Project, name: str, *, yes: bool) -> int:
         if (other_entry := entries.get(other)) is not None:
             taken.setdefault((other_entry.connector, other_entry.digest), other)
     mine = [pair for pair in pairs if pair not in taken]
-    # The systems `name` last ran with go with the slot they were fetched
-    # through: if another source now resolves to it (a rename it has not run
-    # under yet), wiping the mirror would leave that cursor with no mirror
+    # Systems go with the slot they were fetched through, so a taken slot's
+    # systems are its taker's even before the taker has run (a rename has no
+    # entry yet): the cursor's stamped systems, the chunk record's admitted
+    # prefixes, and those of any entry, stale or not, that records the slot.
+    # Wiping their mirror documents would leave that cursor with no mirror
     # behind it.
-    if entry is not None and (taker := taken.get((entry.connector, entry.digest))):
-        for system in entry.systems:
-            owned.setdefault(system, taker)
+    for (c, d), other in taken.items():
+        slot_systems = set(
+            systems_for(None, cursor_slot(state, c, d), chunk_slot(state, c, d))
+        )
+        slot_systems.update(
+            system
+            for recorded in entries.values()
+            if (recorded.connector, recorded.digest) == (c, d)
+            for system in recorded.systems
+        )
+        for system in sorted(slot_systems):
+            owned.setdefault(system, other)
 
     if entry is not None and entry.systems:
         found = frozenset(entry.systems)
