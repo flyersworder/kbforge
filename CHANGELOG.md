@@ -39,8 +39,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Every `run`, `redo`, `plan` and `reset` holds an OS lock on `run.lock` beside
-  the mirror directory for the whole invocation, flag-mode runs included. A
+- Every `run`, `redo`, `plan` and `reset` holds an OS lock on
+  `<mirror parent>/run.lock`, beside the mirror directory, for the whole
+  invocation, flag-mode runs included. Mirrors that share a parent directory
+  therefore share one lock. A
   second run on the same mirror exits **3** with `Locked: another kbforge run
   holds <path>; nothing was read or written.` instead of interleaving with the
   first. Atomic mirror writes are still not built.

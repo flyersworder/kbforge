@@ -1594,9 +1594,11 @@ deployment onto a project file is free: the same config finds the same slots,
 and `plan` reporting `NoOp` for each source is the check.
 
 **The lock.** `run`, `plan`, `redo` and `reset` hold an exclusive,
-non-blocking OS advisory lock (`lock.py`) on `run.lock` beside the mirror
-directory, `<state_dir>/run.lock` in project mode, for the whole invocation and
-across all its sources. Flag-mode `run` and `redo` take the same lock: it
+non-blocking OS advisory lock (`lock.py`) on `<mirror parent>/run.lock`,
+beside the mirror directory (`<state_dir>/run.lock` in project mode), for the
+whole invocation and across all its sources. Mirrors that share a parent
+directory therefore share one lock: flag runs with `--mirror kb/a` and
+`--mirror kb/b` exclude each other. Flag-mode `run` and `redo` take the same lock: it
 belongs to the mirror, and a flag run racing a project run on one mirror is the
 case it exists for. A second process exits 3 with `Locked: another kbforge run
 holds <path>; nothing was read or written.` The lock sits beside the mirror,

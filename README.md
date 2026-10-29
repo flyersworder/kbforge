@@ -89,7 +89,7 @@ sources:                            # run in this order
   handbook:
     connector: local_files
     config: { path: ./handbook }
-    chunking: { max_concepts: 40, group_by: family }
+    chunking: { max_concepts: 40 }
     synthesizer: { name: describe, model: deepseek/deepseek-v4-flash }
 ```
 
@@ -99,6 +99,9 @@ sources:                            # run in this order
   key is an error naming its YAML path.
 - **Per-source `synthesizer` and `publisher` replace** the top-level one whole.
   `links` and `grounding` exist only at the top, so every source sees the same.
+  Inline, each takes the whole file's contents, top-level key included:
+  `links: { links: { "products:p1": [handbook:p1.md] } }`, and `grounding: {
+  grounding: {...}, rules: [...] }`.
 - **Put a source others ground on first**, so their rebuilds land in the same
   run rather than the next.
 - **A system belongs to one source.** `local_files` and `git_commits` each emit
