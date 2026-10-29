@@ -875,6 +875,12 @@ def cmd_init(target: Path, docs_path: str) -> int:
         else f" --project {target}"
     )
     print(f"wrote {target.name}")
+    # Read as `plan` will read it: relative to the project file.
+    if not (target.parent / docs_path).exists():
+        print(
+            f"note: {docs_path} does not exist yet; "
+            "create it or edit sources.docs.config.path"
+        )
     print(f"next: kbforge plan{flag}")
     print("keep .kbforge/ between runs: it holds the mirror that makes re-runs free")
     return 0

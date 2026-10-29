@@ -1077,3 +1077,25 @@ def test_status_still_rejects_an_unknown_publisher(at, capsys):
     [line] = _lines(capsys)
     assert line.startswith("publisher: unknown publisher 'nope'; available: ")
     assert "dry-run" in line
+
+
+def test_init_notes_a_docs_path_that_does_not_exist(at, capsys):
+    assert main(["init"]) == 0
+    assert _lines(capsys) == [
+        INIT_LINES[0],
+        "note: ./docs does not exist yet; create it or edit sources.docs.config.path",
+        *INIT_LINES[1:],
+    ]
+
+
+def test_init_reads_the_docs_path_relative_to_the_project_file(at, capsys):
+    (at / "sub").mkdir()
+    (at / "kb" / "handbook").mkdir(parents=True)
+    target = at / "sub" / "p.yaml"
+    assert main(["init", "../kb/handbook", "--project", str(target)]) == 0
+    assert not any(line.startswith("note:") for line in _lines(capsys))
+    assert main(["init", "../handbook", "--project", str(at / "kb" / "q.yaml")]) == 0
+    assert (
+        "note: ../handbook does not exist yet; "
+        "create it or edit sources.docs.config.path"
+    ) in _lines(capsys)
