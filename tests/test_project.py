@@ -184,3 +184,33 @@ def test_execute_maps_outcomes():
 
     o = execute(refuse, "c")
     assert (o.code, o.lines) == (1, ["Redo refused: nope"])
+
+
+def test_links_and_grounding_paths_resolve_against_the_project_file(
+    tmp_path, monkeypatch
+):
+    (tmp_path / "links.yaml").write_text("links: {'a:1': ['b:2']}\n", "utf-8")
+    (tmp_path / "grounding.yaml").write_text("max_grounding_docs: 7\n", "utf-8")
+    write(tmp_path, SPEC_EXAMPLE)
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    p = load_project(tmp_path / DEFAULT_FILE)
+    links = load_links_value(p.links)
+    assert links is not None and links.links == {"a:1": ["b:2"]}
+    assert load_grounding_value(p.grounding).max_grounding_docs == 7
+
+
+def test_a_relative_project_path_gives_an_absolute_root(tmp_path, monkeypatch):
+    sub = tmp_path / "sub"
+    sub.mkdir()
+    write(sub, "sources:\n  a: {connector: x}\n")
+    monkeypatch.chdir(tmp_path)
+    p = load_project(Path("sub") / DEFAULT_FILE)
+    assert p.root.is_absolute()
+    assert p.mirror() == sub.resolve() / ".kbforge" / "mirror"
+    with pytest.raises(ProjectError) as exc:
+        load_project(Path("sub") / "nope" / DEFAULT_FILE)
+    assert exc.value.problems == [
+        f"{DEFAULT_FILE}: not found in {(sub / 'nope').resolve()}"
+    ]

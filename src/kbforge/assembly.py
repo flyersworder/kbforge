@@ -81,7 +81,7 @@ def check_publisher(publisher: Any, name: str, config: dict) -> list[str]:
 
 
 def load_links_value(v: Path | dict | None) -> LinksConfig | None:
-    """A path (already resolved against the project file) or the mapping inline."""
+    """A path (resolved by `load_project`) or the mapping inline."""
     if isinstance(v, dict):
         return LinksConfig.model_validate(v)
     return load_links(v)

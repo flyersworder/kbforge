@@ -89,6 +89,9 @@ def _problems(exc: ValidationError) -> list[str]:
 
 
 def load_project(path: Path) -> Project:
+    # Absolute before anything reads it: the CLI chdirs to the file's directory,
+    # and a root taken from a relative path would then point at the wrong place.
+    path = path.resolve()
     try:
         text = path.read_text("utf-8")
     except FileNotFoundError:
@@ -108,4 +111,9 @@ def load_project(path: Path) -> Project:
     except ValidationError as exc:
         raise ProjectError(_problems(exc)) from None
     project._root = path.parent
+    # `links`/`grounding` paths are relative to the project file, not the cwd.
+    if isinstance(project.links, Path):
+        project.links = project._root / project.links
+    if isinstance(project.grounding, Path):
+        project.grounding = project._root / project.grounding
     return project
