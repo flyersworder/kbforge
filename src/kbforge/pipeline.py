@@ -906,6 +906,10 @@ def run(
         if appends and record is not None:
             new_record = merge_records(record, new_record)
         write_record(_chunk_slot(state_path, info.name, config), new_record)
+    else:
+        # An unchunked publish supersedes any record an earlier chunked run
+        # left: redo would otherwise roll back to a state this run overwrote.
+        _chunk_slot(state_path, info.name, config).unlink(missing_ok=True)
     return Published(url=url, systems=reported_systems)
 
 

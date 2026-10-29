@@ -22,6 +22,7 @@ from kbforge.models import (
 )
 from kbforge.pipeline import (
     ConfigError,
+    NoOp,
     Published,
     Redone,
     RedoRefused,
@@ -554,3 +555,20 @@ def test_the_inherited_spec_default_counts_as_no_hook_for_redo(tmp_path):
         match="inherits: redo needs a publisher that implements kbforge_open_request",
     ):
         _redo(tmp_path, publisher=_InheritsTheSpec())
+
+
+def test_an_unchunked_publish_retires_the_chunk_record(tmp_path):
+    _run(tmp_path, [_doc("a")], cap=1)
+    assert list((tmp_path / "state").glob("chunk-*.json"))
+    result, _, _ = _run(tmp_path, [_doc("a", text="edited")])
+    assert isinstance(result, Published)
+    assert not list((tmp_path / "state").glob("chunk-*.json"))
+    with pytest.raises(RedoRefused, match="fake: no chunk to redo"):
+        _redo(tmp_path)
+
+
+def test_an_unchunked_noop_keeps_the_chunk_record(tmp_path):
+    _run(tmp_path, [_doc("a")], cap=1)
+    result, _, _ = _run(tmp_path, [_doc("a")])
+    assert isinstance(result, NoOp)
+    assert list((tmp_path / "state").glob("chunk-*.json"))

@@ -1347,9 +1347,7 @@ request is open. `<state>/chunk-<connector>-<digest>.json` records the last
 chunk, merged with every earlier run published into the same still-open
 request, and `kbforge redo` restores the mirror files and cursor it recorded,
 so a closed request can be re-proposed. Redo must run before the next `run`:
-a run after closing proceeds to the next chunk, and closing alone discards.
-Do not mix chunked and unchunked runs on one connector instance and then redo:
-an unchunked run writes no record, so the one left behind is stale. Rationale:
+a run after closing proceeds to the next chunk, and closing alone discards. Rationale:
 [`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
 
 ### 7.3 The describe synthesizer

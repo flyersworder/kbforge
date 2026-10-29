@@ -192,9 +192,8 @@ comes from synthesis), and a field no document carries groups nothing. To
 redo a chunk after fixing the taxonomy or exemplars, close its request and run
 `kbforge redo` with the same `--connector`, `--set`, `--publisher`,
 `--mirror` and `--state`, before the next `kbforge run`: closing alone
-discards the chunk, and a run after closing moves on to the next one. Keep a
-connector instance either always chunked or never; redo after an unchunked run
-would roll back a stale record. See `docs/architecture.md` §7.2.
+discards the chunk, and a run after closing moves on to the next one. See
+`docs/architecture.md` §7.2.
 
 **Links no source carries.** Two taxonomies with no join key, or a requirement
 that closes a gap on another slide: declare them in a reviewed `links.yaml` and
