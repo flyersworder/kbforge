@@ -243,8 +243,9 @@ both. Today nothing stops this across invocations. Under a project file it is
 refused (my call).
 
 A system is only known after a fetch, so the check runs there. `run()` gains
-an optional `foreign_systems: frozenset[str]` parameter, defaulting to empty,
-so flag mode is unchanged. It is checked immediately after the fetch contract
+optional `foreign_systems: frozenset[str]` and `owners` (system to owning
+source name, for the message) parameters, defaulting to empty, so flag mode is
+unchanged. It is checked immediately after the fetch contract
 (`pipeline.py:320`), before the diff — not beside `_scope_failures`, since the
 two NoOp gates return before that point — and any fetched
 document whose `anchor.system` is in that set yields `Aborted`:

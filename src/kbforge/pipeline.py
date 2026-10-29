@@ -4,8 +4,8 @@ no-op and never-auto-merge rules are trust guarantees enforced here."""
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, cast
@@ -92,6 +92,10 @@ class PublisherProtocol(Protocol):
 class NoOp:
     """No change detected — no MR opened. Ever."""
 
+    # Excluded from equality so `== NoOp()` stays true: the systems are a report
+    # for the caller, not part of what a no-op is.
+    systems: frozenset[str] = field(default=frozenset(), compare=False)
+
 
 @dataclass(frozen=True)
 class Aborted:
@@ -103,6 +107,7 @@ class Aborted:
 @dataclass(frozen=True)
 class Published:
     url: str
+    systems: frozenset[str] = field(default=frozenset(), compare=False)
 
 
 @dataclass(frozen=True)
@@ -139,6 +144,10 @@ def _instance_key(config: dict) -> str:
     worse, because scope decides which system's concepts a run may touch."""
     canonical = json.dumps(config, sort_keys=True, default=str)
     return sha256(canonical.encode("utf-8")).hexdigest()[:8]
+
+
+# Public: a project file keys its per-source state by the same digest.
+instance_key = _instance_key
 
 
 def _cursor_slot(state_dir: Path, connector: str, config: dict) -> Path:
@@ -286,6 +295,8 @@ def run(
     grounding_config: GroundingConfig | None = None,
     chunking: ChunkingConfig | None = None,
     links_config: LinksConfig | None = None,
+    foreign_systems: frozenset[str] = frozenset(),
+    owners: Mapping[str, str] | None = None,
 ) -> NoOp | Aborted | Published | Waiting:
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
@@ -319,6 +330,27 @@ def run(
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
     assert_fetch_contract(docs, complete=result.complete)  # §4.2 fetch contract
 
+    # Checked here, before the diff and both NoOp gates: those return early, so
+    # a check placed later would let an ownership violation pass as a no-op.
+    # Nothing is committed and no cursor is saved for a source that aborts.
+    fetched_systems = frozenset(d.anchor.system for d in docs)
+    reported_systems = fetched_systems or frozenset(prior.systems if prior else ())
+    owner_names = owners or {}
+    ownership = [
+        Failure(
+            law="source-ownership",
+            concept_path=concept_path(
+                min(d.doc_id for d in docs if d.anchor.system == s)
+            ),
+            message=(
+                f"system '{s}' is already owned by source '{owner_names.get(s, '?')}'"
+            ),
+        )
+        for s in sorted(fetched_systems & foreign_systems)
+    ]
+    if ownership:
+        return Aborted(failures=ownership)
+
     grounds = getattr(synthesizer, "grounds", False)
     grounding_cfg = grounding_config or GroundingConfig()
     # Expanded once: symmetric reverses are what let B's run find A's entry.
@@ -342,7 +374,7 @@ def run(
     # because links are frame, not prose.
     link_scan = links_config is not None or has_links_sidecars(mirror_path)
     if changeset.is_noop and not scan and not link_scan:
-        return NoOp()
+        return NoOp(systems=reported_systems)
 
     # Read once per run, and only past the first no-op gate. The mirror is
     # still the pre-run published state here: commit() below is the only thing
@@ -509,7 +541,7 @@ def run(
         changed_docs += link_docs
 
     if changeset.is_noop and not drift and not link_drift:
-        return NoOp()
+        return NoOp(systems=reported_systems)
 
     # A concept linking to a deleted one must be re-synthesized, or its link
     # survives as a dangling reference (§4.4 law 2) that nothing checks: the
@@ -874,7 +906,7 @@ def run(
         if appends and record is not None:
             new_record = merge_records(record, new_record)
         write_record(_chunk_slot(state_path, info.name, config), new_record)
-    return Published(url=url)
+    return Published(url=url, systems=reported_systems)
 
 
 def redo(
