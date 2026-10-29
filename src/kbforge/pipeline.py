@@ -436,20 +436,27 @@ def _run(
     # Checked here, before the diff and both NoOp gates: those return early, so
     # a check placed later would let an ownership violation pass as a no-op.
     # Nothing is committed and no cursor is saved for a source that aborts.
+    # Checked against `reported_systems`, not just what was fetched: an empty
+    # incremental fetch reports its prior cursor's systems, and the caller
+    # records what is reported, so checking less would let a second source
+    # claim a system on a quiet run. Such a run has no document to name, so
+    # the failure names the system.
     fetched_systems = frozenset(d.anchor.system for d in docs)
     reported_systems = fetched_systems or frozenset(prior.systems if prior else ())
     owner_names = owners or {}
     ownership = [
         Failure(
             law="source-ownership",
-            concept_path=concept_path(
-                min(d.doc_id for d in docs if d.anchor.system == s)
+            concept_path=(
+                concept_path(min(ids))
+                if (ids := [d.doc_id for d in docs if d.anchor.system == s])
+                else s
             ),
             message=(
                 f"system '{s}' is already owned by source '{owner_names.get(s, '?')}'"
             ),
         )
-        for s in sorted(fetched_systems & foreign_systems)
+        for s in sorted(reported_systems & foreign_systems)
     ]
     if ownership:
         return Aborted(failures=ownership)

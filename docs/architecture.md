@@ -1623,7 +1623,8 @@ which selects mirror documents by system, would remove both. `run()` takes
 `foreign_systems` and `owners`, checked right after the fetch contract and
 before the diff and both no-op gates: a fetched document whose `anchor.system`
 is foreign aborts with `[source-ownership]`, committing nothing and saving no
-cursor. Project mode passes the systems `sources.json` records for every other
+cursor. So does an empty fetch whose prior cursor names a foreign system,
+since those are the systems the run reports and `sources.json` would record. Project mode passes the systems `sources.json` records for every other
 source still in the file, plus those an earlier source fetched in the same
 invocation. A name no longer in the file owns nothing, because a renamed
 source keeps its config, and so its cursor, and must not be blocked by its

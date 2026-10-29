@@ -963,3 +963,63 @@ def test_a_connector_exception_does_not_stop_later_sources_in_plan(
     assert out[2] == BOOM
     assert out[3].startswith("c  1 added, 0 modified")
     assert not (at / ".kbforge" / "state").exists()
+
+
+def test_migrated_sources_sharing_a_system_cannot_both_own_it(at, capsys):
+    """Two flag-mode git_commits runs on one mirror, moved onto a project: the
+    second source's fetch is empty (nothing new since its cursor), and its
+    cursor's systems are what it would record, so it must abort rather than
+    be recorded as a second owner."""
+    x, out = at / "X", at / "out"
+    repos = []
+    for name in ("r1", "r2"):
+        repo = at / name
+        repo.mkdir()
+        _git(repo, "init", "-q")
+        (repo / f"{name}.txt").write_text(f"{name}\n", "utf-8")
+        _git(repo, "add", ".")
+        _git(repo, "commit", "-q", "-m", f"Add {name}")
+        repos.append(repo)
+        flag = [
+            "run",
+            "--connector",
+            "git_commits",
+            "--set",
+            f"repo={repo}",
+            "--mirror",
+            str(x / "mirror"),
+            "--state",
+            str(x / "state"),
+            "--publisher",
+            "dry-run",
+            "--out",
+            str(out),
+        ]
+        assert main(flag) == 0
+    capsys.readouterr()
+
+    yml = _project(
+        at,
+        {
+            "c1": {"connector": "git_commits", "config": {"repo": str(repos[0])}},
+            "c2": {"connector": "git_commits", "config": {"repo": str(repos[1])}},
+        },
+        state_dir="X",
+    )
+    aborted = [
+        "c2  Aborted: 1 validation failure(s):",
+        "c2    [source-ownership] git_commits: "
+        "system 'git_commits' is already owned by source 'c1'",
+    ]
+    assert main(["plan", "--project", str(yml)]) == 1
+    assert _lines(capsys) == ["c1  no change → NoOp", *aborted]
+
+    assert main(["run", "--project", str(yml)]) == 1
+    assert _lines(capsys) == [
+        "c1  NoOp: no change detected; no MR opened.",
+        *aborted,
+    ]
+    entries = json.loads((x / "state" / "sources.json").read_text("utf-8"))
+    assert {name: e["systems"] for name, e in entries.items()} == {
+        "c1": ["git_commits"]
+    }
