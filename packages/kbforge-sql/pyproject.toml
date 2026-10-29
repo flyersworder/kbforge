@@ -6,6 +6,19 @@ readme = "README.md"
 requires-python = ">=3.12"
 authors = [{ name = "Qing", email = "qingye779@gmail.com" }]
 license = { text = "MIT" }
+keywords = ["kbforge", "sql", "sqlalchemy", "database", "okf", "open-knowledge-format", "connector", "knowledge-base"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     # 0.8.0: cursor slots keyed per config instance, so two `sql` sources never
     # share a manifest; `synthesize.OKF_OWNED` and `canonical.is_blank` exist.
@@ -13,6 +26,12 @@ dependencies = [
     "pydantic>=2.0",
     "sqlalchemy>=2.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/flyersworder/kbforge/tree/main/packages/kbforge-sql"
+Repository = "https://github.com/flyersworder/kbforge"
+Issues = "https://github.com/flyersworder/kbforge/issues"
+Changelog = "https://github.com/flyersworder/kbforge/blob/main/CHANGELOG.md"
 
 [project.entry-points."kbforge.connectors"]
 sql = "kbforge_sql.connector:CONNECTOR"

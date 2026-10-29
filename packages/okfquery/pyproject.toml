@@ -7,6 +7,19 @@ requires-python = ">=3.12"
 authors = [{ name = "Qing", email = "qingye779@gmail.com" }]
 license = { text = "MIT" }
 keywords = ["okf", "open-knowledge-format", "duckdb", "sql", "knowledge-base"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Environment :: Console",
+    "Topic :: Database",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "duckdb>=1.1",
     "pyyaml>=6",
@@ -17,6 +30,12 @@ dependencies = [
     # value the same way on every machine, not about pytz being needed at all.
     "pytz>=2024.1",
 ]
+
+[project.urls]
+Homepage = "https://github.com/flyersworder/kbforge/tree/main/packages/okfquery"
+Repository = "https://github.com/flyersworder/kbforge"
+Issues = "https://github.com/flyersworder/kbforge/issues"
+Changelog = "https://github.com/flyersworder/kbforge/blob/main/CHANGELOG.md"
 
 [project.scripts]
 okfquery = "okfquery.cli:main"

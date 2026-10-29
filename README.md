@@ -18,6 +18,23 @@ carrying the frontmatter, links and provenance an agent needs to cite it. You
 review and merge; kbforge never does. A re-run when nothing changed costs one
 fetch: no model call, no pull request.
 
+**Contents**
+
+- [Quickstart](#quickstart)
+- [The project file](#the-project-file)
+- [Publishing to GitHub or GitLab](#publishing-to-github-or-gitlab)
+  - [Large first runs](#large-first-runs)
+  - [Links no source carries](#links-no-source-carries)
+- [Consuming a bundle](#consuming-a-bundle)
+- [Why you can trust it](#why-you-can-trust-it)
+- [Where kbforge fits](#where-kbforge-fits)
+- [Running one source without a project file](#running-one-source-without-a-project-file)
+- [Documentation](#documentation)
+- [Related projects](#related-projects)
+  - [Not a context database](#not-a-context-database)
+- [Development](#development)
+- [License](#license)
+
 ## Quickstart
 
 `pip install kbforge`; then, beside a `docs/` of markdown (here two files):
