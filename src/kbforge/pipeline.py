@@ -1,11 +1,12 @@
 """The fixed-order pipeline (architecture §7). The order is NOT pluggable; the
-no-op and never-auto-merge rules are trust guarantees enforced here."""
+no-op and never-auto-merge rules are trust guarantees enforced here. `plan()`
+runs the same body as `run()` and stops before synthesis."""
 
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Mapping, Sequence
+from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
 from typing import Protocol, cast
@@ -92,6 +93,10 @@ class PublisherProtocol(Protocol):
 class NoOp:
     """No change detected — no MR opened. Ever."""
 
+    # Excluded from equality so `== NoOp()` stays true: the systems are a report
+    # for the caller, not part of what a no-op is.
+    systems: frozenset[str] = field(default=frozenset(), compare=False)
+
 
 @dataclass(frozen=True)
 class Aborted:
@@ -103,6 +108,7 @@ class Aborted:
 @dataclass(frozen=True)
 class Published:
     url: str
+    systems: frozenset[str] = field(default=frozenset(), compare=False)
 
 
 @dataclass(frozen=True)
@@ -112,6 +118,22 @@ class Waiting:
 
     request: str
     branch_hint: str
+
+
+@dataclass(frozen=True)
+class Planned:
+    """What `run()` would synthesize, reported by `plan()` from the same body
+    stopped before synthesis: nothing synthesized, validated, published or
+    written. Lists are this chunk's, sorted."""
+
+    added: list[str]
+    modified: list[str]
+    removed: list[str]
+    grounding_drift: list[str]
+    link_drift: list[str]
+    rebuilt: list[str]  # referrers + arrivals
+    deferred: int  # backlog + deferred grounding drift + deferred link drift
+    systems: frozenset[str]
 
 
 class ConfigError(RuntimeError):
@@ -139,6 +161,10 @@ def _instance_key(config: dict) -> str:
     worse, because scope decides which system's concepts a run may touch."""
     canonical = json.dumps(config, sort_keys=True, default=str)
     return sha256(canonical.encode("utf-8")).hexdigest()[:8]
+
+
+# Public: a project file keys its per-source state by the same digest.
+instance_key = _instance_key
 
 
 def _cursor_slot(state_dir: Path, connector: str, config: dict) -> Path:
@@ -286,7 +312,95 @@ def run(
     grounding_config: GroundingConfig | None = None,
     chunking: ChunkingConfig | None = None,
     links_config: LinksConfig | None = None,
+    foreign_systems: frozenset[str] = frozenset(),
+    owners: Mapping[str, str] | None = None,
 ) -> NoOp | Aborted | Published | Waiting:
+    synthesizer = synthesizer or StubSynthesizer()
+    outcome = _run(
+        connector,
+        publisher,
+        config=config,
+        mirror=mirror,
+        state_dir=state_dir,
+        publish_config=publish_config,
+        synthesizer=synthesizer,
+        grounding_config=grounding_config,
+        chunking=chunking,
+        links_config=links_config,
+        foreign_systems=foreign_systems,
+        owners=owners,
+        grounds=getattr(synthesizer, "grounds", False),
+        until_synthesis=False,
+        check_open_requests=True,
+    )
+    assert not isinstance(outcome, Planned)  # only until_synthesis plans
+    return outcome
+
+
+def plan(
+    connector: ConnectorProtocol,
+    publisher: PublisherProtocol,
+    *,
+    config: dict,
+    mirror: str,
+    state_dir: str,
+    publish_config: dict,
+    grounds: bool,
+    grounding_config: GroundingConfig | None = None,
+    chunking: ChunkingConfig | None = None,
+    links_config: LinksConfig | None = None,
+    foreign_systems: frozenset[str] = frozenset(),
+    owners: Mapping[str, str] | None = None,
+    check_open_requests: bool = True,
+) -> NoOp | Aborted | Waiting | Planned:
+    """What `run()` would do now: `run()`'s own body, stopped before synthesis
+    (architecture.md §7.5). It fetches, but synthesizes, validates,
+    publishes and writes nothing, so it needs no model. `grounds` is the
+    synthesizer's class attribute, read without constructing one.
+    `check_open_requests=False` skips both chunk `Waiting` checks, for a caller
+    without the publisher's credentials."""
+    outcome = _run(
+        connector,
+        publisher,
+        config=config,
+        mirror=mirror,
+        state_dir=state_dir,
+        publish_config=publish_config,
+        synthesizer=StubSynthesizer(),  # never called: plan stops before it
+        grounding_config=grounding_config,
+        chunking=chunking,
+        links_config=links_config,
+        foreign_systems=foreign_systems,
+        owners=owners,
+        grounds=grounds,
+        until_synthesis=True,
+        check_open_requests=check_open_requests,
+    )
+    assert not isinstance(outcome, Published)  # until_synthesis never publishes
+    return outcome
+
+
+def _run(
+    connector: ConnectorProtocol,
+    publisher: PublisherProtocol,
+    *,
+    config: dict,
+    mirror: str,
+    state_dir: str,
+    publish_config: dict,
+    synthesizer: Synthesizer,
+    grounding_config: GroundingConfig | None,
+    chunking: ChunkingConfig | None,
+    links_config: LinksConfig | None,
+    foreign_systems: frozenset[str],
+    owners: Mapping[str, str] | None,
+    grounds: bool,
+    until_synthesis: bool,
+    check_open_requests: bool,
+) -> NoOp | Aborted | Published | Waiting | Planned:
+    """The one body `run()` and `plan()` share, so a plan's verdict is the
+    run's by construction. `until_synthesis` returns `Planned` right after the
+    last pre-synthesis gate; everything before that point only reads."""
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
     if problems:
@@ -302,7 +416,7 @@ def run(
             "to wait between chunks; this one does not",
         )
         record = read_record(_chunk_slot(Path(state_dir), info.name, config))
-        if record is not None and record.pending:
+        if check_open_requests and record is not None and record.pending:
             opened = _open_chunk_request(open_request, record, publish_config)
             if opened is not None:
                 request, hint = opened
@@ -319,7 +433,34 @@ def run(
     assert_stability(connector.kbforge_normalize, result.records)  # §4.3 law 1
     assert_fetch_contract(docs, complete=result.complete)  # §4.2 fetch contract
 
-    grounds = getattr(synthesizer, "grounds", False)
+    # Checked here, before the diff and both NoOp gates: those return early, so
+    # a check placed later would let an ownership violation pass as a no-op.
+    # Nothing is committed and no cursor is saved for a source that aborts.
+    # Checked against `reported_systems`, not just what was fetched: an empty
+    # incremental fetch reports its prior cursor's systems, and the caller
+    # records what is reported, so checking less would let a second source
+    # claim a system on a quiet run. Such a run has no document to name, so
+    # the failure names the system.
+    fetched_systems = frozenset(d.anchor.system for d in docs)
+    reported_systems = fetched_systems or frozenset(prior.systems if prior else ())
+    owner_names = owners or {}
+    ownership = [
+        Failure(
+            law="source-ownership",
+            concept_path=(
+                concept_path(min(ids))
+                if (ids := [d.doc_id for d in docs if d.anchor.system == s])
+                else s
+            ),
+            message=(
+                f"system '{s}' is already owned by source '{owner_names.get(s, '?')}'"
+            ),
+        )
+        for s in sorted(reported_systems & foreign_systems)
+    ]
+    if ownership:
+        return Aborted(failures=ownership)
+
     grounding_cfg = grounding_config or GroundingConfig()
     # Expanded once: symmetric reverses are what let B's run find A's entry.
     expanded = expand(links_config) if links_config is not None else {}
@@ -342,7 +483,7 @@ def run(
     # because links are frame, not prose.
     link_scan = links_config is not None or has_links_sidecars(mirror_path)
     if changeset.is_noop and not scan and not link_scan:
-        return NoOp()
+        return NoOp(systems=reported_systems)
 
     # Read once per run, and only past the first no-op gate. The mirror is
     # still the pre-run published state here: commit() below is the only thing
@@ -374,7 +515,12 @@ def run(
         # open to small follow-ups, but the first of several chunks appended
         # to it rebuilds the unbounded request chunking exists to prevent
         # (§6). Before the drift scan and synthesis, so waiting costs no tokens.
-        if backlog and record is not None and open_request is not None:
+        if (
+            backlog
+            and check_open_requests
+            and record is not None
+            and open_request is not None
+        ):
             opened = _open_chunk_request(open_request, record, publish_config)
             if opened is not None:
                 request, hint = opened
@@ -509,7 +655,7 @@ def run(
         changed_docs += link_docs
 
     if changeset.is_noop and not drift and not link_drift:
-        return NoOp()
+        return NoOp(systems=reported_systems)
 
     # A concept linking to a deleted one must be re-synthesized, or its link
     # survives as a dangling reference (§4.4 law 2) that nothing checks: the
@@ -650,6 +796,18 @@ def run(
     scope_failures = _scope_failures(by_id)
     if scope_failures:
         return Aborted(failures=scope_failures)
+
+    if until_synthesis:
+        return Planned(
+            added=sorted(x for x in changeset.added if x not in backlog),
+            modified=sorted(x for x in changeset.modified if x not in backlog),
+            removed=list(changeset.removed),
+            grounding_drift=list(drift),
+            link_drift=list(link_drift),
+            rebuilt=sorted(rebuilt),
+            deferred=len(backlog) + len(deferred_drift) + len(deferred_link_drift),
+            systems=reported_systems,
+        )
 
     grounding_map: dict[str, list[CanonicalDocument]] = {}
     grounding_notes: list[str] = []
@@ -874,7 +1032,11 @@ def run(
         if appends and record is not None:
             new_record = merge_records(record, new_record)
         write_record(_chunk_slot(state_path, info.name, config), new_record)
-    return Published(url=url)
+    else:
+        # An unchunked publish supersedes any record an earlier chunked run
+        # left: redo would otherwise roll back to a state this run overwrote.
+        _chunk_slot(state_path, info.name, config).unlink(missing_ok=True)
+    return Published(url=url, systems=reported_systems)
 
 
 def redo(

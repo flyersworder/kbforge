@@ -7,6 +7,56 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- A project file, `kbforge.yaml`: one knowledge base's sources, synthesizer,
+  publisher, links and grounding in one place, with state under one
+  `state_dir` (default `.kbforge/`). `kbforge run` with no `--connector` runs
+  every source in file order, in one process under one mirror lock, and
+  validates the whole project first: every problem is printed and nothing runs.
+  A source that fails does not stop the others. Unknown keys are errors naming
+  their YAML path. See `docs/architecture.md` §7.5.
+- `kbforge init [PATH]` writes a starter project (one `local_files` source,
+  `stub`, `dry-run`) that runs with no credentials.
+- `kbforge plan [SOURCE...]` shows what `run` would propose and why: `run()`'s
+  own body stopped before synthesis, so a plan's NoOp is the run's. It writes
+  nothing and needs only the sources' credentials, not a model's or a forge's.
+- `kbforge status`: per source, last publish, open review request and pending
+  chunk, from local state and the forge. It does not fetch, and needs neither
+  the sources' credentials nor a valid connector config.
+- `kbforge reset NAME [--yes]` forgets one source's cursor, chunk record and
+  mirror documents, so its next run proposes everything again. It replaces the
+  hand-deletion procedure, never touches another source's state, and works for
+  a name since removed from the file.
+- `kbforge run SOURCE...` and `kbforge redo SOURCE` act on sources by name.
+- A system belongs to one source: a source that fetches a system another
+  source owns aborts with `[source-ownership]`, before the diff, so nothing is
+  committed. Ownership is recorded in `<state_dir>/state/sources.json`.
+- `run` notes when a source's config changed since its last run, which starts
+  it on a fresh cursor (as before, but no longer silently): `note: config
+  changed since the last run; starting from a fresh cursor (the old one stays
+  in state/, unused).`
+
+### Changed
+
+- Every `run`, `redo`, `plan` and `reset` holds an OS lock on
+  `<mirror parent>/run.lock`, beside the mirror directory, for the whole
+  invocation, flag-mode runs included. Mirrors that share a parent directory
+  therefore share one lock. A
+  second run on the same mirror exits **3** with `Locked: another kbforge run
+  holds <path>; nothing was read or written.` instead of interleaving with the
+  first. Atomic mirror writes are still not built.
+- The flag CLI is otherwise unchanged; a project-only flag combination
+  (`--project` or a source name with `--connector`, or a flag-mode option
+  without it) exits 2.
+
+### Fixed
+
+- An unchunked run that publishes deletes the connector instance's stale chunk
+  record, so a later `kbforge redo` can no longer roll the mirror back to a
+  chunk from before. Keeping a connector "always chunked or never" is no longer
+  needed.
+
 ## [0.14.1] - 2026-10-29
 
 ### Fixed
