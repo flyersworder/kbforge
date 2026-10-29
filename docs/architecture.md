@@ -1586,7 +1586,9 @@ runs: every connector, publisher and synthesizer config, the links and the
 grounding, with every problem printed and exit 2, so a project never publishes
 source 1 and then finds source 3 misconfigured. After that a failing source
 does not stop the others, since each is its own review request on its own
-branch. The CLI `chdir`s to the file's directory, so relative paths mean
+branch. An exception kbforge does not map to an outcome prints one
+`<name>  error: <Type>: <message>` line and its traceback on stderr, which
+keeps a bug in kbforge itself from reading as the plugin's. The CLI `chdir`s to the file's directory, so relative paths mean
 "relative to `kbforge.yaml`", but connector config is never rewritten: it is
 hashed into the cursor and chunk slot names (`instance_key`), and a path made
 absolute would tie every slot to one checkout. That is also why moving a flag
@@ -1626,11 +1628,16 @@ which selects mirror documents by system, would remove both. `run()` takes
 before the diff and both no-op gates: a fetched document whose `anchor.system`
 is foreign aborts with `[source-ownership]`, committing nothing and saving no
 cursor. So does an empty fetch whose prior cursor names a foreign system,
-since those are the systems the run reports and `sources.json` would record. Project mode passes the systems `sources.json` records for every other
-source still in the file, plus those an earlier source fetched in the same
-invocation. A name no longer in the file owns nothing, because a renamed
-source keeps its config, and so its cursor, and must not be blocked by its
-old name. Flag mode passes nothing and is unchanged.
+since those are the systems the run reports and `sources.json` would record.
+Project mode passes the systems `sources.json` records for every other source
+still in the file, as each earlier source in the same invocation rewrote its
+record: an owner that stops fetching a system frees it for a later source.
+`plan` makes the same rewrites in memory, so it agrees with `run`. A name no
+longer in the file owns nothing, because a renamed source keeps its config,
+and so its cursor, and must not be blocked by its old name. Flag mode passes
+nothing and is unchanged. The abort is followed by a `hint:` line: fetch the
+system from one source only, or move one to a project of its own. `reset` is
+not the way out; resetting the owner only lets it claim the system again.
 
 **`sources.json`.** `<state_dir>/state/sources.json`, written atomically and
 only by project mode, after a source's `NoOp` or `Published`, records per
@@ -1767,7 +1774,7 @@ themselves.
 
 ## 10. Build sequence
 
-**Done.** Core is on PyPI (0.5.0), with the fixed pipeline, both credential-free
+**Done.** Core is on PyPI, with the fixed pipeline, both credential-free
 reference connectors, three publishers, the stub and LLM synthesizers, and the
 §4.4 gate. Hookspecs are close to frozen: `ConnectorSpec` has not changed shape
 since 0.1.0, and `PublisherSpec` has grown twice, `kbforge_validate_publish_config`

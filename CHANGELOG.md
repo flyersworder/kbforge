@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- `plan` agrees with `run` when an earlier source stops fetching a system: run
+  rewrites that source's record before the next source runs, freeing the
+  system, and plan now makes the same rewrite in memory instead of judging the
+  later source by the old record.
+- A `[source-ownership]` abort is followed by a `hint:` line saying how to
+  resolve it: fetch the system from one source only, or move one to a project
+  of its own. `reset` does not resolve it.
+- In project mode an unexpected exception from a source still prints one line
+  and lets later sources run, and its traceback now goes to stderr, so a bug
+  in kbforge itself is not reduced to that line.
+
 ## [0.15.0] - 2026-10-29
 
 ### Added
