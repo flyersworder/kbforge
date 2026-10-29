@@ -46,11 +46,21 @@ from kbforge.pipeline import (
     _open_request_hook,
     instance_key,
     plan,
+    redo,
     run,
 )
 from kbforge.project import Component, Project, ProjectError
 from kbforge.publishers._http import PublishError
 from kbforge.registry import build_registry
+from kbforge.reset import (
+    ResetPlan,
+    apply_reset,
+    chunk_slot,
+    cursor_slot,
+    plan_reset,
+    state_slots,
+    systems_for,
+)
 from kbforge.sources_record import SourceEntry, read_sources, write_sources
 from kbforge.synthesize import Synthesizer
 
@@ -568,3 +578,112 @@ def _chunk_parts(record: ChunkRecord | None, request: str | None) -> list[str]:
     if request is not None:
         return [f"chunk of {len(record.admitted)} open as {request}, more to follow"]
     return ["next chunk proposes on the next run"]
+
+
+def cmd_redo(project: Project, name: str) -> int:
+    """§6: today's `redo`, for one source of the file, under the lock."""
+    return _locked(project, lambda: _redo(project, name))
+
+
+def _redo(project: Project, name: str) -> int:
+    # `for_plan`: redo never synthesizes, so it must not need model
+    # credentials. It does ask the forge whether a request is open, so a
+    # publisher problem is still fatal.
+    loaded = _load(project, [name], for_plan=True)
+    if isinstance(loaded, int):
+        return loaded
+    [rs], _ = loaded
+    if rs.publisher_problems:
+        print(*(f"{rs.name}: {p}" for p in rs.publisher_problems), sep="\n")
+        return 2
+    outcome = execute(
+        lambda: redo(
+            rs.connector,
+            rs.publisher,
+            config=rs.config,
+            mirror=str(project.mirror()),
+            state_dir=str(project.state()),
+            publish_config=rs.publish_config,
+        ),
+        rs.connector_name,
+    )
+    for line in outcome.lines:
+        print(f"{rs.name}  {line}")
+    return outcome.code
+
+
+def cmd_reset(project: Project, name: str, *, yes: bool) -> int:
+    """§6.5: forget one source's local state. Works for a name still in the
+    file and for a stale `sources.json` entry (its connector and digest name
+    the slots). Never contacts the forge; takes the lock."""
+    return _locked(project, lambda: _reset(project, name, yes=yes))
+
+
+def _reset(project: Project, name: str, *, yes: bool) -> int:
+    state, mirror = project.state(), project.mirror()
+    try:
+        entries = read_sources(state)
+    except (OSError, ValueError) as exc:
+        print(f"{state / 'sources.json'}: {exc}")
+        return 2
+    spec = project.sources.get(name)
+    entry = entries.get(name)
+    if spec is None and entry is None:
+        known = ", ".join(dict.fromkeys([*project.sources, *entries]))
+        print(f"unknown source {name!r}; known: {known}")
+        return 2
+
+    # connector -> digests: the current config's (if the name is in the file)
+    # and the one last run with, which differ after a config change.
+    digests: dict[str, set[str]] = {}
+    if spec is not None:
+        digests.setdefault(spec.connector, set()).add(instance_key(spec.config))
+    if entry is not None:
+        digests.setdefault(entry.connector, set()).add(entry.digest)
+
+    systems = frozenset().union(
+        *(
+            systems_for(entry, cursor_slot(state, conn, d), chunk_slot(state, conn, d))
+            for conn, ds in digests.items()
+            for d in sorted(ds)
+        )
+    )
+    (first, first_digests), *rest = digests.items()
+    rp = plan_reset(
+        mirror, state, connector=first, digests=first_digests, systems=systems
+    )
+    if rest:
+        extra = [f for conn, ds in rest for f in state_slots(state, conn, ds)]
+        rp = ResetPlan(
+            state_files=rp.state_files + extra, doc_ids=rp.doc_ids, systems=systems
+        )
+
+    if not rp.state_files and not rp.doc_ids and entry is None:
+        print(f"{name}: nothing to reset")
+        return 0
+    if not systems:
+        print(f"{name}: systems unknown: mirror left as is")
+    if not yes:
+        prompt = (
+            f"Reset {name}: remove {len(rp.doc_ids)} mirror document(s) and "
+            f"{len(rp.state_files)} state file(s)? [y/N] "
+        )
+        try:
+            answer = input(prompt)
+        except EOFError:
+            print()  # end the prompt's line
+            answer = ""
+        if answer.strip().lower() not in ("y", "yes"):
+            print("Reset cancelled.")
+            return 0
+
+    apply_reset(mirror, rp)
+    if entry is not None:
+        # Last: an interrupted reset keeps the entry that names its systems.
+        del entries[name]
+        write_sources(state, entries)
+    print(
+        f"{name}: removed {len(rp.doc_ids)} mirror document(s) and "
+        f"{len(rp.state_files)} state file(s)"
+    )
+    return 0

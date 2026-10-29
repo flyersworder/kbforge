@@ -31,7 +31,7 @@ from kbforge.links import links_problems, load_links
 from kbforge.lock import mirror_lock
 from kbforge.pipeline import redo, run
 from kbforge.project import DEFAULT_FILE, ProjectError, load_project
-from kbforge.project_cli import cmd_plan, cmd_run, cmd_status
+from kbforge.project_cli import cmd_plan, cmd_redo, cmd_reset, cmd_run, cmd_status
 from kbforge.registry import build_registry
 
 
@@ -225,9 +225,29 @@ def main(argv: list[str] | None = None) -> int:
         help="the sources to plan (default: all, in file order)",
     )
     _project_arg(pl)
+    rs = sub.add_parser(
+        "reset",
+        help="forget one source's local state",
+        description=(
+            "Forget one source's local state: its cursor and chunk slots, its "
+            "mirror documents and their sidecars, and its sources.json entry. "
+            "The next run proposes everything for it as a first run would. "
+            "Other sources are untouched, and the forge is never contacted. "
+            "Limit: a deletion whose review request was closed unmerged is gone "
+            "from the mirror and the source, so even a reset source never "
+            "re-proposes it; that concept stays in the bundle until removed by "
+            "hand."
+        ),
+    )
+    rs.add_argument(
+        "name",
+        metavar="NAME",
+        help="the source to reset; may be one no longer in kbforge.yaml",
+    )
+    rs.add_argument("--yes", action="store_true", help="skip the confirmation")
+    _project_arg(rs)
     for cmd, summary in (
         ("status", "local state and open review requests; no fetch"),
-        ("reset", "forget one source's local state"),
         ("init", "write a kbforge.yaml"),
     ):
         _project_arg(sub.add_parser(cmd, help=summary))
@@ -276,8 +296,11 @@ def _project_mode(args: argparse.Namespace) -> int:
                 "in kbforge.yaml"
             )
         return 2
-    if args.cmd not in ("run", "plan", "status"):
+    if args.cmd not in ("run", "plan", "status", "redo", "reset"):
         print(f"kbforge {args.cmd} over a project file is not built yet")
+        return 2
+    if args.cmd == "redo" and len(args.sources) != 1:
+        print("kbforge redo takes exactly one SOURCE")
         return 2
     try:
         project = load_project(Path(args.project or DEFAULT_FILE))
@@ -286,6 +309,10 @@ def _project_mode(args: argparse.Namespace) -> int:
         return 2
     if args.cmd == "status":
         return cmd_status(project)
+    if args.cmd == "reset":
+        return cmd_reset(project, args.name, yes=args.yes)
+    if args.cmd == "redo":
+        return cmd_redo(project, args.sources[0])
     command = cmd_run if args.cmd == "run" else cmd_plan
     return command(project, args.sources)
 

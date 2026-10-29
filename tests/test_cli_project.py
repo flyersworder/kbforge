@@ -761,3 +761,66 @@ def test_status_reports_a_forge_failure_as_unknown_and_exits_0(at, monkeypatch, 
         " · open request unknown (0 from https://forge.example/api: timed out)"
     ), line
     assert line.startswith("h  last published ")
+
+
+def test_project_redo_reproposes_the_last_chunk(at, capsys):
+    _docs(at, "handbook", "a", "b")
+    yml = _project(
+        at,
+        {
+            "docs": {
+                "connector": "local_files",
+                "config": {"path": "./handbook"},
+                "chunking": {"max_concepts": 1},
+            }
+        },
+    )
+    mirror = at / ".kbforge" / "mirror"
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    assert len(list(mirror.glob("*.json"))) == 1
+
+    assert main(["redo", "docs", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "docs  Redone: 1 document(s) will be proposed again on the next run."
+    ]
+    assert list(mirror.glob("*.json")) == []
+
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys)[0].startswith("docs  Published:")
+    assert len(list(mirror.glob("*.json"))) == 1
+
+    assert main(["redo", "docs", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    assert main(["redo", "docs", "--project", str(yml)]) == 1
+    assert _lines(capsys) == [
+        "docs  Redo refused: local_files: no chunk to redo (no chunk record in "
+        f"{at / '.kbforge' / 'state'}; only a run with --chunking writes one)"
+    ]
+
+
+def test_project_redo_takes_one_known_source(at, capsys):
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at, {"docs": {"connector": "local_files", "config": {"path": "./handbook"}}}
+    )
+    assert main(["redo", "nope", "--project", str(yml)]) == 2
+    assert _lines(capsys) == ["unknown source 'nope'; known: docs"]
+    assert main(["redo", "--project", str(yml)]) == 2
+    assert _lines(capsys) == ["kbforge redo takes exactly one SOURCE"]
+    assert main(["redo", "docs", "docs", "--project", str(yml)]) == 2
+    assert _lines(capsys) == ["kbforge redo takes exactly one SOURCE"]
+
+
+def test_project_redo_needs_a_usable_publisher(at, monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {"docs": {"connector": "local_files", "config": {"path": "./handbook"}}},
+        publisher={"name": "github", "repo": "acme/kb"},
+    )
+    assert main(["redo", "docs", "--project", str(yml)]) == 2
+    [line] = _lines(capsys)
+    assert line.startswith("docs: "), line
+    assert "env var GITHUB_TOKEN is not set" in line
