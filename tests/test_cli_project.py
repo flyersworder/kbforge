@@ -738,3 +738,26 @@ def test_status_exits_2_on_a_bad_project_and_notes_publisher_problems(
 
     yml.write_text("sources: {}\nbogus: 1\n")
     assert main(["status", "--project", str(yml)]) == 2
+
+
+def test_status_reports_a_forge_failure_as_unknown_and_exits_0(at, monkeypatch, capsys):
+    from kbforge.publishers._http import ForgeError
+    from kbforge.publishers.dry_run import DryRunPublisher
+
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at, {"h": {"connector": "local_files", "config": {"path": "./handbook"}}}
+    )
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+
+    def boom(self, hint, config):
+        raise ForgeError(0, "https://forge.example/api", "timed out")
+
+    monkeypatch.setattr(DryRunPublisher, "kbforge_open_request", boom)
+    assert main(["status", "--project", str(yml)]) == 0
+    [line] = _lines(capsys)
+    assert line.endswith(
+        " · open request unknown (0 from https://forge.example/api: timed out)"
+    ), line
+    assert line.startswith("h  last published ")
