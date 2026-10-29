@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from kbforge.assembly import (
     SYNTHESIZERS,
+    Outcome,
     SetupError,
     build_synthesizer,
     check_publisher,
@@ -302,6 +303,17 @@ def _owners(
     }
 
 
+def _execute(call: Callable[[], Any], connector_name: str) -> Outcome:
+    """`execute`, and also any other exception a plugin raises (a
+    connector's own error type, say), reported as one line, exit 1. Flag mode
+    runs one source and keeps the traceback; here one plugin's exception must
+    not stop the sources after it (§7.5)."""
+    try:
+        return execute(call, connector_name)
+    except Exception as exc:
+        return Outcome(1, [f"error: {type(exc).__name__}: {exc}"])
+
+
 def cmd_run(project: Project, names: list[str]) -> int:
     """Every selected source in file order, under one lock."""
     return _locked(project, lambda: _run_sources(project, names))
@@ -334,7 +346,7 @@ def _plan_sources(project: Project, names: list[str]) -> int:
                 f"{prefix}note: open request unknown "
                 f"({'; '.join(rs.publisher_problems)}); a run may wait instead"
             )
-        outcome = execute(
+        outcome = _execute(
             lambda rs=rs, owners=owners: plan(
                 rs.connector,
                 rs.publisher,
@@ -430,7 +442,7 @@ def _run_sources(project: Project, names: list[str]) -> int:
         owners = _owners(project, entries, rs.name)
         foreign = frozenset(owners)
 
-        outcome = execute(
+        outcome = _execute(
             lambda rs=rs, foreign=foreign, owners=owners: run(
                 rs.connector,
                 rs.publisher,

@@ -885,3 +885,81 @@ def test_init_template_uncommented_blocks_validate(at, capsys):
         "repo": "acme/knowledge-base",
         "token_env": "GITHUB_TOKEN",
     }
+
+
+class SqlSourceError(Exception):
+    """Stands in for a third-party connector's own exception type."""
+
+
+class _BoomConnector:
+    """A connector whose fetch raises an exception kbforge does not know."""
+
+    def kbforge_connector_info(self):
+        from kbforge.models import ConnectorInfo
+
+        return ConnectorInfo(name="boom", version="0.1.0", source_system="t")
+
+    def kbforge_validate_config(self, config):
+        return []
+
+    def kbforge_fetch(self, config, cursor):
+        raise SqlSourceError("unable to open database file")
+
+    def kbforge_normalize(self, records):
+        return []
+
+
+def _registry_with(monkeypatch, *plugins):
+    import kbforge.project_cli as pc
+
+    def build():
+        pm = build_registry()
+        for plugin in plugins:
+            pm.register(plugin)
+        return pm
+
+    monkeypatch.setattr(pc, "build_registry", build)
+
+
+def _boom_project(at: Path) -> Path:
+    _docs(at, "one", "a")
+    _repo(at)
+    return _project(
+        at,
+        {
+            "a": {"connector": "local_files", "config": {"path": "./one"}},
+            "b": {"connector": "boom"},
+            "c": {"connector": "git_commits", "config": {"repo": "./repo"}},
+        },
+    )
+
+
+BOOM = "b  error: SqlSourceError: unable to open database file"
+
+
+def test_a_connector_exception_does_not_stop_later_sources_in_run(
+    at, monkeypatch, capsys
+):
+    _registry_with(monkeypatch, _BoomConnector())
+    yml = _boom_project(at)
+    assert main(["run", "--project", str(yml)]) == 1
+    out = _lines(capsys)
+    assert out[0].startswith("a  Published:")
+    assert out[1] == BOOM
+    assert out[2].startswith("c  Published:")
+    assert len(out) == 3
+    assert list(_entries(at)) == ["a", "c"]
+
+
+def test_a_connector_exception_does_not_stop_later_sources_in_plan(
+    at, monkeypatch, capsys
+):
+    _registry_with(monkeypatch, _BoomConnector())
+    yml = _boom_project(at)
+    assert main(["plan", "--project", str(yml)]) == 1
+    out = _lines(capsys)
+    assert out[0].startswith("a  1 added, 0 modified")
+    assert out[1] == "a    + local_files:a.md  added"
+    assert out[2] == BOOM
+    assert out[3].startswith("c  1 added, 0 modified")
+    assert not (at / ".kbforge" / "state").exists()
