@@ -34,8 +34,6 @@ from kbforge.project import DEFAULT_FILE, ProjectError, load_project
 from kbforge.project_cli import cmd_run
 from kbforge.registry import build_registry
 
-__all__ = ["SYNTHESIZERS", "_connectors", "_publishers", "main"]
-
 
 def _parse_settings(pairs: list[str]) -> dict:
     """`KEY=VALUE` pairs into a config dict; VALUE is YAML-typed so `max_commits=5`
