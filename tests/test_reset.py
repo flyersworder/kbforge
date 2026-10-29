@@ -356,3 +356,80 @@ def test_reset_and_redo_exit_3_while_the_mirror_is_locked(at, capsys, argv):
         "nothing was read or written."
     ]
     assert _snapshot(at / ".kbforge") == before
+
+
+def _without(snapshot: dict[str, bytes], *names: str) -> dict[str, bytes]:
+    return {p: b for p, b in snapshot.items() if Path(p).name not in names}
+
+
+def test_resetting_a_renamed_sources_old_name_keeps_the_new_ones_state(at, capsys):
+    """`old` renamed to `new`, same config: both entries name one digest and
+    one system, and both belong to `new` now (stale names own nothing)."""
+    _docs(at, "x")
+    chunked = {**A, "chunking": {"max_concepts": 1}}
+    yml = _project(at, {"old": chunked})
+    assert main(["run", "--project", str(yml)]) == 0
+    _project(at, {"new": chunked})
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys)[-1] == "new  NoOp: no change detected; no MR opened."
+    assert list(_entries(at)) == ["old", "new"]
+    root = at / ".kbforge"
+    before = _snapshot(root)
+    assert [p for p in before if Path(p).name.startswith("cursor-")]
+    assert [p for p in before if Path(p).name.startswith("chunk-")]
+
+    assert main(["reset", "old", "--yes", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "old: system 'local_files' belongs to source 'new'; "
+        "its documents were left in place",
+        "old: state slots shared with source 'new' were left in place",
+        "old: removed 0 mirror document(s) and 0 state file(s)",
+    ]
+    after = _snapshot(root)
+    assert _without(after, "sources.json") == _without(before, "sources.json")
+    assert list(_entries(at)) == ["new"]
+
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["new  NoOp: no change detected; no MR opened."]
+
+
+def test_resetting_a_stale_name_spares_the_system_it_passed_on(at, capsys):
+    """`old` on ./handbook leaves the file and `new` takes system local_files
+    on ./other: old's slots are its own, its system's documents are new's."""
+    _docs(at, "x")
+    other = at / "other"
+    other.mkdir()
+    (other / "y.md").write_text(DOC.format(title="y"), "utf-8")
+    new = {
+        "connector": "local_files",
+        "config": {"path": "./other"},
+        "chunking": {"max_concepts": 1},
+    }
+    yml = _project(at, {"old": A})
+    assert main(["run", "--project", str(yml)]) == 0
+    _project(at, {"new": new})
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys)[-1].startswith("new  Published: ")
+    root = at / ".kbforge"
+    old_cursor = f"cursor-local_files-{instance_key(A_CONFIG)}.json"
+    before = _snapshot(root)
+    assert f"state/{old_cursor}" in before
+    new_chunk = f"chunk-local_files-{instance_key({'path': './other'})}.json"
+    assert f"state/{new_chunk}" in before
+
+    assert main(["reset", "old", "--yes", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "old: system 'local_files' belongs to source 'new'; "
+        "its documents were left in place",
+        "old: removed 0 mirror document(s) and 1 state file(s)",
+    ]
+    after = _snapshot(root)
+    # new's cursor and mirror slots, and everything else, byte-identical.
+    assert _without(after, "sources.json") == _without(
+        before, "sources.json", old_cursor
+    )
+    assert "local_files:y.md" in _mirror_ids(at)
+    assert list(_entries(at)) == ["new"]
+
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["new  NoOp: no change detected; no MR opened."]

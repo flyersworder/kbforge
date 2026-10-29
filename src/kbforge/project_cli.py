@@ -633,35 +633,69 @@ def _reset(project: Project, name: str, *, yes: bool) -> int:
         print(f"unknown source {name!r}; known: {known}")
         return 2
 
-    # connector -> digests: the current config's (if the name is in the file)
-    # and the one last run with, which differ after a config change.
-    digests: dict[str, set[str]] = {}
+    # The slots `name` may own: the current config's (if the name is in the
+    # file) and the one it last ran with, which differ after a config change.
+    pairs: list[tuple[str, str]] = []
     if spec is not None:
-        digests.setdefault(spec.connector, set()).add(instance_key(spec.config))
+        pairs.append((spec.connector, instance_key(spec.config)))
     if entry is not None:
-        digests.setdefault(entry.connector, set()).add(entry.digest)
+        pairs.append((entry.connector, entry.digest))
+    pairs = list(dict.fromkeys(pairs))
 
-    systems = frozenset().union(
-        *(
-            systems_for(entry, cursor_slot(state, conn, d), chunk_slot(state, conn, d))
-            for conn, ds in digests.items()
-            for d in sorted(ds)
+    # What another source owns, which resetting `name` must never touch. Stale
+    # names own nothing (as in `_owners`); a source in the file owns the
+    # systems its entry records and every slot it resolves to now or last ran
+    # with. A renamed source shares its old name's digest and systems, and a
+    # system can pass to a new source once its old one leaves the file.
+    owned = _owners(project, entries, name)
+    taken: dict[tuple[str, str], str] = {}
+    for other, other_spec in project.sources.items():
+        if other == name:
+            continue
+        taken.setdefault((other_spec.connector, instance_key(other_spec.config)), other)
+        if (other_entry := entries.get(other)) is not None:
+            taken.setdefault((other_entry.connector, other_entry.digest), other)
+    mine = [pair for pair in pairs if pair not in taken]
+
+    if entry is not None and entry.systems:
+        found = frozenset(entry.systems)
+    else:
+        found = frozenset().union(
+            *(
+                systems_for(None, cursor_slot(state, c, d), chunk_slot(state, c, d))
+                for c, d in mine
+            )
         )
+    systems = frozenset(found - owned.keys())
+
+    by_connector: dict[str, set[str]] = {}
+    for c, d in mine:
+        by_connector.setdefault(c, set()).add(d)
+    plans = [
+        plan_reset(mirror, state, connector=c, digests=ds, systems=systems)
+        for c, ds in by_connector.items()
+    ] or [plan_reset(mirror, state, connector="", digests=set(), systems=systems)]
+    rp = ResetPlan(
+        state_files=[f for plan_ in plans for f in plan_.state_files],
+        doc_ids=plans[0].doc_ids,
+        systems=systems,
     )
-    (first, first_digests), *rest = digests.items()
-    rp = plan_reset(
-        mirror, state, connector=first, digests=first_digests, systems=systems
-    )
-    if rest:
-        extra = [f for conn, ds in rest for f in state_slots(state, conn, ds)]
-        rp = ResetPlan(
-            state_files=rp.state_files + extra, doc_ids=rp.doc_ids, systems=systems
-        )
 
     if not rp.state_files and not rp.doc_ids and entry is None:
         print(f"{name}: nothing to reset")
         return 0
-    if not systems:
+    for system in sorted(found & owned.keys()):
+        print(
+            f"{name}: system {system!r} belongs to source {owned[system]!r}; "
+            "its documents were left in place"
+        )
+    for pair in pairs:
+        if pair in taken and state_slots(state, pair[0], {pair[1]}):
+            print(
+                f"{name}: state slots shared with source {taken[pair]!r} "
+                "were left in place"
+            )
+    if not found:
         print(f"{name}: systems unknown: mirror left as is")
     if not yes:
         prompt = (
