@@ -532,3 +532,27 @@ def test_resetting_two_stale_names_spares_an_unrun_renamed_source(at, capsys, or
     assert _entries(at) == {}
     assert main(["run", "--project", str(yml)]) == 0
     assert _lines(capsys) == ["new  NoOp: no change detected; no MR opened."]
+
+
+def test_a_slot_with_unstamped_systems_is_still_its_takers(at, capsys):
+    """A cursor whose systems are empty (a legacy slot read through) says
+    nothing; the entry that records the slot still ties its system to it."""
+    _docs(at, "x")
+    yml = _project(at, {"old": A})
+    assert main(["run", "--project", str(yml)]) == 0
+    _project(at, {"new": A})
+    capsys.readouterr()
+    [cursor] = (at / ".kbforge" / "state").glob("cursor-*.json")
+    data = json.loads(cursor.read_text("utf-8"))
+    cursor.write_text(json.dumps({**data, "systems": []}), "utf-8")
+    root = at / ".kbforge"
+    before = _snapshot(root)
+
+    assert main(["reset", "old", "--yes", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "old: system 'local_files' belongs to source 'new'; "
+        "its documents were left in place",
+        "old: state slots shared with source 'new' were left in place",
+        "old: removed 0 mirror document(s) and 0 state file(s)",
+    ]
+    assert _without(_snapshot(root), "sources.json") == _without(before, "sources.json")
