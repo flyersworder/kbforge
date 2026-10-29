@@ -22,7 +22,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   own body stopped before synthesis, so a plan's NoOp is the run's. It writes
   nothing and needs only the sources' credentials, not a model's or a forge's.
 - `kbforge status`: per source, last publish, open review request and pending
-  chunk, from local state and the forge. It does not fetch.
+  chunk, from local state and the forge. It does not fetch, and needs neither
+  the sources' credentials nor a valid connector config.
 - `kbforge reset NAME [--yes]` forgets one source's cursor, chunk record and
   mirror documents, so its next run proposes everything again. It replaces the
   hand-deletion procedure, never touches another source's state, and works for

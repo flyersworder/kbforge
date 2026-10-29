@@ -1023,3 +1023,57 @@ def test_migrated_sources_sharing_a_system_cannot_both_own_it(at, capsys):
     assert {name: e["systems"] for name, e in entries.items()} == {
         "c1": ["git_commits"]
     }
+
+
+def test_status_needs_no_source_credentials_or_valid_connector_config(
+    at, monkeypatch, capsys
+):
+    import re
+    import shutil
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("DENODO_URL", raising=False)
+    _docs(at, "handbook", "a")
+    sources = {"h": {"connector": "local_files", "config": {"path": "./handbook"}}}
+    yml = _project(at, sources)
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+
+    # The source's directory gone, a model with no key, a links file that is
+    # not there, and a connector whose plugin is not installed here: a run
+    # could do none of it, and status needs none of it.
+    shutil.rmtree(at / "handbook")
+    _project(
+        at,
+        {
+            **sources,
+            "products": {
+                "connector": "not-installed",
+                "config": {"system": "products", "url_env": "DENODO_URL"},
+            },
+        },
+        synthesizer={"name": "llm", "model": "x"},
+        links="missing-links.yaml",
+    )
+    assert main(["run", "--project", str(yml)]) == 2
+    capsys.readouterr()
+    assert main(["status", "--project", str(yml)]) == 0
+    h_line, products_line = _lines(capsys)
+    assert re.fullmatch(f"h         {_PUBLISHED} · no open request", h_line), h_line
+    assert products_line == "products  never run"
+
+
+def test_status_still_rejects_an_unknown_publisher(at, capsys):
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {
+            "a": {"connector": "local_files", "config": {"path": "./handbook"}},
+            "b": {"connector": "local_files", "config": {"path": "./handbook"}},
+        },
+        publisher={"name": "nope"},
+    )
+    assert main(["status", "--project", str(yml)]) == 2
+    [line] = _lines(capsys)
+    assert line.startswith("publisher: unknown publisher 'nope'; available: ")
+    assert "dry-run" in line

@@ -1658,6 +1658,11 @@ credential or `kbforge[llm]` is needed; a publisher whose config is incomplete
 of failing. A §4.4 law needs synthesized output, so `plan` cannot predict that
 abort and says `(validation runs at publish)`. It costs one fetch per source,
 which is why `status` reads only local state and the forge's open requests.
+`status` resolves less than `plan` too (`resolve_status`): per source only the
+connector's name and config, which name its slots, and the publisher. It runs
+no connector config check and loads no connector plugin, synthesizer, links or
+grounding, so it answers where a run could not, say with a source's directory
+gone or its credentials unset.
 
 **`reset NAME`** forgets one source: its cursor and chunk slots, the mirror
 documents of its systems with their `_grounding/`, `_links/`, `_described/` and

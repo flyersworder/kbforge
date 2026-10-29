@@ -96,6 +96,14 @@ def _settings(component: Component) -> dict[str, Any]:
     return dict(component.model_extra or {})
 
 
+def _publish_config(project: Project, component: Component) -> dict[str, Any]:
+    config = _settings(component)
+    if component.name == "dry-run":
+        # As flag mode wires dry-run to --out.
+        config.setdefault("out_dir", str(project.out()))
+    return config
+
+
 def _check_synthesizer_shape(name: str, settings: dict) -> list[str]:
     """`LLMConfig`/`DescribeConfig` accept these settings — the shape only:
     no `validate_env()`, no model import (what `plan` may check)."""
@@ -177,10 +185,7 @@ def resolve(
         pub_component = spec.publisher or project.publisher
         pub_label = f"{name}: " if spec.publisher else "publisher: "
         publisher = publishers.get(pub_component.name)
-        publish_config = _settings(pub_component)
-        if pub_component.name == "dry-run":
-            # As flag mode wires dry-run to --out.
-            publish_config.setdefault("out_dir", str(project.out()))
+        publish_config = _publish_config(project, pub_component)
         pub_problems: list[str] = []
         if publisher is None:
             available = ", ".join(sorted(publishers)) or "(none)"
@@ -244,6 +249,64 @@ def resolve(
         rs.grounding_config = grounding
         rs.links_config = links
     return resolved
+
+
+@dataclass
+class StatusSource:
+    """What `status` needs of a source: the connector's name and config, which
+    name its state slots, and the publisher it asks about open requests."""
+
+    name: str
+    connector_name: str
+    config: dict
+    publisher: PublisherProtocol
+    publish_config: dict
+    publisher_problems: list[str]
+    """Reported as "open request unknown", never fatal."""
+
+
+def resolve_status(
+    project: Project, registry: pluggy.PluginManager
+) -> list[StatusSource]:
+    """Every source, for `status`, or `ProjectError` for an unknown publisher.
+
+    Lighter than `resolve` on purpose: no connector plugin lookup, no
+    `kbforge_validate_config`, no synthesizer, links or grounding. `status`
+    reads local state and asks the forge, so it must answer where a run could
+    not: a source's directory gone, its credentials unset, its plugin not
+    installed here."""
+    publishers = publishers_of(registry)
+    problems: list[str] = []
+    found: list[StatusSource] = []
+    for name, spec in project.sources.items():
+        pub_component = spec.publisher or project.publisher
+        publisher = publishers.get(pub_component.name)
+        if publisher is None:
+            available = ", ".join(sorted(publishers)) or "(none)"
+            label = f"{name}: " if spec.publisher else "publisher: "
+            problem = (
+                f"{label}unknown publisher {pub_component.name!r}; "
+                f"available: {available}"
+            )
+            if problem not in problems:
+                problems.append(problem)
+            continue
+        publish_config = _publish_config(project, pub_component)
+        found.append(
+            StatusSource(
+                name=name,
+                connector_name=spec.connector,
+                config=spec.config,
+                publisher=publisher,
+                publish_config=publish_config,
+                publisher_problems=check_publisher(
+                    publisher, pub_component.name, publish_config
+                ),
+            )
+        )
+    if problems:
+        raise ProjectError(problems)
+    return found
 
 
 def _now() -> str:
@@ -488,7 +551,7 @@ def cmd_status(project: Project) -> int:
     """Per source, from local state plus one read-only forge call where
     the publisher supports it. No lock and no fetch: it only reads."""
     previous = Path.cwd()
-    os.chdir(project.root)  # resolving connectors validates config paths
+    os.chdir(project.root)  # publisher config is read as a run would read it
     try:
         return _status(project)
     finally:
@@ -507,7 +570,7 @@ def _read_chunk(slot: Path) -> tuple[ChunkRecord | None, str | None]:
 
 
 def _find_open(
-    rs: ResolvedSource, systems: list[str], hints: list[str], config: dict
+    rs: StatusSource, systems: list[str], hints: list[str], config: dict
 ) -> tuple[str | None, str | None]:
     """`(request, None)`, or `(None, reason)` if the forge could not say."""
     hook = _open_request_hook(rs.publisher, "status checks open review requests")
@@ -522,10 +585,16 @@ def _find_open(
 
 
 def _status(project: Project) -> int:
-    loaded = _load(project, [], for_plan=True)
-    if isinstance(loaded, int):
-        return loaded
-    sources, entries = loaded
+    try:
+        sources = resolve_status(project, build_registry())
+    except ProjectError as exc:
+        print(*exc.problems, sep="\n")
+        return 2
+    try:
+        entries = read_sources(project.state())
+    except (OSError, ValueError) as exc:
+        print(f"{project.state() / 'sources.json'}: {exc}")
+        return 2
     stale = [name for name in entries if name not in project.sources]
     width = max(len(n) for n in [*(s.name for s in sources), *stale])
     state = project.state()
