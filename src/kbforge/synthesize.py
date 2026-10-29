@@ -36,6 +36,14 @@ OKF_OWNED = frozenset(
     {"type", "title", "description", "generated", "sources", "links", "tags"}
 )
 
+# OKF v0.2 keys kbforge does not emit yet (design/2026-08-08-okf-02-deferred-
+# decisions.md). Without a writer of its own, a facet would be the only one, and
+# consumers act on these: `verified` sets the §5.3 trust tier, and a date-only
+# timestamp is non-conformant (§5). Dropped like an owned key, and `validate`
+# refuses them on the rendered file. `status` is left out on purpose: it is a
+# common source column, and §5.4 gives an unknown value no meaning to act on.
+OKF_RESERVED = frozenset({"verified", "stale_after", "usage_window"})
+
 # OKF §7 actor for the stub synthesizer. The LLM synthesizer overrides it with
 # the model, matching the spec's own `reference_agent/gemini-2.5-pro` example
 # where the version slot carries the model rather than the tool's release.
@@ -68,7 +76,7 @@ def _facets(structured: dict) -> dict:
     return {
         k: v
         for k, v in structured.items()
-        if k not in OKF_OWNED and v not in (None, "", [], {}) and ok(v)
+        if k not in OKF_OWNED | OKF_RESERVED and v not in (None, "", [], {}) and ok(v)
     }
 
 

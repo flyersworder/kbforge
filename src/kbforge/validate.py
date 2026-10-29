@@ -17,6 +17,7 @@ import yaml
 from kbforge.canonical import is_blank as _blank
 from kbforge.models import ConceptFrontmatter, ProposedChange, resource_key
 from kbforge.related import section_targets
+from kbforge.synthesize import OKF_RESERVED
 
 _SCALAR = (str, int, float, bool)
 
@@ -399,6 +400,17 @@ def _check_strict_okf(proposal: ProposedChange) -> list[Failure]:
                         f"rendered concept is missing required OKF field {key!r}",
                     )
                 )
+        # The emitter drops these as facets; this catches any other way in --
+        # a regressed `_facets`, or a synthesizer writing frontmatter of its own.
+        for key in sorted(OKF_RESERVED & front.keys()):
+            failures.append(
+                Failure(
+                    path,
+                    "okf-strict",
+                    f"rendered concept carries {key!r}, which kbforge does not "
+                    "emit; consumers act on it, and nothing here vouches for it",
+                )
+            )
         if front.get("generated") is not None:
             failures += _check_generated_shape(path, front, concept)
         failures += _check_sources_shape(path, front, concept)

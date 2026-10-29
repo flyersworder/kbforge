@@ -84,7 +84,8 @@ it needs its own decision rather than riding along with a conformance pass.
 
 ## 3. `stale_after` (§5.5)
 
-An absolute date; a concept is stale when `today >= stale_after`. This would
+An absolute instant with an explicit UTC offset (v0.2 §5 rules out a date-only
+value); a concept is stale when `now >= stale_after`. This would
 promote law 4 from "here is when we synced, you decide" to an actual freshness
 policy, and give `whats_stale` a direct answer instead of an inference.
 

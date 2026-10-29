@@ -69,7 +69,9 @@ Three mechanisms keep them honest, and all must survive any refactor:
 
 Facets merge into top-level frontmatter, so a source field named like an OKF key
 would shadow it in the file while the projection kept the good value. `_facets`
-drops anything in `OKF_OWNED` for exactly this reason. If you touch either side,
+drops anything in `OKF_OWNED` for exactly this reason, and anything in
+`OKF_RESERVED` — v0.2 keys kbforge doesn't emit yet, where a facet would be the
+only writer (`validate` rejects them on the file too). If you touch either side,
 re-read `synthesize._render`, `related.render_section` and
 `validate._check_carriers_agree` together.
 

@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from kbforge.canonical import is_blank
-from kbforge.synthesize import OKF_OWNED
+from kbforge.synthesize import OKF_OWNED, OKF_RESERVED
 from kbforge_sql.errors import SqlSourceError
 
 # Same shapes as kbforge-mcp's config: an ALL_CAPS env var name, and a `system`
@@ -134,7 +134,7 @@ def problems_for(config: dict) -> list[str]:
     # string becomes one tag). A `tags` facet reaches the rendered concept, so
     # rejecting it here would be a false positive -- exactly the failure mode
     # this check exists to prevent for every OTHER owned key.
-    if owned := sorted(set(cfg.facets) & (OKF_OWNED - {"tags"})):
+    if owned := sorted(set(cfg.facets) & ((OKF_OWNED - {"tags"}) | OKF_RESERVED)):
         problems.append(
             f"config 'facets' must not use OKF-owned key(s) {owned}: the emitter "
             "drops them, so the facet would silently never appear"

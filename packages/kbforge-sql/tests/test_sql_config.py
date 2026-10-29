@@ -105,6 +105,16 @@ def test_a_facet_named_like_an_okf_key_is_rejected():
     )
 
 
+def test_a_facet_named_like_a_reserved_okf_key_is_rejected():
+    # The emitter drops `stale_after` like an owned key, so the config must
+    # refuse it for the same reason: the facet would silently never appear.
+    problems = problems_for(_cfg(facets=["family", "stale_after"]))
+    assert any(
+        p.startswith("config 'facets' must not use OKF-owned key(s) ['stale_after']")
+        for p in problems
+    ), problems
+
+
 def test_a_tags_facet_is_allowed():
     # `tags` is OKF-owned too, but unlike the other owned keys the emitter does
     # not drop it: `assemble` reads `structured["tags"]` and ships it,

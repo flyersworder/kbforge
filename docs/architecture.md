@@ -574,6 +574,9 @@ changed; the encoding stopped being private. Two families v0.2 adds — `verifie
 (§5.2) and `stale_after` (§5.5) — are deliberately not emitted yet, and neither
 is `status: deprecated` (§5.4) in place of kbforge's hard delete; see
 [`design/2026-08-08-okf-02-deferred-decisions.md`](design/2026-08-08-okf-02-deferred-decisions.md).
+Not emitting them also means not letting a source emit them: `verified`,
+`stale_after` and `usage_window` are `OKF_RESERVED`, never facets, and the strict
+validator rejects a rendered concept that carries one.
 
 **What the runtime enforces vs. what the laws name.** The validators check what a
 `ProposedChange` can decide alone, so two of the four run at reduced strength. The
