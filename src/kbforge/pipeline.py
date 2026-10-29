@@ -1,5 +1,6 @@
 """The fixed-order pipeline (architecture §7). The order is NOT pluggable; the
-no-op and never-auto-merge rules are trust guarantees enforced here."""
+no-op and never-auto-merge rules are trust guarantees enforced here. `plan()`
+runs the same body as `run()` and stops before synthesis."""
 
 from __future__ import annotations
 
@@ -117,6 +118,22 @@ class Waiting:
 
     request: str
     branch_hint: str
+
+
+@dataclass(frozen=True)
+class Planned:
+    """What `run()` would synthesize, reported by `plan()` from the same body
+    stopped before synthesis: nothing synthesized, validated, published or
+    written. Lists are this chunk's, sorted."""
+
+    added: list[str]
+    modified: list[str]
+    removed: list[str]
+    grounding_drift: list[str]
+    link_drift: list[str]
+    rebuilt: list[str]  # referrers + arrivals
+    deferred: int  # backlog + deferred grounding drift + deferred link drift
+    systems: frozenset[str]
 
 
 class ConfigError(RuntimeError):
@@ -298,6 +315,92 @@ def run(
     foreign_systems: frozenset[str] = frozenset(),
     owners: Mapping[str, str] | None = None,
 ) -> NoOp | Aborted | Published | Waiting:
+    synthesizer = synthesizer or StubSynthesizer()
+    outcome = _run(
+        connector,
+        publisher,
+        config=config,
+        mirror=mirror,
+        state_dir=state_dir,
+        publish_config=publish_config,
+        synthesizer=synthesizer,
+        grounding_config=grounding_config,
+        chunking=chunking,
+        links_config=links_config,
+        foreign_systems=foreign_systems,
+        owners=owners,
+        grounds=getattr(synthesizer, "grounds", False),
+        until_synthesis=False,
+        check_open_requests=True,
+    )
+    assert not isinstance(outcome, Planned)  # only until_synthesis plans
+    return outcome
+
+
+def plan(
+    connector: ConnectorProtocol,
+    publisher: PublisherProtocol,
+    *,
+    config: dict,
+    mirror: str,
+    state_dir: str,
+    publish_config: dict,
+    grounds: bool,
+    grounding_config: GroundingConfig | None = None,
+    chunking: ChunkingConfig | None = None,
+    links_config: LinksConfig | None = None,
+    foreign_systems: frozenset[str] = frozenset(),
+    owners: Mapping[str, str] | None = None,
+    check_open_requests: bool = True,
+) -> NoOp | Aborted | Waiting | Planned:
+    """What `run()` would do now: `run()`'s own body, stopped before synthesis
+    (project-file design §6.3). It fetches, but synthesizes, validates,
+    publishes and writes nothing, so it needs no model. `grounds` is the
+    synthesizer's class attribute, read without constructing one.
+    `check_open_requests=False` skips both chunk `Waiting` checks, for a caller
+    without the publisher's credentials."""
+    outcome = _run(
+        connector,
+        publisher,
+        config=config,
+        mirror=mirror,
+        state_dir=state_dir,
+        publish_config=publish_config,
+        synthesizer=StubSynthesizer(),  # never called: plan stops before it
+        grounding_config=grounding_config,
+        chunking=chunking,
+        links_config=links_config,
+        foreign_systems=foreign_systems,
+        owners=owners,
+        grounds=grounds,
+        until_synthesis=True,
+        check_open_requests=check_open_requests,
+    )
+    assert not isinstance(outcome, Published)  # until_synthesis never publishes
+    return outcome
+
+
+def _run(
+    connector: ConnectorProtocol,
+    publisher: PublisherProtocol,
+    *,
+    config: dict,
+    mirror: str,
+    state_dir: str,
+    publish_config: dict,
+    synthesizer: Synthesizer,
+    grounding_config: GroundingConfig | None,
+    chunking: ChunkingConfig | None,
+    links_config: LinksConfig | None,
+    foreign_systems: frozenset[str],
+    owners: Mapping[str, str] | None,
+    grounds: bool,
+    until_synthesis: bool,
+    check_open_requests: bool,
+) -> NoOp | Aborted | Published | Waiting | Planned:
+    """The one body `run()` and `plan()` share, so a plan's verdict is the
+    run's by construction. `until_synthesis` returns `Planned` right after the
+    last pre-synthesis gate; everything before that point only reads."""
     info = connector.kbforge_connector_info()
     problems = connector.kbforge_validate_config(config)
     if problems:
@@ -313,7 +416,7 @@ def run(
             "to wait between chunks; this one does not",
         )
         record = read_record(_chunk_slot(Path(state_dir), info.name, config))
-        if record is not None and record.pending:
+        if check_open_requests and record is not None and record.pending:
             opened = _open_chunk_request(open_request, record, publish_config)
             if opened is not None:
                 request, hint = opened
@@ -351,7 +454,6 @@ def run(
     if ownership:
         return Aborted(failures=ownership)
 
-    grounds = getattr(synthesizer, "grounds", False)
     grounding_cfg = grounding_config or GroundingConfig()
     # Expanded once: symmetric reverses are what let B's run find A's entry.
     expanded = expand(links_config) if links_config is not None else {}
@@ -406,7 +508,12 @@ def run(
         # open to small follow-ups, but the first of several chunks appended
         # to it rebuilds the unbounded request chunking exists to prevent
         # (§6). Before the drift scan and synthesis, so waiting costs no tokens.
-        if backlog and record is not None and open_request is not None:
+        if (
+            backlog
+            and check_open_requests
+            and record is not None
+            and open_request is not None
+        ):
             opened = _open_chunk_request(open_request, record, publish_config)
             if opened is not None:
                 request, hint = opened
@@ -682,6 +789,18 @@ def run(
     scope_failures = _scope_failures(by_id)
     if scope_failures:
         return Aborted(failures=scope_failures)
+
+    if until_synthesis:
+        return Planned(
+            added=sorted(x for x in changeset.added if x not in backlog),
+            modified=sorted(x for x in changeset.modified if x not in backlog),
+            removed=list(changeset.removed),
+            grounding_drift=list(drift),
+            link_drift=list(link_drift),
+            rebuilt=sorted(rebuilt),
+            deferred=len(backlog) + len(deferred_drift) + len(deferred_link_drift),
+            systems=reported_systems,
+        )
 
     grounding_map: dict[str, list[CanonicalDocument]] = {}
     grounding_notes: list[str] = []
