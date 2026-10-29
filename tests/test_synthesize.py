@@ -183,6 +183,26 @@ def test_a_shadowing_attempt_still_passes_the_gate():
     assert run_validators(change) == []
 
 
+@pytest.mark.parametrize("key", ["verified", "stale_after", "usage_window"])
+def test_a_source_field_never_ships_as_an_okf_key_kbforge_does_not_emit(key):
+    """OKF v0.2 defines these keys and kbforge emits none of them, so a source
+    field with the name would be the only writer: a SQL `date` column named
+    `stale_after` shipped `stale_after: '2026-09-23'`, a date-only value §5 no
+    longer allows, and a `verified` column would set the trust tier. Dropped,
+    like an OKF-owned key, and the concept still passes the gate."""
+    from kbforge.validate import run_validators
+
+    doc = _doc("local_files:apps/x.md", structured={key: "2026-09-23", "env": "prod"})
+    change = synthesize([doc], ChangeSet(added=["local_files:apps/x.md"]))
+    path = concept_path("local_files:apps/x.md")
+    front = _frontmatter(change.files[path])
+
+    assert key not in front
+    assert key not in change.concepts[path].facets
+    assert front["env"] == "prod"  # ordinary facets are untouched
+    assert run_validators(change) == []
+
+
 def test_nested_structured_value_is_not_a_facet():
     doc = _doc(
         "local_files:apps/x.md", structured={"owner": {"team": "a"}, "env": "prod"}

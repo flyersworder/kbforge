@@ -346,3 +346,26 @@ def test_matching_tags_pass():
         concepts={"c.md": _with_tags(["sic"])},
     )
     assert run_validators(change) == []
+
+
+@pytest.mark.parametrize(
+    "line",
+    ["stale_after: 2026-09-23\n",
+     "verified: {by: 'human:someone', at: '2026-06-25T09:00:00Z'}\n",
+     "usage_window: {from: 2026-06-01, to: 2026-06-30}\n"],
+)  # fmt: skip
+def test_an_okf_key_kbforge_never_emits_is_reported(line):
+    """kbforge emits no `verified`, `stale_after` or `usage_window` (see
+    design/2026-08-08-okf-02-deferred-decisions.md), so a concept carrying one
+    got it from somewhere the laws never looked. A consumer still acts on it:
+    a forged `verified` raises the §5.3 trust tier, and a date-only timestamp
+    is non-conformant since v0.2's §5 tightening. Even a well-formed one is
+    refused -- the claim is not kbforge's to make."""
+    key = line.split(":", 1)[0]
+    content = (
+        f"---\ntype: concept\ntitle: X\ndescription: X\n{_GOOD_GENERATED}\n"
+        f"{_GOOD_SOURCES}\n{line}---\n# X\n"
+    )
+    failures = run_validators(_proposal("c/x.md", content, _concept()))
+    assert [f.law for f in failures] == ["okf-strict"]
+    assert f"rendered concept carries {key!r}" in failures[0].message
