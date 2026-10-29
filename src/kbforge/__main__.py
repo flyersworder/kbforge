@@ -31,7 +31,7 @@ from kbforge.links import links_problems, load_links
 from kbforge.lock import mirror_lock
 from kbforge.pipeline import redo, run
 from kbforge.project import DEFAULT_FILE, ProjectError, load_project
-from kbforge.project_cli import cmd_run
+from kbforge.project_cli import cmd_plan, cmd_run
 from kbforge.registry import build_registry
 
 
@@ -217,8 +217,15 @@ def main(argv: list[str] | None = None) -> int:
     # Accepted so a `run` command line can be reused as is, but never needed:
     # redo reads and writes state and the mirror, and never publishes.
     rd.add_argument("--out", default=None)
+    pl = sub.add_parser("plan", help="show what run would propose; writes nothing")
+    pl.add_argument(
+        "sources",
+        nargs="*",
+        metavar="SOURCE",
+        help="the sources to plan (default: all, in file order)",
+    )
+    _project_arg(pl)
     for cmd, summary in (
-        ("plan", "show what run would propose; writes nothing"),
         ("status", "local state and open review requests; no fetch"),
         ("reset", "forget one source's local state"),
         ("init", "write a kbforge.yaml"),
@@ -269,7 +276,7 @@ def _project_mode(args: argparse.Namespace) -> int:
                 "in kbforge.yaml"
             )
         return 2
-    if args.cmd != "run":
+    if args.cmd not in ("run", "plan"):
         print(f"kbforge {args.cmd} over a project file is not built yet")
         return 2
     try:
@@ -277,7 +284,8 @@ def _project_mode(args: argparse.Namespace) -> int:
     except ProjectError as exc:
         print(*exc.problems, sep="\n")
         return 2
-    return cmd_run(project, args.sources)
+    command = cmd_run if args.cmd == "run" else cmd_plan
+    return command(project, args.sources)
 
 
 def _flag_mode(args: argparse.Namespace) -> int:

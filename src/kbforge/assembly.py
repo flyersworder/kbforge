@@ -24,6 +24,7 @@ from kbforge.pipeline import (
     ConfigError,
     ConnectorProtocol,
     NoOp,
+    Planned,
     Published,
     PublisherProtocol,
     Redone,
@@ -138,7 +139,7 @@ class Outcome:
 
 
 def execute(
-    call: Callable[[], NoOp | Aborted | Published | Waiting | Redone],
+    call: Callable[[], NoOp | Aborted | Published | Waiting | Redone | Planned],
     connector_name: str,
 ) -> Outcome:
     """Run `call` (a `run(...)` or a `redo(...)`, under the mirror lock) and

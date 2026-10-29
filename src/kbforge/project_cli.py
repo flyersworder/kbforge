@@ -8,6 +8,7 @@ runs (§6.1), the lock held across every source, and `sources.json`."""
 from __future__ import annotations
 
 import os
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -36,9 +37,12 @@ from kbforge.lock import MirrorLocked, mirror_lock
 from kbforge.pipeline import (
     ConnectorProtocol,
     NoOp,
+    Planned,
     Published,
     PublisherProtocol,
+    Waiting,
     instance_key,
+    plan,
     run,
 )
 from kbforge.project import Component, Project, ProjectError
@@ -231,8 +235,8 @@ def _now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
 
 
-def cmd_run(project: Project, names: list[str]) -> int:
-    """§6.2: every selected source in file order, under one lock."""
+def _locked(project: Project, body: Callable[[], int]) -> int:
+    """`body` from beside the project file, under the mirror lock."""
     previous = Path.cwd()
     # Connector config is never rewritten (it is hashed into the slot names),
     # so `path: ./handbook` must be read from beside the project file.
@@ -240,7 +244,7 @@ def cmd_run(project: Project, names: list[str]) -> int:
     try:
         try:
             with mirror_lock(project.mirror()):
-                return _run_sources(project, names)
+                return body()
         except MirrorLocked as exc:
             print(
                 f"Locked: another kbforge run holds {exc.path}; "
@@ -251,9 +255,13 @@ def cmd_run(project: Project, names: list[str]) -> int:
         os.chdir(previous)
 
 
-def _run_sources(project: Project, names: list[str]) -> int:
+def _load(
+    project: Project, names: list[str], *, for_plan: bool
+) -> tuple[list[ResolvedSource], dict[str, SourceEntry]] | int:
+    """The selected sources and the recorded entries, or the exit code (2)
+    after printing what was wrong."""
     try:
-        sources = resolve(project, build_registry(), names, for_plan=False)
+        sources = resolve(project, build_registry(), names, for_plan=for_plan)
     except ProjectError as exc:
         print(*exc.problems, sep="\n")
         return 2
@@ -262,6 +270,120 @@ def _run_sources(project: Project, names: list[str]) -> int:
     except (OSError, ValueError) as exc:
         print(f"{project.state() / 'sources.json'}: {exc}")
         return 2
+    return sources, entries
+
+
+def _owners(
+    project: Project, entries: dict[str, SourceEntry], name: str
+) -> dict[str, str]:
+    """system -> source that owns it, for every source but `name`.
+
+    Ownership counts only names still in the file: a renamed source keeps its
+    config, and so its cursor, and must not be blocked by its old name."""
+    return {
+        system: other
+        for other, entry in entries.items()
+        if other != name and other in project.sources
+        for system in entry.systems
+    }
+
+
+def cmd_run(project: Project, names: list[str]) -> int:
+    """§6.2: every selected source in file order, under one lock."""
+    return _locked(project, lambda: _run_sources(project, names))
+
+
+def cmd_plan(project: Project, names: list[str]) -> int:
+    """§6.3: what each selected source would propose. Writes nothing; takes
+    the lock because it reads the mirror."""
+    return _locked(project, lambda: _plan_sources(project, names))
+
+
+def _plan_sources(project: Project, names: list[str]) -> int:
+    loaded = _load(project, names, for_plan=True)
+    if isinstance(loaded, int):
+        return loaded
+    sources, entries = loaded
+    # Systems claimed earlier in this invocation, in memory only: plan never
+    # writes sources.json.
+    claimed: dict[str, list[str]] = {}
+    width = max(len(s.name) for s in sources)
+    code = 0
+    for rs in sources:
+        prefix = f"{rs.name:<{width}}  "
+        owners = _owners(project, entries, rs.name)
+        for other, systems in claimed.items():
+            for system in systems:
+                owners.setdefault(system, other)
+        if rs.publisher_problems:
+            print(
+                f"{prefix}note: open request unknown "
+                f"({'; '.join(rs.publisher_problems)}); a run may wait instead"
+            )
+        outcome = execute(
+            lambda rs=rs, owners=owners: plan(
+                rs.connector,
+                rs.publisher,
+                config=rs.config,
+                mirror=str(project.mirror()),
+                state_dir=str(project.state()),
+                publish_config=rs.publish_config,
+                grounds=rs.grounds,
+                grounding_config=rs.grounding_config,
+                chunking=rs.chunking,
+                links_config=rs.links_config,
+                foreign_systems=frozenset(owners),
+                owners=owners,
+                check_open_requests=not rs.publisher_problems,
+            ),
+            rs.connector_name,
+        )
+        result = outcome.result
+        if isinstance(result, NoOp):
+            lines = ["no change → NoOp"]
+        elif isinstance(result, Waiting):
+            lines = [f"review request {result.request} open → would wait"]
+        elif isinstance(result, Planned):
+            lines = _planned_lines(result)
+        else:
+            lines = outcome.lines
+            if outcome.code != 0:
+                code = 1
+        for line in lines:
+            print(f"{prefix}{line}")
+        if isinstance(result, (NoOp, Planned)):
+            claimed[rs.name] = sorted(result.systems)
+    return code
+
+
+def _planned_lines(p: Planned) -> list[str]:
+    drifted = len(p.grounding_drift) + len(p.link_drift)
+    total = len(p.added) + len(p.modified) + drifted + len(p.rebuilt)
+    head = (
+        f"{len(p.added)} added, {len(p.modified)} modified, {len(p.removed)} removed, "
+        f"{drifted} drifted, {len(p.rebuilt)} rebuilt → would propose {total} concepts"
+    )
+    if p.deferred:
+        head += f"; {p.deferred} more follow in later chunks"
+    head += " (validation runs at publish)"
+    lines = [head]
+    for mark, ids, what in (
+        ("+", p.added, "added"),
+        ("~", p.modified, "modified"),
+        ("-", p.removed, "removed"),
+        ("↻", p.grounding_drift, "grounding drift"),
+        ("↻", p.link_drift, "link drift"),
+        ("↻", p.rebuilt, "rebuilt for links"),
+    ):
+        lines += [f"  {mark} {doc_id}  {what}" for doc_id in sorted(ids)]
+    return lines
+
+
+def _run_sources(project: Project, names: list[str]) -> int:
+    loaded = _load(project, names, for_plan=False)
+    if isinstance(loaded, int):
+        return loaded
+    sources, entries = loaded
 
     grounding = sources[0].grounding_config if sources else None
     if (
@@ -289,16 +411,9 @@ def _run_sources(project: Project, names: list[str]) -> int:
                 f"fresh cursor (kbforge reset {rs.name} clears the old state)."
             )
 
-        # Ownership counts only names still in the file: a renamed source keeps
-        # its config, and so its cursor, and must not be blocked by its old name.
         # `entries` is updated as each source finishes, so the systems an
         # earlier source fetched in this same invocation are already in it.
-        owners: dict[str, str] = {
-            system: other
-            for other, entry in entries.items()
-            if other != rs.name and other in project.sources
-            for system in entry.systems
-        }
+        owners = _owners(project, entries, rs.name)
         foreign = frozenset(owners)
 
         outcome = execute(

@@ -446,3 +446,158 @@ def test_resolve_for_plan_still_checks_the_synthesizer_shape(at):
         resolve(load_project(yml), build_registry(), [], for_plan=True)
     [problem] = exc.value.problems
     assert problem.startswith("synthesizer: ") and "no_such_setting" in problem
+
+
+def _snapshot(root: Path) -> dict[str, bytes]:
+    """Names and bytes of every file, but the empty lock file taking the
+    lock leaves behind."""
+    return {
+        str(p.relative_to(root)): p.read_bytes()
+        for p in sorted(root.rglob("*"))
+        if p.is_file() and p.name != "run.lock"
+    }
+
+
+def test_plan_then_run_agree(at, capsys):
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {"local_files": {"connector": "local_files", "config": {"path": "./handbook"}}},
+    )
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "local_files  1 added, 0 modified, 0 removed, 0 drifted, 0 rebuilt "
+        "→ would propose 1 concepts (validation runs at publish)",
+        "local_files    + local_files:a.md  added",
+    ]
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys)[0].startswith("local_files  Published:")
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["local_files  no change → NoOp"]
+
+
+def test_plan_writes_nothing_under_state_dir(at, capsys):
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {"h": {"connector": "local_files", "config": {"path": "./handbook"}}},
+    )
+    before = _snapshot(at / ".kbforge") if (at / ".kbforge").exists() else {}
+    assert main(["plan", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    after = _snapshot(at / ".kbforge") if (at / ".kbforge").exists() else {}
+    assert before == after
+    assert not (at / ".kbforge" / "state" / "sources.json").exists()
+
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    (at / "handbook" / "b.md").write_text(DOC.format(title="b"), "utf-8")
+    before = _snapshot(at / ".kbforge")
+    assert main(["plan", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    assert _snapshot(at / ".kbforge") == before
+
+
+def test_plan_needs_no_model_credentials(at, monkeypatch, capsys):
+    import builtins
+
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    real = builtins.__import__
+
+    def blocked(name, *a, **k):
+        if name.startswith("pydantic_ai"):
+            raise ImportError(name)
+        return real(name, *a, **k)
+
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    monkeypatch.delitem(sys.modules, "kbforge.llm_synthesizer", raising=False)
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {"h": {"connector": "local_files", "config": {"path": "./handbook"}}},
+        synthesizer={"name": "llm", "model": "x"},
+    )
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys)[0].startswith("h  1 added, 0 modified")
+
+
+def test_plan_with_forge_publisher_and_no_token(at, monkeypatch, capsys):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {
+            "h": {
+                "connector": "local_files",
+                "config": {"path": "./handbook"},
+                "chunking": {"max_concepts": 5},
+            }
+        },
+        publisher={"name": "github", "repo": "acme/kb"},
+    )
+    assert main(["plan", "--project", str(yml)]) == 0
+    out = _lines(capsys)
+    assert out[0].startswith("h  note: open request unknown (")
+    assert "env var GITHUB_TOKEN is not set" in out[0]
+    assert out[0].endswith("); a run may wait instead")
+    assert out[1].startswith("h  1 added")
+
+
+def test_migration_from_flag_mode_plans_noop(at, capsys):
+    docs = _docs(at, "handbook", "a")
+    x = at / "X"
+    out = at / "out"
+    assert (
+        main(
+            [
+                "run",
+                "--connector",
+                "local_files",
+                "--set",
+                f"path={docs}",
+                "--mirror",
+                str(x / "mirror"),
+                "--state",
+                str(x / "state"),
+                "--publisher",
+                "dry-run",
+                "--out",
+                str(out),
+            ]
+        )
+        == 0
+    )
+    capsys.readouterr()
+    yml = _project(
+        at,
+        {"h": {"connector": "local_files", "config": {"path": str(docs)}}},
+        state_dir="X",
+    )
+    # state_dir X puts the mirror at X/mirror and state at X/state.
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["h  no change → NoOp"]
+
+
+def test_plan_skips_the_open_request_check_when_the_publisher_is_unusable(
+    at, monkeypatch, capsys
+):
+    import kbforge.project_cli as pc
+
+    seen = []
+    real = pc.plan
+
+    def spy(*a, **k):
+        seen.append(k["check_open_requests"])
+        return real(*a, **k)
+
+    monkeypatch.setattr(pc, "plan", spy)
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {"h": {"connector": "local_files", "config": {"path": "./handbook"}}},
+        publisher={"name": "github", "repo": "acme/kb"},
+    )
+    assert main(["plan", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    assert seen == [False]
