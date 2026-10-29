@@ -8,33 +8,31 @@ shape, so a third-party plugin is usable with no change to this file."""
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 
 import pluggy
 import yaml
 from pydantic import ValidationError
 
-from kbforge.canonical import FetchContractError, StabilityError
-from kbforge.chunking import ChunkRecordError, load_chunking
+from kbforge.assembly import (
+    SetupError,
+    build_synthesizer,
+    check_publisher,
+    execute,
+    synthesizer_grounds,
+)
+from kbforge.chunking import load_chunking
 from kbforge.grounding import load_grounding, problems_for
 from kbforge.links import links_problems, load_links
-from kbforge.llm_synthesizer import SynthesisError
-from kbforge.lock import MirrorLocked, mirror_lock
+from kbforge.lock import mirror_lock
 from kbforge.pipeline import (
-    Aborted,
-    ConfigError,
     ConnectorProtocol,
-    NoOp,
-    Published,
     PublisherProtocol,
-    RedoRefused,
-    Waiting,
     redo,
     run,
 )
-from kbforge.publishers._http import PublishError
-from kbforge.publishers.forge import PathError
 from kbforge.registry import build_registry
 
 
@@ -127,9 +125,16 @@ def _source_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--state", required=True)
 
 
-def _locked(exc: MirrorLocked) -> int:
-    print(f"Locked: another kbforge run holds {exc.path}; nothing was read or written.")
-    return 3
+def _locked_call(
+    args: argparse.Namespace, call: Callable[[], Any]
+) -> Callable[[], Any]:
+    """`call` under the mirror lock; `execute` turns MirrorLocked into exit 3."""
+
+    def locked() -> Any:
+        with mirror_lock(Path(args.mirror)):
+            return call()
+
+    return locked
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -232,72 +237,44 @@ def main(argv: list[str] | None = None) -> int:
     # So does redo under dry-run: dry-run's config is only where to write, and
     # redo never publishes (a forge publisher's config is still checked, since
     # redo asks the forge whether a request is open).
-    validate = getattr(
-        publishers[args.publisher], "kbforge_validate_publish_config", None
+    skip_check = args.cmd == "redo" and args.publisher == "dry-run"
+    publish_problems = (
+        []
+        if skip_check
+        else check_publisher(publishers[args.publisher], args.publisher, publish_config)
     )
-    if args.cmd == "redo" and args.publisher == "dry-run":
-        validate = None
-    publish_problems = validate(publish_config) if validate else []
     if publish_problems:
         print("; ".join(publish_problems))
         return 2
 
     if args.cmd == "redo":
-        try:
-            with mirror_lock(Path(args.mirror)):
-                redone = redo(
+        outcome = execute(
+            _locked_call(
+                args,
+                lambda: redo(
                     connectors[args.connector],
                     publishers[args.publisher],
                     config=config,
                     mirror=args.mirror,
                     state_dir=args.state,
                     publish_config=publish_config,
-                )
-        except MirrorLocked as exc:
-            return _locked(exc)
-        except (ConfigError, ChunkRecordError) as exc:
-            print(str(exc))
-            return 2
-        except RedoRefused as exc:
-            print(f"Redo refused: {exc}")
-            return 1
-        except PublishError as exc:
-            print(f"Publish failed: {exc}")
-            return 1
-        print(
-            f"Redone: {len(redone.admitted)} document(s) will be proposed again "
-            "on the next run."
+                ),
+            ),
+            args.connector,
         )
-        return 0
+        print(*outcome.lines, sep="\n")
+        return outcome.code
 
-    if args.synthesizer in ("llm", "describe"):
-        from kbforge.llm_synthesizer import (
-            DescribeConfig,
-            DescribeSynthesizer,
-            LLMConfig,
-            LLMSynthesizer,
+    try:
+        synthesizer = build_synthesizer(
+            args.synthesizer,
+            # `stub` takes no settings, so a stray --llm-set is not parsed for it.
+            _parse_settings(args.llm_settings) if args.synthesizer != "stub" else {},
+            Path(args.mirror),
         )
-
-        config_cls = DescribeConfig if args.synthesizer == "describe" else LLMConfig
-        try:
-            llm_cfg = config_cls(**_parse_settings(args.llm_settings))
-        except (ValueError, TypeError) as exc:
-            print(str(exc))
-            return 2
-        problems = llm_cfg.validate_env()
-        if problems:
-            print("; ".join(problems))
-            return 2
-        try:
-            if isinstance(llm_cfg, DescribeConfig):
-                synthesizer = DescribeSynthesizer(llm_cfg, mirror=Path(args.mirror))
-            else:
-                synthesizer = LLMSynthesizer(llm_cfg)
-        except ImportError as exc:
-            print(str(exc))
-            return 2
-    else:
-        synthesizer = None  # run() defaults to StubSynthesizer
+    except (ValueError, SetupError) as exc:
+        print(str(exc))
+        return 2
 
     try:
         grounding_config = load_grounding(
@@ -318,7 +295,7 @@ def main(argv: list[str] | None = None) -> int:
         print(f"grounding config: {'; '.join(problems)}")
         return 2
 
-    if grounding_config.rules and args.synthesizer in ("stub", "describe"):
+    if grounding_config.rules and not synthesizer_grounds(args.synthesizer):
         print(
             "grounding rules are validated but inactive: the "
             f"{args.synthesizer} synthesizer does not ground; use --synthesizer llm"
@@ -343,9 +320,10 @@ def main(argv: list[str] | None = None) -> int:
             print(f"links config: {'; '.join(problems)}")
             return 2
 
-    try:
-        with mirror_lock(Path(args.mirror)):
-            result = run(
+    outcome = execute(
+        _locked_call(
+            args,
+            lambda: run(
                 connectors[args.connector],
                 publishers[args.publisher],
                 config=config,
@@ -356,56 +334,12 @@ def main(argv: list[str] | None = None) -> int:
                 grounding_config=grounding_config,
                 chunking=chunking,
                 links_config=links_config,
-            )
-    except MirrorLocked as exc:
-        return _locked(exc)
-    except (ConfigError, ChunkRecordError) as exc:
-        print(str(exc))
-        return 2
-    except (FetchContractError, StabilityError) as exc:
-        # A connector-contract violation, not an operator mistake — but the
-        # operator is who sees it, and a traceback tells them nothing about
-        # which plugin to report it against. StabilityError is caught here too:
-        # it has always escaped as a traceback, and fixing the surfacing only
-        # for the newer law would leave the older one worse for no reason.
-        print(f"Connector contract violation ({args.connector}): {exc}")
-        return 2
-    except SynthesisError as exc:
-        # Raised before the publish, so the mirror and cursor never moved.
-        print(f"Synthesis failed: {exc} (nothing was published; the next run retries)")
-        return 1
-    except (PublishError, PathError) as exc:
-        # The mirror never advanced, so the next run retries this same change.
-        # Catching the PublishError base rather than ForgeError specifically:
-        # TreeListingTruncatedError is a publish failure with carefully worded
-        # remediation advice, and naming subclasses one by one had already let
-        # it escape as a traceback. PathError lands here too — a connector
-        # emitting a traversing file key is the case safe_join() exists for,
-        # and it deserves a message rather than a traceback.
-        print(f"Publish failed: {exc}")
-        return 1
-
-    if isinstance(result, Published):
-        print(f"Published: {result.url}")
-        return 0
-    if isinstance(result, NoOp):
-        print("NoOp: no change detected; no MR opened.")
-        return 0
-    if isinstance(result, Aborted):
-        print(f"Aborted: {len(result.failures)} validation failure(s):")
-        for f in result.failures:
-            print(f"  [{f.law}] {f.concept_path}: {f.message}")
-        return 1
-    if isinstance(result, Waiting):
-        print(
-            # The request, not `branch_hint`: the hint is the synthesizer's
-            # `sync/<system>`, and a configured `branch` override puts the
-            # request somewhere else.
-            f"Waiting: review request {result.request} is still open; the next "
-            "chunk follows once it is merged or closed."
-        )
-        return 0
-    return 2
+            ),
+        ),
+        args.connector,
+    )
+    print(*outcome.lines, sep="\n")
+    return outcome.code
 
 
 if __name__ == "__main__":  # pragma: no cover
