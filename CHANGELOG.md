@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-29
+
 ### Fixed
 
 - A source field named `verified`, `stale_after` or `usage_window` no longer
@@ -16,10 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   §5.3 trust tier. They are dropped like the OKF-owned keys, and the strict
   validator now rejects a rendered concept that carries one. `status` still
   passes through as a facet.
-- kbforge-sql: `facets: [stale_after]` (or `verified`, `usage_window`) is
-  rejected at config time, as the OKF-owned keys already are, rather than
-  silently never appearing. Needs the kbforge release carrying the fix above,
-  so this package's `kbforge` floor moves with it.
+
+## [kbforge-sql-v0.1.2] - 2026-10-29
+
+### Fixed
+
+- `facets: [stale_after]` (or `verified`, `usage_window`) is rejected at config
+  time, as the OKF-owned keys already are, rather than silently never
+  appearing. Requires kbforge 0.14.1, which reserves those keys.
 
 ## [0.14.0] - 2026-09-24
 

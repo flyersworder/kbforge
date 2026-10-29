@@ -1,6 +1,6 @@
 [project]
 name = "kbforge-sql"
-version = "0.1.1"
+version = "0.1.2"
 description = "SQL source connector for kbforge"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -9,7 +9,7 @@ license = { text = "MIT" }
 dependencies = [
     # 0.8.0: cursor slots keyed per config instance, so two `sql` sources never
     # share a manifest; `synthesize.OKF_OWNED` and `canonical.is_blank` exist.
-    "kbforge>=0.8.0",
+    "kbforge>=0.14.1",
     "pydantic>=2.0",
     "sqlalchemy>=2.0",
 ]
