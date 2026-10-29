@@ -477,25 +477,36 @@ def test_plan_then_run_agree(at, capsys):
 
 
 def test_plan_writes_nothing_under_state_dir(at, capsys):
-    _docs(at, "handbook", "a")
+    _docs(at, "handbook", "a", "b", "c")
     yml = _project(
         at,
-        {"h": {"connector": "local_files", "config": {"path": "./handbook"}}},
+        {
+            "local_files": {
+                "connector": "local_files",
+                "config": {"path": "./handbook"},
+                "chunking": {"max_concepts": 1},
+            }
+        },
+        links={"links": {"local_files:a.md": ["local_files:b.md"]}},
     )
-    before = _snapshot(at / ".kbforge") if (at / ".kbforge").exists() else {}
-    assert main(["plan", "--project", str(yml)]) == 0
-    capsys.readouterr()
-    after = _snapshot(at / ".kbforge") if (at / ".kbforge").exists() else {}
-    assert before == after
-    assert not (at / ".kbforge" / "state" / "sources.json").exists()
-
+    state = at / ".kbforge" / "state"
     assert main(["run", "--project", str(yml)]) == 0
     capsys.readouterr()
-    (at / "handbook" / "b.md").write_text(DOC.format(title="b"), "utf-8")
+    # The fixture must keep exercising what a stray write would hide in.
+    assert list(state.glob("chunk-*.json"))
+    assert list((at / ".kbforge" / "mirror").rglob("_links/*"))
+
+    (at / "handbook" / "a.md").write_text(DOC.format(title="a edited"), "utf-8")
     before = _snapshot(at / ".kbforge")
     assert main(["plan", "--project", str(yml)]) == 0
-    capsys.readouterr()
+    out = _lines(capsys)
     assert _snapshot(at / ".kbforge") == before
+    assert out == [
+        "local_files  0 added, 1 modified, 0 removed, 0 drifted, 0 rebuilt "
+        "→ would propose 1 concepts; 2 more follow in later chunks "
+        "(validation runs at publish)",
+        "local_files    ~ local_files:a.md  modified",
+    ]
 
 
 def test_plan_needs_no_model_credentials(at, monkeypatch, capsys):
