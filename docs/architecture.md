@@ -1635,7 +1635,10 @@ only by project mode, after a source's `NoOp` or `Published`, records per
 source name the connector and slot digest it last ran with, the systems its
 last run fetched and when it last published. Ownership reads the systems. `run`
 compares the digest to print `note: config changed since the last run;
-starting from a fresh cursor`, which is today's behavior made visible.
+starting from a fresh cursor (the old one stays in state/, unused).`, which is
+today's behavior made visible. It does not suggest `reset`: the run has
+already recorded the new digest, so `reset` would find the new slots, not the
+old ones, and remove the source's mirror documents.
 `status` reads "last published" here rather than from the cursor's mtime,
 since a chunked source's cursor is held until the final chunk. `reset` uses the
 connector and digest to find the slots of a name already removed from the file.

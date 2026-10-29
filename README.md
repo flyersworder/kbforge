@@ -109,7 +109,8 @@ sources:                            # run in this order
   `run.lock`; a second exits 3: `Locked: another kbforge run holds
   …/.kbforge/run.lock; nothing was read or written.`
 - **Editing a source's config starts it on a fresh cursor**, and `run` prints
-  a note saying so.
+  `note: config changed since the last run; starting from a fresh cursor (the
+  old one stays in state/, unused).`
 
 **Writing with a model** needs `pip install "kbforge[llm]"` and
 `OPENROUTER_API_KEY` (or `api_base:` for a LiteLLM gateway). `llm` writes the

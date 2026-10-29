@@ -32,7 +32,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   source owns aborts with `[source-ownership]`, before the diff, so nothing is
   committed. Ownership is recorded in `<state_dir>/state/sources.json`.
 - `run` notes when a source's config changed since its last run, which starts
-  it on a fresh cursor (as before, but no longer silently).
+  it on a fresh cursor (as before, but no longer silently): `note: config
+  changed since the last run; starting from a fresh cursor (the old one stays
+  in state/, unused).`
 
 ### Changed
 

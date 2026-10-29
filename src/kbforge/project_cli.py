@@ -432,9 +432,12 @@ def _run_sources(project: Project, names: list[str]) -> int:
             old.digest != digest or old.connector != rs.connector_name
         )
         if changed:
+            # Not a pointer to `reset`: by the time a reader acts on this,
+            # the run has recorded the new digest, so `reset` would find the
+            # new slots and wipe this source's mirror documents.
             print(
                 f"{prefix}note: config changed since the last run; starting from a "
-                f"fresh cursor (kbforge reset {rs.name} clears the old state)."
+                "fresh cursor (the old one stays in state/, unused)."
             )
 
         # `entries` is updated as each source finishes, so the systems an

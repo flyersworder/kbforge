@@ -21,7 +21,7 @@ DOC = "---\ntype: application\ntitle: {title}\n---\n{title} does things.\n"
 
 NOTE = (
     "note: config changed since the last run; starting from a fresh cursor "
-    "(kbforge reset {name} clears the old state)."
+    "(the old one stays in state/, unused)."
 )
 
 _GIT_ENV = {
