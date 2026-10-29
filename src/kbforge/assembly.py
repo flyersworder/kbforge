@@ -9,7 +9,9 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import pluggy
 
 from kbforge.canonical import FetchContractError, StabilityError
 from kbforge.chunking import ChunkRecordError
@@ -20,8 +22,10 @@ from kbforge.lock import MirrorLocked
 from kbforge.pipeline import (
     Aborted,
     ConfigError,
+    ConnectorProtocol,
     NoOp,
     Published,
+    PublisherProtocol,
     Redone,
     RedoRefused,
     Waiting,
@@ -29,6 +33,38 @@ from kbforge.pipeline import (
 from kbforge.publishers._http import PublishError
 from kbforge.publishers.forge import PathError
 from kbforge.synthesize import Synthesizer
+
+
+def connectors_of(pm: pluggy.PluginManager) -> dict[str, ConnectorProtocol]:
+    """name -> connector instance (a connector implements kbforge_fetch)."""
+    return {
+        p.kbforge_connector_info().name: cast(ConnectorProtocol, p)
+        for p in pm.get_plugins()
+        if hasattr(p, "kbforge_fetch")
+    }
+
+
+def publishers_of(pm: pluggy.PluginManager) -> dict[str, PublisherProtocol]:
+    """name -> publisher instance (a publisher implements kbforge_publish).
+
+    Keyed by name rather than "first plugin found": with three publishers
+    registered, positional lookup would make the destination depend on plugin
+    registration order.
+    """
+    return {
+        p.kbforge_publisher_info().name: cast(PublisherProtocol, p)
+        for p in pm.get_plugins()
+        if hasattr(p, "kbforge_publish")
+    }
+
+
+SYNTHESIZERS = {
+    "stub": "deterministic, no LLM",
+    "llm": "Pydantic AI (needs kbforge[llm])",
+    "describe": "stub body, model-written description and tags (needs kbforge[llm])",
+}
+"""One table for `--synthesizer` choices, `kbforge list` and the project file:
+two hand-kept lists let `describe` reach the first and not the second."""
 
 
 class SetupError(Exception):

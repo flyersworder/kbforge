@@ -10,62 +10,31 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
-import pluggy
 import yaml
 from pydantic import ValidationError
 
 from kbforge.assembly import (
+    SYNTHESIZERS,
     SetupError,
     build_synthesizer,
     check_publisher,
     execute,
     synthesizer_grounds,
 )
+from kbforge.assembly import connectors_of as _connectors
+from kbforge.assembly import publishers_of as _publishers
 from kbforge.chunking import load_chunking
 from kbforge.grounding import load_grounding, problems_for
 from kbforge.links import links_problems, load_links
 from kbforge.lock import mirror_lock
-from kbforge.pipeline import (
-    ConnectorProtocol,
-    PublisherProtocol,
-    redo,
-    run,
-)
+from kbforge.pipeline import redo, run
+from kbforge.project import DEFAULT_FILE, ProjectError, load_project
+from kbforge.project_cli import cmd_run
 from kbforge.registry import build_registry
 
-
-def _connectors(pm: pluggy.PluginManager) -> dict[str, ConnectorProtocol]:
-    """name -> connector instance (a connector implements kbforge_fetch)."""
-    return {
-        p.kbforge_connector_info().name: cast(ConnectorProtocol, p)
-        for p in pm.get_plugins()
-        if hasattr(p, "kbforge_fetch")
-    }
-
-
-def _publishers(pm: pluggy.PluginManager) -> dict[str, PublisherProtocol]:
-    """name -> publisher instance (a publisher implements kbforge_publish).
-
-    Keyed by name rather than "first plugin found": with three publishers
-    registered, positional lookup would make the destination depend on plugin
-    registration order.
-    """
-    return {
-        p.kbforge_publisher_info().name: cast(PublisherProtocol, p)
-        for p in pm.get_plugins()
-        if hasattr(p, "kbforge_publish")
-    }
-
-
-SYNTHESIZERS = {
-    "stub": "deterministic, no LLM",
-    "llm": "Pydantic AI (needs kbforge[llm])",
-    "describe": "stub body, model-written description and tags (needs kbforge[llm])",
-}
-"""One table for `--synthesizer` choices and `kbforge list`: two hand-kept
-lists let `describe` reach the first and not the second."""
+__all__ = ["SYNTHESIZERS", "_connectors", "_publishers", "main"]
 
 
 def _parse_settings(pairs: list[str]) -> dict:
@@ -96,33 +65,96 @@ def _drops_a_comment(raw: str) -> bool:
     return any(not c and not ch.isspace() for c, ch in zip(covered, raw, strict=True))
 
 
+# Flag-mode options, by `dest`: given without --connector, each is refused
+# rather than ignored, since a project's sources are configured in the file.
+# Their defaults are None so "given" is detectable; flag mode fills the real
+# defaults back in (`_flag_defaults`).
+_FLAG_ONLY = {
+    "settings": "--set",
+    "publisher": "--publisher",
+    "publish_settings": "--publish-set",
+    "mirror": "--mirror",
+    "state": "--state",
+    "out": "--out",
+    "synthesizer": "--synthesizer",
+    "llm_settings": "--llm-set",
+    "grounding": "--grounding",
+    "chunking": "--chunking",
+    "links": "--links",
+}
+
+
+def _project_arg(p: argparse.ArgumentParser) -> None:
+    p.add_argument(
+        "--project",
+        default=None,
+        metavar="PATH",
+        help=f"the project file (default: ./{DEFAULT_FILE})",
+    )
+
+
 def _source_args(p: argparse.ArgumentParser) -> None:
     """What `run` and `redo` both need to find the connector instance's state
     and ask the publisher about open review requests."""
-    p.add_argument("--connector", required=True)
+    p.add_argument(
+        "sources",
+        nargs="*",
+        metavar="SOURCE",
+        help="project mode: the sources to act on (default: all, in file order)",
+    )
+    _project_arg(p)
+    p.add_argument(
+        "--connector",
+        default=None,
+        help="flag mode: the connector to run (omit to use kbforge.yaml)",
+    )
     p.add_argument(
         "--set",
         action="append",
-        default=[],
+        default=None,
         dest="settings",
         metavar="KEY=VALUE",
         help="connector config (repeatable); values are YAML-typed",
     )
     p.add_argument(
         "--publisher",
-        default="dry-run",
+        default=None,
         help="publisher name (default: dry-run); see `kbforge list`",
     )
     p.add_argument(
         "--publish-set",
         action="append",
-        default=[],
+        default=None,
         dest="publish_settings",
         metavar="KEY=VALUE",
         help="publisher config (repeatable); values are YAML-typed",
     )
-    p.add_argument("--mirror", required=True)
-    p.add_argument("--state", required=True)
+    p.add_argument("--mirror", default=None)
+    p.add_argument("--state", default=None)
+
+
+def _flag_defaults(
+    p: argparse.ArgumentParser, args: argparse.Namespace, required: list[str]
+) -> None:
+    """Flag mode: what argparse enforced before project mode made these
+    optional, in argparse's own words, then the defaults they used to have."""
+    if args.project is not None:
+        p.error("argument --project: not allowed with argument --connector")
+    if args.sources:
+        p.error(
+            "a source name cannot be combined with --connector: "
+            + " ".join(args.sources)
+        )
+    missing = [f"--{dest}" for dest in required if getattr(args, dest) is None]
+    if missing:
+        p.error(f"the following arguments are required: {', '.join(missing)}")
+    for dest in ("settings", "publish_settings", "llm_settings"):
+        if getattr(args, dest, None) is None:
+            setattr(args, dest, [])
+    if args.publisher is None:
+        args.publisher = "dry-run"
+    if getattr(args, "synthesizer", "stub") is None:
+        args.synthesizer = "stub"
 
 
 def _locked_call(
@@ -145,18 +177,18 @@ def main(argv: list[str] | None = None) -> int:
 
     r = sub.add_parser("run", help="run the pipeline once")
     _source_args(r)
-    r.add_argument("--out", required=True)
+    r.add_argument("--out", default=None)
     r.add_argument(
         "--synthesizer",
         choices=list(SYNTHESIZERS),
-        default="stub",
+        default=None,
         help="stub (default), llm, or describe (stub body + model-written "
         "description and tags)",
     )
     r.add_argument(
         "--llm-set",
         action="append",
-        default=[],
+        default=None,
         dest="llm_settings",
         metavar="KEY=VALUE",
         help="LLM synthesizer config (repeatable); YAML-typed values",
@@ -187,24 +219,74 @@ def main(argv: list[str] | None = None) -> int:
     # Accepted so a `run` command line can be reused as is, but never needed:
     # redo reads and writes state and the mirror, and never publishes.
     rd.add_argument("--out", default=None)
+    for cmd, summary in (
+        ("plan", "show what run would propose; writes nothing"),
+        ("status", "local state and open review requests; no fetch"),
+        ("reset", "forget one source's local state"),
+        ("init", "write a kbforge.yaml"),
+    ):
+        _project_arg(sub.add_parser(cmd, help=summary))
     args = parser.parse_args(argv)
 
+    if args.cmd == "list":
+        return _list()
+
+    subparsers = {"run": r, "redo": rd}
+    if args.cmd in subparsers and args.connector is not None:
+        required = (
+            ["mirror", "state", "out"] if args.cmd == "run" else ["mirror", "state"]
+        )
+        _flag_defaults(subparsers[args.cmd], args, required)
+        return _flag_mode(args)
+    return _project_mode(args)
+
+
+def _list() -> int:
     pm = build_registry()
     connectors = _connectors(pm)
     publishers = _publishers(pm)
+    for name in sorted(connectors):
+        info = connectors[name].kbforge_connector_info()
+        print(f"{name}\t{info.source_system}")
+    print("synthesizers:")
+    for name, summary in SYNTHESIZERS.items():
+        print(f"  {name}\t{summary}")
+    print("publishers:")
+    for name in sorted(publishers):
+        info = publishers[name].kbforge_publisher_info()
+        print(f"  {name}\t{info.source_system}")
+    return 0
 
-    if args.cmd == "list":
-        for name in sorted(connectors):
-            info = connectors[name].kbforge_connector_info()
-            print(f"{name}\t{info.source_system}")
-        print("synthesizers:")
-        for name, summary in SYNTHESIZERS.items():
-            print(f"  {name}\t{summary}")
-        print("publishers:")
-        for name in sorted(publishers):
-            info = publishers[name].kbforge_publisher_info()
-            print(f"  {name}\t{info.source_system}")
-        return 0
+
+def _project_mode(args: argparse.Namespace) -> int:
+    given = [
+        flag
+        for dest, flag in _FLAG_ONLY.items()
+        if getattr(args, dest, None) is not None
+    ]
+    if given:
+        for flag in given:
+            print(
+                f"{flag} needs --connector; a project's sources are configured "
+                "in kbforge.yaml"
+            )
+        return 2
+    if args.cmd != "run":
+        print(f"kbforge {args.cmd} over a project file is not built yet")
+        return 2
+    try:
+        project = load_project(Path(args.project or DEFAULT_FILE))
+    except ProjectError as exc:
+        print(*exc.problems, sep="\n")
+        return 2
+    return cmd_run(project, args.sources)
+
+
+def _flag_mode(args: argparse.Namespace) -> int:
+    """`--connector` given: today's CLI, byte-for-byte, plus the lock."""
+    pm = build_registry()
+    connectors = _connectors(pm)
+    publishers = _publishers(pm)
 
     if args.connector not in connectors:
         available = ", ".join(sorted(connectors)) or "(none)"
