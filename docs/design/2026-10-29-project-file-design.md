@@ -184,7 +184,8 @@ YAML path, e.g. `sources.docs.chunking.max_concepts: must be at least 1`):
 ```
 
 `sources.json` is the one new state file, written only by project mode. Per
-source name it holds the slot digest the source last ran with, the
+source name it holds the connector name and slot digest the source last ran
+with (so `reset` still works for a name removed from the file), the
 `anchor.system` values its last run fetched, and the time of its last
 `Published`. Every new command needs this record: §5.3 checks ownership
 against it, §6.2 uses it for the config-change notice, §6.4 for "last
@@ -243,8 +244,9 @@ refused (my call).
 
 A system is only known after a fetch, so the check runs there. `run()` gains
 an optional `foreign_systems: frozenset[str]` parameter, defaulting to empty,
-so flag mode is unchanged. It is checked beside `_scope_failures`
-(`pipeline.py:650`), after the fetch and before synthesis, and any fetched
+so flag mode is unchanged. It is checked immediately after the fetch contract
+(`pipeline.py:320`), before the diff — not beside `_scope_failures`, since the
+two NoOp gates return before that point — and any fetched
 document whose `anchor.system` is in that set yields `Aborted`:
 `[source-ownership] system 'local_files' is already owned by source
 'handbook'`. In project mode, `foreign_systems` is the union of the systems
