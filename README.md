@@ -10,7 +10,7 @@
 
 **Agent-first knowledge bases, forged from your systems of record.**
 
-The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
 (OKF) v0.2 standardizes the *artifact at rest* — markdown concept files, frontmatter,
 `index.md`, `log.md`. It says nothing about how those bundles get **produced**: how you
 pull from a wiki or a CMDB, how you tell a real change from an export timestamp jittering,
