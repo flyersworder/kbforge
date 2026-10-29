@@ -656,6 +656,13 @@ def _reset(project: Project, name: str, *, yes: bool) -> int:
         if (other_entry := entries.get(other)) is not None:
             taken.setdefault((other_entry.connector, other_entry.digest), other)
     mine = [pair for pair in pairs if pair not in taken]
+    # The systems `name` last ran with go with the slot they were fetched
+    # through: if another source now resolves to it (a rename it has not run
+    # under yet), wiping the mirror would leave that cursor with no mirror
+    # behind it.
+    if entry is not None and (taker := taken.get((entry.connector, entry.digest))):
+        for system in entry.systems:
+            owned.setdefault(system, taker)
 
     if entry is not None and entry.systems:
         found = frozenset(entry.systems)

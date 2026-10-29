@@ -457,3 +457,27 @@ def test_resetting_an_old_name_keeps_the_slot_a_source_last_ran_with(at, capsys)
     ]
     assert _without(_snapshot(root), "sources.json") == _without(before, "sources.json")
     assert list(_entries(at)) == ["new"]
+
+
+def test_resetting_an_old_name_before_the_renamed_source_has_run(at, capsys):
+    """`old` renamed to `new` with no run since: `new` has no entry yet, but
+    its config resolves to old's slots, which it inherits on its next run."""
+    _docs(at, "x")
+    yml = _project(at, {"old": A})
+    assert main(["run", "--project", str(yml)]) == 0
+    _project(at, {"new": A})
+    capsys.readouterr()
+    root = at / ".kbforge"
+    before = _snapshot(root)
+
+    assert main(["reset", "old", "--yes", "--project", str(yml)]) == 0
+    assert _lines(capsys) == [
+        "old: system 'local_files' belongs to source 'new'; "
+        "its documents were left in place",
+        "old: state slots shared with source 'new' were left in place",
+        "old: removed 0 mirror document(s) and 0 state file(s)",
+    ]
+    assert _without(_snapshot(root), "sources.json") == _without(before, "sources.json")
+    assert _entries(at) == {}
+    assert main(["run", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["new  NoOp: no change detected; no MR opened."]
