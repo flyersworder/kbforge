@@ -275,17 +275,15 @@ def _run_sources(project: Project, names: list[str]) -> int:
         )
 
     width = max(len(s.name) for s in sources)
-    # Systems claimed earlier in this invocation, by source name.
-    claimed: dict[str, str] = {}
     code = 0
     for rs in sources:
         prefix = f"{rs.name:<{width}}  "
         digest = instance_key(rs.config)
         old = entries.get(rs.name)
-        if old is not None and (old.digest, old.connector) != (
-            digest,
-            rs.connector_name,
-        ):
+        changed = old is not None and (
+            old.digest != digest or old.connector != rs.connector_name
+        )
+        if changed:
             print(
                 f"{prefix}note: config changed since the last run; starting from a "
                 f"fresh cursor (kbforge reset {rs.name} clears the old state)."
@@ -293,13 +291,14 @@ def _run_sources(project: Project, names: list[str]) -> int:
 
         # Ownership counts only names still in the file: a renamed source keeps
         # its config, and so its cursor, and must not be blocked by its old name.
+        # `entries` is updated as each source finishes, so the systems an
+        # earlier source fetched in this same invocation are already in it.
         owners: dict[str, str] = {
             system: other
             for other, entry in entries.items()
             if other != rs.name and other in project.sources
             for system in entry.systems
         }
-        owners.update({s: o for s, o in claimed.items() if o != rs.name})
         foreign = frozenset(owners)
 
         outcome = execute(
@@ -338,5 +337,4 @@ def _run_sources(project: Project, names: list[str]) -> int:
                 ),
             )
             write_sources(project.state(), entries)
-            claimed.update(dict.fromkeys(systems, rs.name))
     return code
