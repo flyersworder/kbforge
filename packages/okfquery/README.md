@@ -1,6 +1,6 @@
 # okfquery
 
-SQL over an [OKF v0.2](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+SQL over an [OKF v0.2](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
 bundle, via DuckDB. `okfquery` loads a published bundle into an in-memory DuckDB
 connection and hands the connection back — no daemon, no cache, and no
 committed artifact except the navigation `index.md` you opt into with

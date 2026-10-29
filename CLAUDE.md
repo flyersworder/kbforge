@@ -1,6 +1,6 @@
 # kbforge — working notes for coding agents
 
-kbforge turns a system of record into a reviewed [OKF](https://github.com/GoogleCloudPlatform/knowledge-catalog/blob/main/okf/SPEC.md)
+kbforge turns a system of record into a reviewed [OKF](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
 v0.2 bundle: fetch → normalize → mirror → diff → scope → synthesize → validate →
 publish. `docs/architecture.md` is the spec; sections headed **not built** are
 specification, not shipped code.
