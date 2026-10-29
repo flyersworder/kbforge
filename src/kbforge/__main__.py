@@ -31,7 +31,7 @@ from kbforge.links import links_problems, load_links
 from kbforge.lock import mirror_lock
 from kbforge.pipeline import redo, run
 from kbforge.project import DEFAULT_FILE, ProjectError, load_project
-from kbforge.project_cli import cmd_plan, cmd_run
+from kbforge.project_cli import cmd_plan, cmd_run, cmd_status
 from kbforge.registry import build_registry
 
 
@@ -276,7 +276,7 @@ def _project_mode(args: argparse.Namespace) -> int:
                 "in kbforge.yaml"
             )
         return 2
-    if args.cmd not in ("run", "plan"):
+    if args.cmd not in ("run", "plan", "status"):
         print(f"kbforge {args.cmd} over a project file is not built yet")
         return 2
     try:
@@ -284,6 +284,8 @@ def _project_mode(args: argparse.Namespace) -> int:
     except ProjectError as exc:
         print(*exc.problems, sep="\n")
         return 2
+    if args.cmd == "status":
+        return cmd_status(project)
     command = cmd_run if args.cmd == "run" else cmd_plan
     return command(project, args.sources)
 

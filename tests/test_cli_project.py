@@ -612,3 +612,129 @@ def test_plan_skips_the_open_request_check_when_the_publisher_is_unusable(
     assert main(["plan", "--project", str(yml)]) == 0
     capsys.readouterr()
     assert seen == [False]
+
+
+_PUBLISHED = r"last published \d{4}-\d\d-\d\d \d\d:\d\d UTC"
+
+
+def test_status_before_and_after_a_run(at, capsys):
+    import re
+
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at, {"h": {"connector": "local_files", "config": {"path": "./handbook"}}}
+    )
+    assert main(["status", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["h  never run"]
+
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    assert main(["status", "--project", str(yml)]) == 0
+    [line] = _lines(capsys)
+    assert re.fullmatch(f"h  {_PUBLISHED} · no open request", line), line
+
+
+def test_status_shows_a_pending_chunk(at, monkeypatch, capsys):
+    import re
+
+    from kbforge.publishers.dry_run import DryRunPublisher
+
+    _docs(at, "handbook", "a", "b")
+    _repo(at)
+    yml = _project(
+        at,
+        {
+            "docs": {
+                "connector": "local_files",
+                "config": {"path": "./handbook"},
+                "chunking": {"max_concepts": 1},
+            },
+            "other": {"connector": "git_commits", "config": {"repo": "./repo"}},
+        },
+    )
+    assert main(["run", "--project", str(yml), "docs"]) == 0
+    capsys.readouterr()
+
+    assert main(["status", "--project", str(yml)]) == 0
+    docs_line, other_line = _lines(capsys)
+    assert re.fullmatch(
+        f"docs   {_PUBLISHED} · no open request · next chunk proposes on the next run",
+        docs_line,
+    ), docs_line
+    assert other_line == "other  never run"
+
+    monkeypatch.setattr(
+        DryRunPublisher, "kbforge_open_request", lambda self, hint, config: "!12"
+    )
+    assert main(["status", "--project", str(yml)]) == 0
+    docs_line, _ = _lines(capsys)
+    assert re.fullmatch(
+        f"docs   {_PUBLISHED} · review request !12 open · "
+        "chunk of 1 open as !12, more to follow",
+        docs_line,
+    ), docs_line
+
+
+def test_status_lists_a_removed_source_as_stale(at, capsys):
+    import re
+
+    _docs(at, "handbook", "a")
+    _repo(at)
+    yml = _project(
+        at,
+        {
+            "h": {"connector": "local_files", "config": {"path": "./handbook"}},
+            "gone": {"connector": "git_commits", "config": {"repo": "./repo"}},
+        },
+    )
+    assert main(["run", "--project", str(yml)]) == 0
+    capsys.readouterr()
+    _project(at, {"h": {"connector": "local_files", "config": {"path": "./handbook"}}})
+    assert main(["status", "--project", str(yml)]) == 0
+    h_line, gone_line = _lines(capsys)
+    assert re.fullmatch(f"h     {_PUBLISHED} · no open request", h_line), h_line
+    assert re.fullmatch(
+        f"gone  {_PUBLISHED} · "
+        r"not in kbforge\.yaml \(kbforge reset gone clears its state\)",
+        gone_line,
+    ), gone_line
+
+
+def test_status_exits_2_on_a_bad_project_and_notes_publisher_problems(
+    at, monkeypatch, capsys
+):
+    monkeypatch.delenv("GITHUB_TOKEN", raising=False)
+    _docs(at, "handbook", "a")
+    yml = _project(
+        at,
+        {"h": {"connector": "local_files", "config": {"path": "./handbook"}}},
+        publisher={"name": "github", "repo": "acme/kb"},
+    )
+    assert main(["status", "--project", str(yml)]) == 0
+    assert _lines(capsys) == ["h  never run"]
+
+    from kbforge.pipeline import instance_key
+
+    state = at / ".kbforge" / "state"
+    state.mkdir(parents=True)
+    (state / "sources.json").write_text(
+        json.dumps(
+            {
+                "h": {
+                    "connector": "local_files",
+                    "digest": instance_key({"path": "./handbook"}),
+                    "systems": ["local_files"],
+                    "last_published": "2026-10-28T16:02:00+02:00",
+                }
+            }
+        )
+    )
+    assert main(["status", "--project", str(yml)]) == 0
+    [line] = _lines(capsys)
+    assert line.startswith(
+        "h  last published 2026-10-28 14:02 UTC · open request unknown ("
+    )
+    assert "env var GITHUB_TOKEN is not set" in line
+
+    yml.write_text("sources: {}\nbogus: 1\n")
+    assert main(["status", "--project", str(yml)]) == 2

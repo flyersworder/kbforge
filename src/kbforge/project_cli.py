@@ -30,22 +30,26 @@ from kbforge.assembly import (
     publishers_of,
     synthesizer_grounds,
 )
-from kbforge.chunking import ChunkingConfig
+from kbforge.chunking import ChunkingConfig, ChunkRecord, ChunkRecordError, read_record
 from kbforge.grounding import GroundingConfig, problems_for
 from kbforge.links import LinksConfig, links_problems
 from kbforge.lock import MirrorLocked, mirror_lock
 from kbforge.pipeline import (
+    ConfigError,
     ConnectorProtocol,
     NoOp,
     Planned,
     Published,
     PublisherProtocol,
     Waiting,
+    _chunk_slot,
+    _open_request_hook,
     instance_key,
     plan,
     run,
 )
 from kbforge.project import Component, Project, ProjectError
+from kbforge.publishers._http import PublishError
 from kbforge.registry import build_registry
 from kbforge.sources_record import SourceEntry, read_sources, write_sources
 from kbforge.synthesize import Synthesizer
@@ -453,3 +457,114 @@ def _run_sources(project: Project, names: list[str]) -> int:
             )
             write_sources(project.state(), entries)
     return code
+
+
+def cmd_status(project: Project) -> int:
+    """§6.4: per source, from local state plus one read-only forge call where
+    the publisher supports it. No lock and no fetch: it only reads."""
+    previous = Path.cwd()
+    os.chdir(project.root)  # resolving connectors validates config paths
+    try:
+        return _status(project)
+    finally:
+        os.chdir(previous)
+
+
+def _utc(stamp: str) -> str:
+    return datetime.fromisoformat(stamp).astimezone(UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+
+def _read_chunk(slot: Path) -> tuple[ChunkRecord | None, str | None]:
+    try:
+        return read_record(slot), None
+    except ChunkRecordError as exc:
+        return None, f"chunk record unreadable ({exc.error})"
+
+
+def _find_open(
+    rs: ResolvedSource, systems: list[str], hints: list[str], config: dict
+) -> tuple[str | None, str | None]:
+    """`(request, None)`, or `(None, reason)` if the forge could not say."""
+    hook = _open_request_hook(rs.publisher, "status checks open review requests")
+    branches = dict.fromkeys([*(f"sync/{s}" for s in systems), *hints])
+    try:
+        for branch in branches:
+            if (request := hook(branch, config)) is not None:
+                return request, None
+    except PublishError as exc:
+        return None, f"open request unknown ({exc})"
+    return None, None
+
+
+def _status(project: Project) -> int:
+    loaded = _load(project, [], for_plan=True)
+    if isinstance(loaded, int):
+        return loaded
+    sources, entries = loaded
+    stale = [name for name in entries if name not in project.sources]
+    width = max(len(n) for n in [*(s.name for s in sources), *stale])
+    state = project.state()
+
+    for rs in sources:
+        entry = entries.get(rs.name)
+        slot = _chunk_slot(state, rs.connector_name, rs.config)
+        record, bad = _read_chunk(slot)
+        parts = _published_parts(entry, slot)
+        request: str | None = None
+        try:
+            _open_request_hook(rs.publisher, "status checks open review requests")
+        except ConfigError:
+            pass  # no real hook: nothing to ask the forge
+        else:
+            if entry is None and record is None and not bad:
+                pass  # never run: nothing could be open
+            elif rs.publisher_problems:
+                parts.append(
+                    f"open request unknown ({'; '.join(rs.publisher_problems)})"
+                )
+            else:
+                request, unknown = _find_open(
+                    rs,
+                    entry.systems if entry else [],
+                    record.branch_hints if record else [],
+                    rs.publish_config,
+                )
+                parts.append(
+                    unknown
+                    or (
+                        f"review request {request} open"
+                        if request
+                        else "no open request"
+                    )
+                )
+        parts += [bad] if bad else _chunk_parts(record, request)
+        print(f"{rs.name:<{width}}  " + " · ".join(parts))
+
+    for name in stale:
+        entry = entries[name]
+        slot = state / f"chunk-{entry.connector}-{entry.digest}.json"
+        record, bad = _read_chunk(slot)
+        parts = _published_parts(entry, slot)
+        if bad:
+            parts.append(bad)
+        elif record is not None and record.pending:
+            parts.append(f"chunk of {len(record.admitted)} pending")
+        parts.append(f"not in kbforge.yaml (kbforge reset {name} clears its state)")
+        print(f"{name:<{width}}  " + " · ".join(parts))
+    return 0
+
+
+def _published_parts(entry: SourceEntry | None, slot: Path) -> list[str]:
+    if entry is None:
+        return ["never published"] if slot.exists() else ["never run"]
+    if entry.last_published is None:
+        return ["never published"]
+    return [f"last published {_utc(entry.last_published)}"]
+
+
+def _chunk_parts(record: ChunkRecord | None, request: str | None) -> list[str]:
+    if record is None or not record.pending:
+        return []
+    if request is not None:
+        return [f"chunk of {len(record.admitted)} open as {request}, more to follow"]
+    return ["next chunk proposes on the next run"]
