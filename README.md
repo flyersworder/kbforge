@@ -107,7 +107,8 @@ sources:                            # run in this order
 - **A system belongs to one source.** `local_files` and `git_commits` each emit
   one fixed system, so point one `local_files` source at a common parent; a
   second aborts with `[source-ownership] ... system 'local_files' is already
-  owned by source 'docs'`.
+  owned by source 'docs'`, then a `hint:` line on the way out. Two sources
+  that need the same system go in separate projects.
 - **One run at a time per mirror.** `run`, `plan`, `redo` and `reset` hold
   `run.lock`; a second exits 3: `Locked: another kbforge run holds
   …/.kbforge/run.lock; nothing was read or written.`
@@ -359,8 +360,10 @@ while the whole is not, which is exactly how the 0.3.0 data-loss bug passed a
 clean offline suite.
 
 ```bash
+# A glpat- personal access token with the api scope, not `glab config get
+# token` (an OAuth token; tests/test_forge_live.py says why).
+export GITLAB_TOKEN=glpat-...
 GITHUB_TOKEN=$(gh auth token) \
-GITLAB_TOKEN=$(glab config get token --host gitlab.com) \
 KBFORGE_LIVE_GITHUB_REPO=you/kbforge-live-test \
 KBFORGE_LIVE_GITLAB_REPO=you/kbforge-live-test \
 uv run pytest tests/test_forge_live.py --run-live

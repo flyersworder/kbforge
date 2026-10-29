@@ -19,6 +19,12 @@ from kbforge.synthesize import concept_path
 
 DOC = "---\ntype: application\ntitle: {title}\n---\n{title} does things.\n"
 
+HINT = (
+    "hint: a system belongs to one source. Fetch it from only one of them "
+    "(the owner releases it on its next run without it), or move one to a "
+    "project of its own."
+)
+
 NOTE = (
     "note: config changed since the last run; starting from a fresh cursor "
     "(the old one stays in state/, unused)."
@@ -234,8 +240,9 @@ def test_a_failing_source_does_not_stop_the_next(at, capsys):
     assert out[0].startswith("a  Published:")
     assert out[1] == "b  Aborted: 1 validation failure(s):"
     assert out[2].startswith("b    [source-ownership] ")
-    assert out[3].startswith("c  Published:")
-    assert len(out) == 4
+    assert out[3] == f"b  {HINT}"
+    assert out[4].startswith("c  Published:")
+    assert len(out) == 5
     # An aborted source writes nothing to sources.json.
     assert list(_entries(at)) == ["a", "c"]
 
@@ -256,11 +263,16 @@ def test_two_local_files_sources_second_aborts(at, capsys):
     )
     assert main(["run", "--project", str(yml)]) == 1
     out = _lines(capsys)
-    assert out[1:] == ["b  Aborted: 1 validation failure(s):", failure]
+    aborted = ["b  Aborted: 1 validation failure(s):", failure, f"b  {HINT}"]
+    assert out[1:] == aborted
 
     # A later invocation selecting only b knows a's claim from sources.json.
     assert main(["run", "--project", str(yml), "b"]) == 1
-    assert _lines(capsys) == ["b  Aborted: 1 validation failure(s):", failure]
+    assert _lines(capsys) == aborted
+
+    # plan gives the same hint.
+    assert main(["plan", "--project", str(yml), "b"]) == 1
+    assert _lines(capsys) == aborted
 
 
 def test_renaming_a_source_keeps_its_cursor_and_ownership(at, capsys):
@@ -943,7 +955,12 @@ def test_a_connector_exception_does_not_stop_later_sources_in_run(
     _registry_with(monkeypatch, _BoomConnector())
     yml = _boom_project(at)
     assert main(["run", "--project", str(yml)]) == 1
-    out = _lines(capsys)
+    captured = capsys.readouterr()
+    out = captured.out.splitlines()
+    # The one-line summary keeps stdout readable; the traceback goes to stderr
+    # so a bug in kbforge itself is not reduced to one line.
+    assert "Traceback (most recent call last)" in captured.err
+    assert "SqlSourceError: unable to open database file" in captured.err
     assert out[0].startswith("a  Published:")
     assert out[1] == BOOM
     assert out[2].startswith("c  Published:")
@@ -957,7 +974,9 @@ def test_a_connector_exception_does_not_stop_later_sources_in_plan(
     _registry_with(monkeypatch, _BoomConnector())
     yml = _boom_project(at)
     assert main(["plan", "--project", str(yml)]) == 1
-    out = _lines(capsys)
+    captured = capsys.readouterr()
+    out = captured.out.splitlines()
+    assert "Traceback (most recent call last)" in captured.err
     assert out[0].startswith("a  1 added, 0 modified")
     assert out[1] == "a    + local_files:a.md  added"
     assert out[2] == BOOM
@@ -1010,6 +1029,7 @@ def test_migrated_sources_sharing_a_system_cannot_both_own_it(at, capsys):
         "c2  Aborted: 1 validation failure(s):",
         "c2    [source-ownership] git_commits: "
         "system 'git_commits' is already owned by source 'c1'",
+        f"c2  {HINT}",
     ]
     assert main(["plan", "--project", str(yml)]) == 1
     assert _lines(capsys) == ["c1  no change → NoOp", *aborted]
@@ -1204,3 +1224,75 @@ def test_plan_lists_and_counts_each_document_once():
         "  ↻ t:x  grounding drift",
         "  ↻ t:y  rebuilt for links",
     ]
+
+
+class _SystemConnector:
+    """One document, `<system>:<name>` from the config: a source whose system
+    a config edit can change."""
+
+    def kbforge_connector_info(self):
+        from kbforge.models import ConnectorInfo
+
+        return ConnectorInfo(name="sys", version="0.1.0", source_system="t")
+
+    def kbforge_validate_config(self, config):
+        return []
+
+    def kbforge_fetch(self, config, cursor):
+        from kbforge.models import Cursor, FetchResult, RawRecord
+
+        doc_id = f"{config['system']}:{config['name']}"
+        record = RawRecord(media_type="text/plain", payload=doc_id.encode())
+        return FetchResult(records=[record], cursor=Cursor(connector="sys"))
+
+    def kbforge_normalize(self, records):
+        docs = []
+        for doc_id in (r.payload.decode() for r in records):
+            system, name = doc_id.split(":")
+            doc = _tdoc(name)
+            doc.anchor.system = system
+            doc.doc_id = doc_id
+            docs.append(doc)
+        return docs
+
+
+def test_plan_sees_an_earlier_source_release_a_system(at, monkeypatch, capsys):
+    """run updates each source's record before the next source runs, so an
+    owner that stops fetching a system frees it for a later source in the same
+    invocation. plan must agree, not judge the later source by the stale
+    record."""
+    _registry_with(monkeypatch, _SystemConnector())
+
+    def write(a_system: str, a_name: str) -> Path:
+        return _project(
+            at,
+            {
+                "a": {
+                    "connector": "sys",
+                    "config": {"system": a_system, "name": a_name},
+                },
+                "b": {"connector": "sys", "config": {"system": "x", "name": "b"}},
+            },
+        )
+
+    yml = write("x", "a")
+    assert main(["run", "--project", str(yml)]) == 1
+    out = _lines(capsys)
+    assert out[0].startswith("a  Published:")
+    assert out[2].endswith("system 'x' is already owned by source 'a'")
+
+    write("y", "a2")  # a gives x up
+    assert main(["plan", "--project", str(yml)]) == 0
+    assert [line for line in _lines(capsys) if line.startswith("b")] == [
+        "b  1 added, 0 modified, 0 removed, 0 drifted, 0 rebuilt → would "
+        "propose 1 concept (validation runs at publish)",
+        "b    + x:b  added",
+    ]
+
+    assert main(["run", "--project", str(yml)]) == 0
+    out = _lines(capsys)
+    assert out[-1].startswith("b  Published:")
+    assert {n: e["systems"] for n, e in _entries(at).items()} == {
+        "a": ["y"],
+        "b": ["x"],
+    }

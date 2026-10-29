@@ -8,6 +8,8 @@ runs, the lock held across every source, and `sources.json`."""
 from __future__ import annotations
 
 import os
+import sys
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -36,6 +38,7 @@ from kbforge.grounding import GroundingConfig, problems_for
 from kbforge.links import LinksConfig, links_problems
 from kbforge.lock import MirrorLocked, mirror_lock
 from kbforge.pipeline import (
+    Aborted,
     ConfigError,
     ConnectorProtocol,
     NoOp,
@@ -370,11 +373,50 @@ def _execute(call: Callable[[], Any], connector_name: str) -> Outcome:
     """`execute`, and also any other exception a plugin raises (a
     connector's own error type, say), reported as one line, exit 1. Flag mode
     runs one source and keeps the traceback; here one plugin's exception must
-    not stop the sources after it (§7.5)."""
+    not stop the sources after it (§7.5). The traceback still goes to stderr:
+    the exception may be a bug in kbforge itself, not the plugin's."""
     try:
         return execute(call, connector_name)
     except Exception as exc:
+        traceback.print_exc(file=sys.stderr)
         return Outcome(1, [f"error: {type(exc).__name__}: {exc}"])
+
+
+OWNERSHIP_HINT = (
+    "hint: a system belongs to one source. Fetch it from only one of them "
+    "(the owner releases it on its next run without it), or move one to a "
+    "project of its own."
+)
+
+
+def _hint(result: object) -> list[str]:
+    """The way out of a `[source-ownership]` abort, which `reset` is not:
+    resetting the owner only lets it claim the system again."""
+    if isinstance(result, Aborted) and any(
+        f.law == "source-ownership" for f in result.failures
+    ):
+        return [OWNERSHIP_HINT]
+    return []
+
+
+def _record(
+    rs: ResolvedSource, entries: dict[str, SourceEntry], result: object
+) -> SourceEntry:
+    """What a run records for `rs` once it ends in `result`: a NoOp or a
+    Published, or a plan's NoOp or Planned, which plan keeps in memory only.
+    An empty fetch reports no systems, so the old ones stand."""
+    assert isinstance(result, (NoOp, Published, Planned))
+    old = entries.get(rs.name)
+    return SourceEntry(
+        connector=rs.connector_name,
+        digest=instance_key(rs.config),
+        systems=sorted(result.systems) or (old.systems if old else []),
+        last_published=(
+            _now()
+            if isinstance(result, Published)
+            else (old.last_published if old else None)
+        ),
+    )
 
 
 def cmd_run(project: Project, names: list[str]) -> int:
@@ -393,17 +435,16 @@ def _plan_sources(project: Project, names: list[str]) -> int:
     if isinstance(loaded, int):
         return loaded
     sources, entries = loaded
-    # Systems claimed earlier in this invocation, in memory only: plan never
-    # writes sources.json.
-    claimed: dict[str, list[str]] = {}
+    # The records run would have written by each source's turn, in memory
+    # only: plan never writes sources.json. Replacing an earlier source's
+    # record (not just adding to it) is what lets a system it gave up go to a
+    # later source, as it does in run.
+    planned = dict(entries)
     width = max(len(s.name) for s in sources)
     code = 0
     for rs in sources:
         prefix = f"{rs.name:<{width}}  "
-        owners = _owners(project, entries, rs.name)
-        for other, systems in claimed.items():
-            for system in systems:
-                owners.setdefault(system, other)
+        owners = _owners(project, planned, rs.name)
         if rs.publisher_problems:
             print(
                 f"{prefix}note: open request unknown "
@@ -435,13 +476,13 @@ def _plan_sources(project: Project, names: list[str]) -> int:
         elif isinstance(result, Planned):
             lines = _planned_lines(result)
         else:
-            lines = outcome.lines
+            lines = outcome.lines + _hint(result)
             if outcome.code != 0:
                 code = 1
         for line in lines:
             print(f"{prefix}{line}")
         if isinstance(result, (NoOp, Planned)):
-            claimed[rs.name] = sorted(result.systems)
+            planned[rs.name] = _record(rs, planned, result)
     return code
 
 
@@ -545,24 +586,14 @@ def _run_sources(project: Project, names: list[str]) -> int:
             ),
             rs.connector_name,
         )
-        for line in outcome.lines:
+        result = outcome.result
+        for line in outcome.lines + _hint(result):
             print(f"{prefix}{line}")
         if outcome.code != 0:
             code = 1
 
-        result = outcome.result
         if isinstance(result, (NoOp, Published)):
-            systems = sorted(result.systems) or (old.systems if old else [])
-            entries[rs.name] = SourceEntry(
-                connector=rs.connector_name,
-                digest=digest,
-                systems=systems,
-                last_published=(
-                    _now()
-                    if isinstance(result, Published)
-                    else (old.last_published if old else None)
-                ),
-            )
+            entries[rs.name] = _record(rs, entries, result)
             write_sources(project.state(), entries)
     return code
 
