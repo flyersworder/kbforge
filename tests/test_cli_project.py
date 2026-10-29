@@ -824,3 +824,64 @@ def test_project_redo_needs_a_usable_publisher(at, monkeypatch, capsys):
     [line] = _lines(capsys)
     assert line.startswith("docs: "), line
     assert "env var GITHUB_TOKEN is not set" in line
+
+
+INIT_LINES = [
+    "wrote kbforge.yaml",
+    "next: kbforge plan",
+    "keep .kbforge/ between runs: it holds the mirror that makes re-runs free",
+]
+
+
+def test_init_writes_a_project_that_plans_and_runs(at, capsys):
+    _docs(at, "docs", "a")
+    assert main(["init"]) == 0
+    assert _lines(capsys) == INIT_LINES
+    assert main(["plan"]) == 0
+    assert "docs    + local_files:a.md  added" in _lines(capsys)
+    assert main(["run"]) == 0
+    assert _lines(capsys)[0].startswith("docs  Published:")
+
+
+def test_init_takes_the_docs_path_verbatim_and_a_project_target(at, capsys):
+    (at / "sub").mkdir()
+    assert (
+        main(["init", "../kb/handbook", "--project", str(at / "sub" / "p.yaml")]) == 0
+    )
+    written = yaml.safe_load((at / "sub" / "p.yaml").read_text("utf-8"))
+    assert written["sources"]["docs"]["config"] == {"path": "../kb/handbook"}
+
+
+def test_init_never_overwrites(at, capsys):
+    (at / "kbforge.yaml").write_text("mine: true\n", "utf-8")
+    assert main(["init"]) == 2
+    assert _lines(capsys) == ["kbforge.yaml already exists; not overwritten"]
+    assert (at / "kbforge.yaml").read_text("utf-8") == "mine: true\n"
+
+
+def test_init_template_uncommented_blocks_validate(at, capsys):
+    """Uncomment exactly the example blocks (a `# synthesizer:` / `# publisher:`
+    line and the `#   ` lines under it) in place of the live defaults."""
+    from kbforge.project_cli import INIT_TEMPLATE
+
+    out, block = [], False
+    for line in INIT_TEMPLATE.format(docs_path="./docs").splitlines():
+        if line.startswith(("synthesizer:", "publisher:")):
+            continue  # the live default the example replaces
+        if line in ("# synthesizer:", "# publisher:") or (
+            block and line.startswith("#   ")
+        ):
+            block = True
+            out.append(line[2:])
+        else:
+            block = False
+            out.append(line)
+    (at / "kbforge.yaml").write_text("\n".join(out), "utf-8")
+    project = load_project(at / "kbforge.yaml")
+    assert project.synthesizer.name == "llm"
+    assert (project.synthesizer.model_extra or {}).get("model")
+    assert project.publisher.name == "github"
+    assert project.publisher.model_extra == {
+        "repo": "acme/knowledge-base",
+        "token_env": "GITHUB_TOKEN",
+    }

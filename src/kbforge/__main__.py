@@ -31,7 +31,14 @@ from kbforge.links import links_problems, load_links
 from kbforge.lock import mirror_lock
 from kbforge.pipeline import redo, run
 from kbforge.project import DEFAULT_FILE, ProjectError, load_project
-from kbforge.project_cli import cmd_plan, cmd_redo, cmd_reset, cmd_run, cmd_status
+from kbforge.project_cli import (
+    cmd_init,
+    cmd_plan,
+    cmd_redo,
+    cmd_reset,
+    cmd_run,
+    cmd_status,
+)
 from kbforge.registry import build_registry
 
 
@@ -246,11 +253,18 @@ def main(argv: list[str] | None = None) -> int:
     )
     rs.add_argument("--yes", action="store_true", help="skip the confirmation")
     _project_arg(rs)
-    for cmd, summary in (
-        ("status", "local state and open review requests; no fetch"),
-        ("init", "write a kbforge.yaml"),
-    ):
-        _project_arg(sub.add_parser(cmd, help=summary))
+    _project_arg(
+        sub.add_parser("status", help="local state and open review requests; no fetch")
+    )
+    i = sub.add_parser("init", help="write a starter kbforge.yaml")
+    i.add_argument(
+        "docs",
+        nargs="?",
+        default="./docs",
+        metavar="PATH",
+        help="the documents directory (default: ./docs)",
+    )
+    _project_arg(i)
     args = parser.parse_args(argv)
 
     if args.cmd == "list":
@@ -296,6 +310,8 @@ def _project_mode(args: argparse.Namespace) -> int:
                 "in kbforge.yaml"
             )
         return 2
+    if args.cmd == "init":
+        return cmd_init(Path(args.project or DEFAULT_FILE), args.docs)
     if args.cmd not in ("run", "plan", "status", "redo", "reset"):
         print(f"kbforge {args.cmd} over a project file is not built yet")
         return 2

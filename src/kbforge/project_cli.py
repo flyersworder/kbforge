@@ -49,7 +49,7 @@ from kbforge.pipeline import (
     redo,
     run,
 )
-from kbforge.project import Component, Project, ProjectError
+from kbforge.project import DEFAULT_FILE, Component, Project, ProjectError
 from kbforge.publishers._http import PublishError
 from kbforge.registry import build_registry
 from kbforge.reset import (
@@ -738,4 +738,59 @@ def _reset(project: Project, name: str, *, yes: bool) -> int:
         f"{name}: removed {len(rp.doc_ids)} mirror document(s) and "
         f"{len(rp.state_files)} state file(s)"
     )
+    return 0
+
+
+# `kbforge init`. `{docs_path}` is the only placeholder; literal braces are
+# doubled. The test finds the examples as a `# synthesizer:` / `# publisher:`
+# line plus the `#   ` lines under it, so keep that shape.
+INIT_TEMPLATE = """\
+# kbforge.yaml: one knowledge base. `kbforge plan` shows what a run would do.
+# Relative paths below are relative to this file.
+
+# Offline defaults: no model, no forge, no credentials.
+synthesizer: {{ name: stub }}
+publisher: {{ name: dry-run }}
+
+# To write with a model (set OPENROUTER_API_KEY, or add `api_base:` for a gateway):
+# synthesizer:
+#   name: llm
+#   model: deepseek/deepseek-v4-flash
+
+# To open review requests on GitHub (kbforge never merges them):
+# publisher:
+#   name: github
+#   repo: acme/knowledge-base
+#   token_env: GITHUB_TOKEN
+
+# Sources run in this order, so list a source others ground on first.
+# Only one local_files source works per project: point it at a common parent.
+sources:
+  docs:
+    connector: local_files
+    config:
+      path: {docs_path}
+"""
+
+
+def cmd_init(target: Path, docs_path: str) -> int:
+    """Write the starter project to `target`; never overwrite one."""
+    scalar = yaml.dump(docs_path, width=10**6).strip().removesuffix("...").strip()
+    try:
+        with target.open("x", encoding="utf-8") as f:
+            f.write(INIT_TEMPLATE.format(docs_path=scalar))
+    except FileExistsError:
+        print(f"{target.name} already exists; not overwritten")
+        return 2
+    except OSError as exc:
+        print(f"{target}: {exc}")
+        return 2
+    flag = (
+        ""
+        if target.name == DEFAULT_FILE and target.parent == Path()
+        else f" --project {target}"
+    )
+    print(f"wrote {target.name}")
+    print(f"next: kbforge plan{flag}")
+    print("keep .kbforge/ between runs: it holds the mirror that makes re-runs free")
     return 0
