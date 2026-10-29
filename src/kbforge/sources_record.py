@@ -2,8 +2,8 @@
 
 The connector name and slot digest a source last ran with (so `reset` still
 works for a name since removed from the file, and a config change is no longer
-silent), the systems its last run fetched (ownership, §5.3 of the project-file
-design), and when it last published. Written only by project mode; `Cursor` and
+silent), the systems its last run fetched (ownership, architecture.md
+§7.5), and when it last published. Written only by project mode; `Cursor` and
 `ChunkRecord` keep their shapes, so a flag-mode kbforge still reads the state."""
 
 from __future__ import annotations

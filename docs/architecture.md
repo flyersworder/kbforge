@@ -53,6 +53,8 @@ kbforge (core, PyPI)
 │   ├── validate.py        # strict producer-side OKF checks + the §4.4 laws
 │   ├── connectors/        # local_files, git_commits (credential-free references)
 │   ├── publishers/        # dry-run, github, gitlab
+│   ├── project.py         # kbforge.yaml, and project_cli.py its commands (§7.5)
+│   ├── lock.py            # one run at a time per mirror (§7.5)
 │   └── __main__.py        # the CLI
 │
 kbforge-mcp          (packages/kbforge-mcp/ — any MCP server as a source, §4.1;
@@ -813,17 +815,18 @@ distribution is the whole integration step.
 Dispatch is **not** a fan-out. The CLI resolves a single connector by name and
 `run` drives that one alone (§7), so `fetch` on Confluence never reaches
 ServiceNow — no `subset_hook_caller` binding is needed, because no hook is ever
-broadcast across connectors in the first place. Multi-source assembly is a
-deployment's business: one run per system of record, each with its own cursor
-and sync branch. That is what keeps the no-op rule decidable from one run's
-inputs.
+broadcast across connectors in the first place. Multi-source assembly is one
+run per system of record, each with its own cursor and sync branch; a project
+file (§7.5) is a loop of such runs, not a fan-out. That is what keeps the no-op
+rule decidable from one run's inputs.
 
 The **mirror is shared** across those runs, and cross-source grounding (§7.1)
 *requires* that it is: drift is derived by reading the mirror whole, so a run
 can only see another system's current hash if both write into the same
 `--mirror`. Concretely, the supported layout is one `--mirror` for the whole
 deployment, one `--state` directory, and a separate sync branch per system,
-which the publisher derives from `branch_hint`.
+which the publisher derives from `branch_hint`. A project file has exactly that
+layout under its `state_dir`, and no way to name another mirror (§7.5).
 
 Cursor slots are keyed by connector name **and a digest of the connector's
 config**, so a shared state directory cannot collide even between two instances
@@ -964,7 +967,8 @@ deployment's business (run kbforge once per system of record, each with its own
 cursor and sync branch, over one **shared** mirror — see §5.4 for the layout,
 and §7.1 for why grounding requires the sharing) rather than the core's. That
 keeps the no-op rule and the branch-per-system model decidable from one run's
-inputs.
+inputs. The project layer (§7.5) declares those runs in one file and makes one
+call to `run()` per source; it does not change what one call does.
 Cross-source grounding (§7.1) does not weaken this: a run still fetches exactly
 one system and publishes exactly one system's concepts. Grounding only lets
 synthesis *cite* documents another run already put in the mirror — it never
@@ -1347,7 +1351,9 @@ request is open. `<state>/chunk-<connector>-<digest>.json` records the last
 chunk, merged with every earlier run published into the same still-open
 request, and `kbforge redo` restores the mirror files and cursor it recorded,
 so a closed request can be re-proposed. Redo must run before the next `run`:
-a run after closing proceeds to the next chunk, and closing alone discards. Rationale:
+a run after closing proceeds to the next chunk, and closing alone discards. An
+unchunked run that publishes deletes the instance's chunk record, so a later
+`redo` can never roll back to a record left over from chunked days. Rationale:
 [`design/2026-09-19-chunked-review-design.md`](design/2026-09-19-chunked-review-design.md).
 
 ### 7.3 The describe synthesizer
@@ -1449,9 +1455,10 @@ document not in the mirror is not an error. Its system may not have synced
 yet, it may be in this fetch but deferred to a later chunk, or it may have been
 deleted, so the run drops the link with a review note that names all three
 (`<path>: link to <id> (links.yaml) was dropped: its target is not in the
-bundle …`), and the link appears once the target does. Every system's run that shares a mirror must
-pass the same `--links`: a run without it strips that system's editorial links
-on its next run, as a `links.yaml` edit would.
+bundle …`), and the link appears once the target does. A project file passes
+every source the same `links` (§7.5). In flag mode, a run without `--links`
+strips its system's editorial links, as a `links.yaml` edit would, so every
+run sharing a mirror must pass the same file.
 
 **Resolution is by `doc_id`**, over `by_id` (the whole mirror overlaid with
 this run, tombstones removed), as grounding resolves. A concept's declared
@@ -1556,6 +1563,122 @@ in order. kbforge still never merges.
 - Materialized rule links (#41's original `rules:`): only if consumer-side
   derivation proves insufficient, e.g. for readers that do not run okfquery.
 
+### 7.5 The project layer
+
+`kbforge.yaml` declares one knowledge base: its sources (each a connector, its
+config, and optional `chunking`, `synthesizer` and `publisher` overrides), the
+default synthesizer and publisher, `links`, `grounding` and `state_dir`.
+`kbforge run`, `plan`, `redo`, `status` and `reset` without `--connector` read
+it (`project.py`, `project_cli.py`). Project mode is a loop over §7's `run()`,
+not a second pipeline: `resolve` turns each source into exactly the arguments
+flag mode builds from its flags, and the sources run in file order, one
+`run()` each. One connector per run still holds. Every model is
+`extra="forbid"`, so there is no key that reorders a stage, makes the no-op
+rule conditional or merges, and a typo is an error rather than a key that does
+nothing.
+
+What the layer adds is structure for the rules a deployment of several
+`kbforge run` invocations otherwise has to remember. There is one mirror per
+project, so every source grounds on the same one (§5.4). `links` and
+`grounding` exist only at the top level, so every source's `run()` gets the
+same `LinksConfig` (§7.4). The whole project is validated before any source
+runs: every connector, publisher and synthesizer config, the links and the
+grounding, with every problem printed and exit 2, so a project never publishes
+source 1 and then finds source 3 misconfigured. After that a failing source
+does not stop the others, since each is its own review request on its own
+branch. The CLI `chdir`s to the file's directory, so relative paths mean
+"relative to `kbforge.yaml`", but connector config is never rewritten: it is
+hashed into the cursor and chunk slot names (`instance_key`), and a path made
+absolute would tie every slot to one checkout. That is also why moving a flag
+deployment onto a project file is free: the same config finds the same slots,
+and `plan` reporting `NoOp` for each source is the check.
+
+**The lock.** `run`, `plan`, `redo` and `reset` hold an exclusive,
+non-blocking OS advisory lock (`lock.py`) on `run.lock` beside the mirror
+directory, `<state_dir>/run.lock` in project mode, for the whole invocation and
+across all its sources. Flag-mode `run` and `redo` take the same lock: it
+belongs to the mirror, and a flag run racing a project run on one mirror is the
+case it exists for. A second process exits 3 with `Locked: another kbforge run
+holds <path>; nothing was read or written.` The lock sits beside the mirror,
+not in it, because the mirror code owns that directory. The OS releases it
+when the process dies, so there is no stale file to clean up, and the file is
+never deleted, since unlinking races a waiter that already opened it. `status`
+only reads and takes no lock. The lock removes overlap between kbforge runs,
+not torn writes: a crash mid-`commit` can still leave a torn mirror slot.
+
+kbforge owns no scheduler, so a webhook may trigger a run, and the lock is what
+makes that safe. A change notification is a hint that a run may be worthwhile,
+never input to one: the run still fetches and diffs, so a wrong or duplicated
+notification costs one fetch and a `NoOp`. Acting on its payload ("the webhook
+says X was deleted") would derive state from a view thinner than a partial
+fetch, which §4.2 forbids. The periodic sweep stays even then, because
+providers drop webhooks and not every source can notify (a tool-based MCP
+server has no change channel), and "no events" looks the same as "no
+changes". Debounce and retry are the receiver's: the lock turns a stampede into
+exit-3 refusals, not a queue, and the right window depends on the source.
+
+**Ownership.** `local_files` and `git_commits` hard-code their `system`, so two
+such sources would share one doc_id namespace and one sync branch, and `reset`,
+which selects mirror documents by system, would remove both. `run()` takes
+`foreign_systems` and `owners`, checked right after the fetch contract and
+before the diff and both no-op gates: a fetched document whose `anchor.system`
+is foreign aborts with `[source-ownership]`, committing nothing and saving no
+cursor. Project mode passes the systems `sources.json` records for every other
+source still in the file, plus those an earlier source fetched in the same
+invocation. A name no longer in the file owns nothing, because a renamed
+source keeps its config, and so its cursor, and must not be blocked by its
+old name. Flag mode passes nothing and is unchanged.
+
+**`sources.json`.** `<state_dir>/state/sources.json`, written atomically and
+only by project mode, after a source's `NoOp` or `Published`, records per
+source name the connector and slot digest it last ran with, the systems its
+last run fetched and when it last published. Ownership reads the systems. `run`
+compares the digest to print `note: config changed since the last run;
+starting from a fresh cursor`, which is today's behavior made visible.
+`status` reads "last published" here rather than from the cursor's mtime,
+since a chunked source's cursor is held until the final chunk. `reset` uses the
+connector and digest to find the slots of a name already removed from the file.
+`Cursor` and `ChunkRecord` keep their shapes: both are `extra="forbid"`, so a
+new field would make a newer state directory unreadable to an older kbforge.
+
+**`plan`.** `pipeline.plan()` is `run()`'s own body (`_run`) stopped after the
+last pre-synthesis gate, so the two verdicts come from one function: the chunk
+`Waiting` checks, fetch, stability, the fetch contract, ownership, the diff,
+grounding and link drift, chunk admission, widening and the scope check. It
+returns `Planned`, `NoOp`, `Waiting` or `Aborted` and writes nothing (no
+mirror slot, cursor, chunk record, sidecar or `sources.json`; only the lock file
+may be created). It needs only the sources' credentials: whether a synthesizer
+grounds is a class attribute, read without constructing one, so no model
+credential or `kbforge[llm]` is needed; a publisher whose config is incomplete
+(say, its token unset) skips the open-request checks and `plan` says so instead
+of failing. A §4.4 law needs synthesized output, so `plan` cannot predict that
+abort and says `(validation runs at publish)`. It costs one fetch per source,
+which is why `status` reads only local state and the forge's open requests.
+
+**`reset NAME`** forgets one source: its cursor and chunk slots, the mirror
+documents of its systems with their `_grounding/`, `_links/`, `_described/` and
+`_first_seen/` entries, and its `sources.json` entry. It never contacts the
+forge. Its systems come from `sources.json`, else from the cursor's stamped
+`systems` and the chunk record's admitted ids; if neither knows, the slots go
+and the mirror is left as is. It must never remove what another source owns.
+Stale names own nothing, as above. A source still in the file owns the systems
+its entry records and every slot it resolves to now or last ran with, and a
+slot it takes protects the systems recorded for that slot (the cursor's stamped
+`systems`, the chunk record's admitted ids, any entry naming the slot) even
+before that source has run: a renamed source has no entry yet, and wiping its
+documents would leave the cursor it inherited with no mirror behind it. A
+deletion whose request was closed unmerged is beyond `reset`: it is gone from
+the mirror and the source alike.
+
+**Deferred**:
+
+- Atomic mirror writes (`commit` writes slots in place).
+- Keying slots by `system` rather than a config digest, so editing a source's
+  config keeps its cursor. The digest is what makes migration free today.
+- Auto-filling a connector's `system` from the source name.
+- A `kbforge watch` command or a trigger plugin family: a receiver is a shell
+  script and a queue, with no kbforge contract to satisfy.
+
 ---
 
 ## 8. Connection to the agent-contracts family
@@ -1639,7 +1762,9 @@ reference connectors, three publishers, the stub and LLM synthesizers, and the
 since 0.1.0, and `PublisherSpec` has grown twice, `kbforge_validate_publish_config`
 in 0.3.0 and the optional `kbforge_open_request` for chunked review (§7.2).
 `examples/github-issues-connector/` is a complete worked credentialed connector
-proving the plugin seam end to end.
+proving the plugin seam end to end. The project layer and the per-mirror run
+lock (§7.5) are built: a deployment is one `kbforge.yaml`, and two runs can no
+longer interleave over one mirror.
 
 **Next, in order:**
 
@@ -1653,6 +1778,7 @@ proving the plugin seam end to end.
 3. **`PipelineHooks`** (§5.3), if a deployment actually needs the additive
    validator or observer seam. Nothing has asked for it yet.
 
-Open items, unchanged: attachment/binary handling in the mirror (object store vs
-git), a `SynthesizerSpec` decision (keep closed vs open cautiously), and async
-fetch (likely `anyio` — cheap early, painful to retrofit).
+Open items: attachment/binary handling in the mirror (object store vs git), a
+`SynthesizerSpec` decision (keep closed vs open cautiously), async fetch (likely
+`anyio` — cheap early, painful to retrofit), and atomic mirror writes — the
+lock removes overlap, but a crash mid-`commit` can still tear a slot.

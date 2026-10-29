@@ -1,10 +1,10 @@
-"""`kbforge reset SOURCE`: forget one source's local state (project-file design
-§6.5), so the next run proposes everything for it as a first run would.
+"""`kbforge reset SOURCE`: forget one source's local state (architecture.md
+§7.5), so the next run proposes everything for it as a first run would.
 
 Destructive, so exact: the source's own cursor and chunk slots (by connector
 and digest, never the legacy shared `cursor-<connector>.json` another instance
 may still read through), and the mirror documents whose `anchor.system` is one
-of its systems. Under §5.3 a system has one owner, so that never reaches
+of its systems. A system has one owner (§7.5), so that never reaches
 another source's documents; with no known systems the mirror is not touched."""
 
 from __future__ import annotations

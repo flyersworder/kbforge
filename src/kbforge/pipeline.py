@@ -354,7 +354,7 @@ def plan(
     check_open_requests: bool = True,
 ) -> NoOp | Aborted | Waiting | Planned:
     """What `run()` would do now: `run()`'s own body, stopped before synthesis
-    (project-file design §6.3). It fetches, but synthesizes, validates,
+    (architecture.md §7.5). It fetches, but synthesizes, validates,
     publishes and writes nothing, so it needs no model. `grounds` is the
     synthesizer's class attribute, read without constructing one.
     `check_open_requests=False` skips both chunk `Waiting` checks, for a caller

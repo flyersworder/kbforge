@@ -1,5 +1,5 @@
-"""`plan()`: `run()`'s own body, stopped before synthesis (project-file design
-§6.3). Helpers are local: tests/ is not a package."""
+"""`plan()`: `run()`'s own body, stopped before synthesis (architecture.md
+§7.5). Helpers are local: tests/ is not a package."""
 
 from datetime import UTC, datetime
 from pathlib import Path

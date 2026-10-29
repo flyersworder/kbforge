@@ -1,4 +1,4 @@
-"""§5.3 of the project-file design: a system belongs to exactly one source."""
+"""architecture.md §7.5: a system belongs to exactly one source."""
 
 from pathlib import Path
 

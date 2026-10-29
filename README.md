@@ -10,194 +10,151 @@
 
 **Agent-first knowledge bases, forged from your systems of record.**
 
-The [Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
-(OKF) v0.2 standardizes the *artifact at rest* — markdown concept files, frontmatter,
-`index.md`, `log.md`. It says nothing about how those bundles get **produced**: how you
-pull from a wiki or a CMDB, how you tell a real change from an export timestamp jittering,
-how a claim stays traceable to its source, and how an update reaches `main` without a human
-losing an afternoon to review.
-
-`kbforge` is the missing half — the production protocol.
-
-| Layer | Standardized by |
-|---|---|
-| Artifact format | OKF v0.2 |
-| **Production protocol** — connectors, canonicalization, diff, provenance, publish | **kbforge** |
-| Serving protocol | MCP — or any context database that ingests the bundle (see [`packages/okfquery`](packages/okfquery) for a DuckDB reader) |
-
-"Agent-first" is a *checkable* claim, not a downstream hope. kbforge stays a producer —
-the agent connects over MCP, which kbforge doesn't own — but every publish is gated on
-four **agent-facing artifact laws** (facet well-formedness, link resolvability, anchor
-presence, freshness legibility), plus a projection↔files coherence check so nothing
-ships unvalidated. That gate is what puts the frontmatter, links, and provenance an
-agent's serving layer needs into the artifact. What each law enforces at full versus
-reduced strength (and the paths to full strength) is spelled out honestly in
-[architecture.md §4.4](docs/architecture.md#44-agent-facing-artifact-laws-the-emit-side).
-
-## Status
-
-**Beta.** The full pipeline runs end to end, and every seam that can only be
-checked against a real service has a live suite (`--run-live`) rather than a mock.
-
-- **Sources** — `local_files` and `git_commits` built in, no credentials. Any MCP
-  server with a select tool and a read-by-id tool becomes a source through
-  configuration alone via [`kbforge-mcp`](packages/kbforge-mcp), live-tested
-  against AWS Documentation and GitHub. Any database SQLAlchemy can reach
-  becomes a source through configuration alone via
-  [`kbforge-sql`](packages/kbforge-sql), one scoped query per source.
-  Third-party connectors are discovered through an entry point with no change
-  to kbforge.
-- **Core** — canonicalization under a stability law, a replay-safe mirror and diff,
-  change detection, the no-op rule, incremental sync via a real cursor, and
-  cross-source grounding: one owning document per concept, cited alongside
-  grounding documents from other systems, and editorial links across systems
-  (`--links`).
-- **Gate** — the §4.4 emit-side laws plus a projection↔files coherence check, so
-  nothing ships unvalidated.
-- **Synthesis** — a deterministic stub (default, no LLM), an opt-in grounded LLM
-  synthesizer (`--synthesizer llm`, via the `kbforge[llm]` extra), or
-  `--synthesizer describe`: the stub's verbatim body with a model-written
-  one-sentence description and tags from a vocabulary.
-- **Publishers** — `dry-run` built in; GitHub and GitLab opt-in via `--publisher`
-  with the token from an env var. kbforge opens review requests and never merges.
-- **Reading a bundle back** — [`kbforge-okfquery`](packages/okfquery) loads a
-  published bundle into DuckDB.
-
-Still 0.x, and the API can still move: `docs/design/` holds specs for work that is
-designed but unbuilt, and sections of [`docs/architecture.md`](docs/architecture.md)
-headed **not built** are specification rather than shipped code. The largest known
-gap is a first-party connector for a specific system of record — the *capability*
-exists through `kbforge-mcp`, but nothing ships preconfigured for Confluence,
-ServiceNow, or their kin.
-
-## Companion distributions
-
-This repo is a uv workspace and ships four distributions, versioned independently.
-No companion is required to use kbforge, and none is installed with it.
-
-| Distribution | Import | What it does |
-|---|---|---|
-| [`kbforge`](https://pypi.org/project/kbforge/) | `kbforge` | the production protocol — this README |
-| [`kbforge-mcp`](https://pypi.org/project/kbforge-mcp/) ([src](packages/kbforge-mcp)) | `kbforge_mcp` | makes any MCP server with a select tool and a read-by-id tool a kbforge **source**, through configuration alone |
-| [`kbforge-sql`](https://pypi.org/project/kbforge-sql/) ([src](packages/kbforge-sql)) | `kbforge_sql` | makes any database SQLAlchemy can reach a kbforge **source**, one scoped query per source |
-| [`kbforge-okfquery`](https://pypi.org/project/kbforge-okfquery/) ([src](packages/okfquery)) | `okfquery` | reads a published bundle **back**: `okfquery query "SELECT ..."` over concepts, sources, links, and parse problems |
-
-They sit on opposite sides of the pipeline. `kbforge-mcp` is an ingest-side plugin
-that registers a connector entry point; `okfquery` registers nothing and imports no
-kbforge code at runtime, so it reads any OKF v0.2 bundle, kbforge-produced or not.
+kbforge reads your systems of record (a folder of markdown, a git history, a
+database view, any MCP server) and proposes an
+[Open Knowledge Format](https://github.com/GoogleCloudPlatform/open-knowledge-format/blob/main/SPEC.md)
+(OKF) v0.2 bundle as a pull request: one markdown concept per source document,
+carrying the frontmatter, links and provenance an agent needs to cite it. You
+review and merge; kbforge never does. A re-run when nothing changed costs one
+fetch: no model call, no pull request.
 
 ## Quickstart
 
-```bash
-pip install kbforge
-kbforge list                       # show available connectors
+`pip install kbforge`; then, beside a `docs/` of markdown (here two files):
 
-kbforge run \
-  --connector local_files \
-  --set path=./docs \
-  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```console
+$ kbforge init
+wrote kbforge.yaml
+next: kbforge plan
+keep .kbforge/ between runs: it holds the mirror that makes re-runs free
+$ kbforge plan
+docs  2 added, 0 modified, 0 removed, 0 drifted, 0 rebuilt → would propose 2 concepts (validation runs at publish)
+docs    + local_files:onboarding.md  added
+docs    + local_files:refunds.md  added
+$ kbforge run
+docs  Published: …/.kbforge/out/sync-local_files
+$ kbforge run
+docs  NoOp: no change detected; no MR opened.
+$ kbforge status
+docs  last published 2026-10-29 16:32 UTC · no open request
 ```
 
-Re-running with no source change is a no-op — no merge request is opened. Point
-`--connector git_commits --set repo=.` at a git repository to sync commit history
-incrementally instead. Config values are YAML-typed, so `--set max_commits=50` is an
-integer and `--set 'ignore_globs=[drafts]'` is a list.
+The starter file needs no credentials: `stub` copies each body verbatim, and
+`dry-run` writes the proposal (concepts plus `MR_BODY.md`, the review note)
+under `.kbforge/out/`. `plan` is `run` stopped before synthesis: it fetches and
+diffs, writes nothing, and needs only the sources' credentials.
 
-To synthesize real prose instead of the deterministic stub, install the LLM extra
-and select the synthesizer (config values are YAML-typed; the API key comes from an
-env var, never the CLI):
+| Command | Does |
+|---|---|
+| `kbforge init [PATH]` | writes a starter `kbforge.yaml` for the documents in `PATH` (default `./docs`); never overwrites one |
+| `kbforge plan [SOURCE...]` | what `run` would propose, and why; writes nothing, calls no model |
+| `kbforge run [SOURCE...]` | runs the sources (default: all) in file order |
+| `kbforge status` | per source: last publish, open review request, pending chunks |
+| `kbforge redo SOURCE` | rolls back the last chunk so the next run proposes it again ([Large first runs](#large-first-runs)) |
+| `kbforge reset NAME [--yes]` | forgets one source's local state; its next run proposes everything, as a first run would |
+| `kbforge list` | the installed connectors, synthesizers and publishers |
 
-```bash
-pip install "kbforge[llm]"
-export OPENROUTER_API_KEY=...        # or point --llm-set api_base=... at a gateway
-kbforge run --connector local_files --set path=./docs \
-  --synthesizer llm --llm-set model=deepseek/deepseek-v4-flash \
-  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+Each reads `./kbforge.yaml` or `--project PATH`. `run` exits 1 if any source
+failed (the others still run), 2 if the project is invalid (every problem is
+printed and nothing runs), 3 if another run holds the lock, and 0 otherwise.
+
+## The project file
+
+```yaml
+# kbforge.yaml: one knowledge base
+synthesizer:                        # default: stub (no model)
+  name: llm
+  model: deepseek/deepseek-v4-flash
+  instructions: |
+    Write for application managers. Prefer the product's own terms.
+
+publisher:                          # default: dry-run (a local directory)
+  name: github
+  repo: acme/ev-traction-kb
+  token_env: GITHUB_TOKEN
+
+links: links.yaml                   # a path, or the mapping inline
+grounding: grounding.yaml
+
+sources:                            # run in this order
+  products:
+    connector: sql                  # pip install kbforge-sql
+    config:
+      system: products
+      url_env: DENODO_URL
+      query: SELECT product_id, product_name, description FROM iv_product
+      id: [product_id]
+      title: product_name
+      text: description
+  handbook:
+    connector: local_files
+    config: { path: ./handbook }
+    chunking: { max_concepts: 40, group_by: family }
+    synthesizer: { name: describe, model: deepseek/deepseek-v4-flash }
 ```
 
-The synthesizer reaches models through a LiteLLM provider, so OpenRouter and a
-self-hosted LiteLLM gateway share one config path.
-`--llm-set 'instructions="..."'` appends deployment-specific guidance to the
-fixed prompt. Changing it alone re-synthesizes nothing; it reaches a concept the
-next time that concept is rebuilt. Quote the value: it is YAML, so unquoted text
-containing `: ` or ` #` would be read as a mapping or cut at a comment (both are
-rejected with exit 2).
+- **Paths are relative to the file.** State lives under `state_dir` (default
+  `.kbforge/`) and must persist between runs: in CI, a cache or a committed
+  directory. Secrets stay in env vars that `*_env` keys name, and an unknown
+  key is an error naming its YAML path.
+- **Per-source `synthesizer` and `publisher` replace** the top-level one whole.
+  `links` and `grounding` exist only at the top, so every source sees the same.
+- **Put a source others ground on first**, so their rebuilds land in the same
+  run rather than the next.
+- **A system belongs to one source.** `local_files` and `git_commits` each emit
+  one fixed system, so point one `local_files` source at a common parent; a
+  second aborts with `[source-ownership] ... system 'local_files' is already
+  owned by source 'docs'`.
+- **One run at a time per mirror.** `run`, `plan`, `redo` and `reset` hold
+  `run.lock`; a second exits 3: `Locked: another kbforge run holds
+  …/.kbforge/run.lock; nothing was read or written.`
+- **Editing a source's config starts it on a fresh cursor**, and `run` prints
+  a note saying so.
 
-For a stub concept that also carries a real description and tags — without
-rewriting its body — use `--synthesizer describe` instead:
-
-```bash
-kbforge run --connector local_files --set path=./docs \
-  --synthesizer describe --llm-set model=deepseek/deepseek-v4-flash \
-  --llm-set 'tags_vocabulary={sic: [SiC], 800v: ["800 V"]}' \
-  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
-```
-
-The body ships byte-for-byte; only `description` and `tags` are model-written,
-and the model's output is cached per document so an unchanged source makes no
-model call even when its concept is re-rendered.
+**Writing with a model** needs `pip install "kbforge[llm]"` and
+`OPENROUTER_API_KEY` (or `api_base:` for a LiteLLM gateway). `llm` writes the
+body; editing its `instructions` alone re-synthesizes nothing. `describe` keeps
+the body byte-for-byte and has the model write only `description` and `tags`
+(optionally from a `tags_vocabulary`), cached per document.
 
 ## Publishing to GitHub or GitLab
 
-The default publisher writes the proposal to a local directory. To open a real
-pull request or merge request instead, select a forge publisher and give it a
-repo. The token comes from an env var, never the CLI:
+Set `publisher` to `github` or `gitlab`. Both take `repo` (required), `base`
+(default: the repo's default branch), `base_path` (default: repo root),
+`branch` (default: `sync/<system>`), `title`, `api_base` (GitHub Enterprise or
+self-managed GitLab) and `token_env` (default `GITHUB_TOKEN` / `GITLAB_TOKEN`).
 
-```bash
-export GITHUB_TOKEN=...            # or GITLAB_TOKEN
-kbforge run --connector local_files --set path=./docs \
-  --publisher github --publish-set repo=acme/knowledge-base \
-  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
-```
+kbforge keeps **one long-lived sync branch and one open review request** per
+source system: a later run force-updates the branch and edits the open PR/MR
+rather than opening a second. Three consequences:
 
-Both publishers accept the same config: `repo` (required), `base` (default: the
-repo's default branch), `base_path` (a subdirectory, default: repo root),
-`branch` (default: `sync/<system>`), `title`, `api_base` (point it at GitHub
-Enterprise or a self-managed GitLab), and `token_env`.
-
-kbforge maintains **one long-lived sync branch and one open review request** per
-source system: a later run force-updates that branch and edits the existing
-PR/MR rather than opening a second one. Three consequences worth knowing:
-
-- Concepts deleted from the source are deleted from the target repo, provided the
-  connector emits an explicit tombstone. Absence never implies a deletion.
-- Manual commits on the sync branch are preserved **while its review request is
-  open** — a later run builds on the branch rather than resetting it. Once no
-  request is open, the next run rebuilds the branch from the default branch and
-  those commits are gone. A hand edit to a concept kbforge later regenerates is
-  overwritten by that regeneration either way.
+- A concept deleted from the source is deleted from the target repo, provided
+  the connector emits an explicit tombstone. Absence never implies a deletion.
+- Manual commits on the sync branch survive **while its request is open**. Once
+  none is open, the next run rebuilds the branch from the default branch and
+  they are gone; a hand edit to a regenerated concept is overwritten either way.
 - **Close a kbforge review request only by merging it.** The mirror advances on
-  every successful publish, so the concepts a request carries are never
-  re-proposed. Closing one unmerged discards its contents permanently: the
-  target repo simply never gets them, and a published-then-abandoned deletion
-  leaves the doc gone from the mirror, so no later run even sees it as a
-  removal. To undo an abandoned request, reset **both** the mirror and the
-  connector's cursor: delete the mirror directory and, in the state directory
-  (`--state`), the connector's `cursor-<connector-name>.json`. Deleting the
-  mirror alone does not work for an incremental connector — its cursor still
-  points past the abandoned content, so the next `kbforge_fetch` returns only
-  what changed since then, which can be little or nothing, and no re-proposal
-  happens at all. Only once both are gone does a re-run re-propose everything
-  from scratch.
+  every publish, so a request's concepts are never re-proposed: closing it
+  unmerged discards them. `kbforge reset SOURCE` undoes that, and the next run
+  proposes everything from the source again, except a deletion whose request
+  was closed unmerged: it is gone from the mirror *and* the source, so that
+  concept stays in the bundle until you remove it by hand.
 
-kbforge never merges. No publisher has a merge method.
+### Large first runs
 
-**Large first runs.** A cold start, a new source, or a bulk upstream edit can
-produce hundreds of concepts in one review request. `--chunking chunking.yaml`
-(`max_concepts: 40`, optional `group_by: <field>`) publishes one chunk at a
-time and waits for each request to be merged or closed before the next.
-`group_by` reads the connector's structured fields, so it can only name a
-field the connector keeps: `local_files`, for one, drops `type` (the OKF type
-comes from synthesis), and a field no document carries groups nothing. To
-redo a chunk after fixing the taxonomy or exemplars, close its request and run
-`kbforge redo` with the same `--connector`, `--set`, `--publisher`,
-`--mirror` and `--state`, before the next `kbforge run`: closing alone
-discards the chunk, and a run after closing moves on to the next one. See
-`docs/architecture.md` §7.2.
+A cold start or a bulk upstream edit can put hundreds of concepts in one
+review request. A source's `chunking: {max_concepts: 40, group_by: <field>}`
+publishes one chunk at a time and waits for each request to be merged or closed
+before the next. `group_by` can only name a structured field the connector
+keeps (`local_files` drops `type`, which comes from synthesis); a field no
+document carries groups nothing. To redo a chunk, close its request and run
+`kbforge redo SOURCE` before the next `kbforge run`: closing alone discards the
+chunk, and a run after closing moves on. See `docs/architecture.md` §7.2.
 
-**Links no source carries.** Two taxonomies with no join key, or a requirement
-that closes a gap on another slide: declare them in a reviewed `links.yaml` and
-pass `--links links.yaml`.
+### Links no source carries
+
+Two taxonomies with no join key, or a requirement that closes a gap on another
+slide: declare them in a reviewed `links.yaml`.
 
 ```yaml
 links:
@@ -208,16 +165,12 @@ links:
     - planning_deck:requirements/diagnostics   # one-way, no note
 ```
 
-Links resolve by `doc_id`, across systems too. They render in a `## Related`
-section at the end of each concept, which an OKF reader follows and which
-holds the note that says why the two relate; connector `relations` get the
-same section. Each system's run rebuilds only its own concepts, so a
-cross-system link lands on each side on that side's run. The review note names
-the other system, so its request can be merged first. Every system's run that
-shares a mirror must pass the same `--links`: a run without it strips that
-system's editorial links on its next run. For concepts that share tags or
-facets, use `okfquery related` rather than declaring links. See
-`docs/architecture.md` §7.4.
+Links resolve by `doc_id`, across systems too, and render in a `## Related`
+section (with the note saying why) that an OKF reader follows; connector
+`relations` get the same section. A cross-system link lands on each side on
+that side's run, and the review note names the other system so its request can
+be merged first. For concepts that merely share tags or facets, use `okfquery
+related` instead. See `docs/architecture.md` §7.4.
 
 ## Consuming a bundle
 
@@ -248,48 +201,95 @@ In a trial on a five-concept bundle, a small model given only that prompt read
 plainly that the refund procedure it was asked about was not in the bundle,
 which was true: that concept's review request had not merged.
 
-## Design stance
+## Why you can trust it
 
-The core ships **zero credentialed connectors and zero CI logic.** The two built-in
-connectors need no credentials and serve as references; real systems of record are
-plugins, discovered through the `kbforge.connectors` (and `kbforge.publishers`)
-entry-point group without editing kbforge — deployments are separate, private
-repositories. The interface is the product.
+- **No change, no proposal.** Sources are canonicalized and diffed against
+  the mirror, so a jittering export is no change at all: the run stops before
+  synthesis, with no tokens spent and no review request
+  ([below](#not-a-context-database)).
+- **Nothing ships unvalidated.** Every publish is gated on four agent-facing
+  artifact laws (facet well-formedness, link resolvability, anchor presence,
+  freshness legibility) and a projection↔files coherence check
+  ([§4.4](docs/architecture.md#44-agent-facing-artifact-laws-the-emit-side)).
+- **A human merges.** No publisher has a merge method.
+- **The order is fixed.** fetch → normalize → mirror → diff → scope →
+  synthesize → validate → publish is **not** pluggable, nor are the no-op and
+  never-merge rules: pluggable would mean optional. Plugins extend stages, and
+  the project file has no key that reaches them.
 
-```toml
-# in a third-party package's pyproject.toml — discovered automatically once installed
-[project.entry-points."kbforge.connectors"]
-myservice = "my_package:connector"
-```
+## Where kbforge fits
 
-A complete worked example — a credentialed GitHub Issues connector (~160 lines) with
-token auth, pagination, and a real incremental cursor — is in
+OKF standardizes the *artifact at rest*. It says nothing about how a bundle is
+**produced**: pulling from a wiki or a CMDB, telling a real change from an
+export's jitter, keeping a claim traceable to its source, and getting an update
+to `main` without a human losing an afternoon to review. kbforge is that half.
+
+| Layer | Standardized by |
+|---|---|
+| Artifact format | OKF v0.2 |
+| **Production protocol**: connectors, canonicalization, diff, provenance, publish | **kbforge** |
+| Serving protocol | MCP, or any context database that ingests the bundle (see [`packages/okfquery`](packages/okfquery) for a DuckDB reader) |
+
+**Status: beta**, still 0.x. Every seam only a real service can check has a
+live suite (`--run-live`), not a mock. The largest gap is a first-party
+connector for a specific system of record: `kbforge-mcp` gives the capability,
+but nothing ships preconfigured for Confluence, ServiceNow, or their kin.
+
+**Companion distributions**, versioned independently; none is required:
+
+| Distribution | Import | What it does |
+|---|---|---|
+| [`kbforge`](https://pypi.org/project/kbforge/) | `kbforge` | the production protocol: this README |
+| [`kbforge-mcp`](https://pypi.org/project/kbforge-mcp/) ([src](packages/kbforge-mcp)) | `kbforge_mcp` | makes any MCP server with a select tool and a read-by-id tool a kbforge **source**, through configuration alone |
+| [`kbforge-sql`](https://pypi.org/project/kbforge-sql/) ([src](packages/kbforge-sql)) | `kbforge_sql` | makes any database SQLAlchemy can reach a kbforge **source**, one scoped query per source |
+| [`kbforge-okfquery`](https://pypi.org/project/kbforge-okfquery/) ([src](packages/okfquery)) | `okfquery` | reads a published bundle **back**: `okfquery query "SELECT ..."` over concepts, sources, links, and parse problems |
+
+**Plugins, not credentials.** The core ships zero credentialed connectors and
+zero CI logic. Real systems of record are plugins, discovered through the
+`kbforge.connectors` (and `kbforge.publishers`) entry-point group; deployments
+are separate, private repositories. A credentialed GitHub Issues connector with
+a real incremental cursor is worked through in
 [`examples/github-issues-connector/`](examples/github-issues-connector/).
 
-The pipeline order — fetch → normalize → mirror → diff → scope → synthesize → validate →
-publish — is deliberately **not** pluggable, and neither are the no-op rule or the
-never-auto-merge rule. Those are the trust guarantees; making them pluggable would make
-them optional. Plugins extend stages. They cannot reorder or remove them.
+## Running one source without a project file
+
+`kbforge run --connector NAME` runs one source from flags, under the same
+mirror lock. `--set`, `--publish-set` and `--llm-set` take connector, publisher
+and synthesizer config as YAML-typed `KEY=VALUE` (`--set max_commits=50` is an
+integer), so quote text containing `: ` or ` #` (otherwise exit 2).
+
+```bash
+kbforge run --connector local_files --set path=./docs \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+
+kbforge run --connector git_commits --set repo=. \
+  --synthesizer llm --llm-set model=deepseek/deepseek-v4-flash \
+  --llm-set 'instructions="Write for application managers."' \
+  --publisher github --publish-set repo=acme/knowledge-base \
+  --mirror .kbforge/mirror --out .kbforge/out --state .kbforge/state
+```
+
+`--synthesizer`, `--chunking FILE`, `--links FILE` and `--grounding FILE`
+mirror the project file's keys. `kbforge redo` takes the run's `--connector`,
+`--set`, `--publisher`, `--mirror` and `--state`. `plan`, `status` and `reset`
+need a project file.
+
+**Moving to a project file.** Write one source per invocation with its
+connector config exactly as you pass it (`path: ./docs` is not `path: docs`:
+config is hashed into the cursor's name), and set `state_dir` to the directory
+holding your mirror and state as `mirror/` and `state/` (or move them there).
+Then `kbforge plan`: every source that was up to date reports `no change →
+NoOp`, which is the check that it found its own cursor.
 
 ## Documentation
 
-- [`docs/architecture.md`](docs/architecture.md) — package architecture, the Pluggy
-  hookspecs, the connector protocol and its canonicalization laws, the fixed pipeline, the
-  §4.4 emit-side laws, and the build sequence. Sections headed **not built** are
-  specification rather than shipped code.
-- [`docs/context/knowledge-base-design.md`](docs/context/knowledge-base-design.md) — the
-  system kbforge was extracted from: an OKF knowledge base for application managers served
-  over MCP, including the security model and a literature review.
-- [`docs/design/2026-07-19-agentic-ingest-design.md`](docs/design/2026-07-19-agentic-ingest-design.md)
-  — the roadmap for agentic fetch, the refresh model, and KB bootstrap.
-- [`docs/design/2026-07-18-datacontract-bridge-design.md`](docs/design/2026-07-18-datacontract-bridge-design.md)
-  — how kbforge bridges to `agentic-data-contracts` via the OKF bundle (future, cross-project).
-- [`docs/design/2026-08-08-okf-02-deferred-decisions.md`](docs/design/2026-08-08-okf-02-deferred-decisions.md)
-  — the OKF v0.2 families kbforge does not emit yet (`verified`, `status: deprecated`,
-  `stale_after`, footnote attribution) and why each is a decision, not a backlog item.
-- [`docs/design/2026-08-23-okfquery-design.md`](docs/design/2026-08-23-okfquery-design.md)
-  — why `okfquery` is a separate distribution rather than a `kbforge query` subcommand,
-  its schema, and the two lossy mirror joins a reader has to know about.
+- [`docs/architecture.md`](docs/architecture.md) — the spec: hookspecs, the
+  connector protocol and its laws, the fixed pipeline, the project layer, the
+  build sequence. Sections headed **not built** are specification.
+- [`docs/context/knowledge-base-design.md`](docs/context/knowledge-base-design.md)
+  — the system kbforge was extracted from, with its security model.
+- [`docs/design/`](docs/design/) — design notes: the agentic-ingest roadmap, the
+  data-contract bridge, the OKF v0.2 keys kbforge does not emit yet, and more.
 - [`CHANGELOG.md`](CHANGELOG.md) — release history.
 
 ## Related projects

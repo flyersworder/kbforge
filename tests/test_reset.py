@@ -1,4 +1,4 @@
-"""`kbforge reset SOURCE` (project-file design §6.5): forget one source's local
+"""`kbforge reset SOURCE` (architecture.md §7.5): forget one source's local
 state, and nothing of any other source's."""
 
 import builtins

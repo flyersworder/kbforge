@@ -283,7 +283,8 @@ re-proposes it.
 - **Referrer volume.** Arrival referrers do not count toward the cap, so a hub
   concept linked from hundreds of documents can make one chunk large. Ordering
   by link topology would reduce this; it is not needed to be correct.
-- **Concurrency.** Two runs over one mirror can interleave admission and
-  commit. That is #29's run lock, and chunking neither fixes nor worsens it.
+- **Concurrency.** Two runs over one mirror could interleave admission and
+  commit. The per-mirror run lock (#29, `architecture.md` §7.5) now refuses
+  the second run; chunking neither fixed nor worsened it.
 - **Per-system caps** and **a default `group_by`**: one global cap, no default
   key, until a deployment needs otherwise.

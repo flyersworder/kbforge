@@ -1,4 +1,4 @@
-"""Project mode: `kbforge run` over a `kbforge.yaml` (project-file design §6.2)."""
+"""Project mode: `kbforge run` over a `kbforge.yaml` (architecture.md §7.5)."""
 
 import json
 import os

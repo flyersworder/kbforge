@@ -1,9 +1,9 @@
 """Project mode: the commands that read a `kbforge.yaml`.
 
 Each source becomes exactly the arguments flag mode builds from its flags, so
-the pipeline sees nothing new (project-file design §6). What this layer adds is
+the pipeline sees nothing new (architecture.md §7.5). What this layer adds is
 the order (file order), the validation of the whole project before anything
-runs (§6.1), the lock held across every source, and `sources.json`."""
+runs, the lock held across every source, and `sources.json`."""
 
 from __future__ import annotations
 
@@ -84,7 +84,7 @@ class ResolvedSource:
     chunking: ChunkingConfig | None
     grounding_config: GroundingConfig
     links_config: LinksConfig | None
-    """Project-level, so every source shares the one object (§5)."""
+    """Project-level, so every source shares the one object (§7.5)."""
     publisher_problems: list[str] = field(default_factory=list)
     """Only under `for_plan`: the publisher's config problems, which `plan`
     reports as "open request unknown" instead of failing on (otherwise they
@@ -118,7 +118,7 @@ def resolve(
     for_plan: bool,
 ) -> list[ResolvedSource]:
     """The selected sources (all when `names` is empty), in file order, or
-    `ProjectError` carrying every problem found (§6.1). Relative paths in
+    `ProjectError` carrying every problem found. Relative paths in
     connector config are read against the cwd, so the caller has already
     `chdir`ed to `project.root`."""
     connectors = connectors_of(registry)
@@ -178,7 +178,7 @@ def resolve(
         publisher = publishers.get(pub_component.name)
         publish_config = _settings(pub_component)
         if pub_component.name == "dry-run":
-            # As flag mode wires dry-run to --out (spec §3).
+            # As flag mode wires dry-run to --out.
             publish_config.setdefault("out_dir", str(project.out()))
         pub_problems: list[str] = []
         if publisher is None:
@@ -303,12 +303,12 @@ def _owners(
 
 
 def cmd_run(project: Project, names: list[str]) -> int:
-    """§6.2: every selected source in file order, under one lock."""
+    """Every selected source in file order, under one lock."""
     return _locked(project, lambda: _run_sources(project, names))
 
 
 def cmd_plan(project: Project, names: list[str]) -> int:
-    """§6.3: what each selected source would propose. Writes nothing; takes
+    """What each selected source would propose. Writes nothing; takes
     the lock because it reads the mirror."""
     return _locked(project, lambda: _plan_sources(project, names))
 
@@ -470,7 +470,7 @@ def _run_sources(project: Project, names: list[str]) -> int:
 
 
 def cmd_status(project: Project) -> int:
-    """§6.4: per source, from local state plus one read-only forge call where
+    """Per source, from local state plus one read-only forge call where
     the publisher supports it. No lock and no fetch: it only reads."""
     previous = Path.cwd()
     os.chdir(project.root)  # resolving connectors validates config paths
@@ -581,7 +581,7 @@ def _chunk_parts(record: ChunkRecord | None, request: str | None) -> list[str]:
 
 
 def cmd_redo(project: Project, name: str) -> int:
-    """§6: today's `redo`, for one source of the file, under the lock."""
+    """Today's `redo`, for one source of the file, under the lock."""
     return _locked(project, lambda: _redo(project, name))
 
 
@@ -613,7 +613,7 @@ def _redo(project: Project, name: str) -> int:
 
 
 def cmd_reset(project: Project, name: str, *, yes: bool) -> int:
-    """§6.5: forget one source's local state. Works for a name still in the
+    """Forget one source's local state. Works for a name still in the
     file and for a stale `sources.json` entry (its connector and digest name
     the slots). Never contacts the forge; takes the lock."""
     return _locked(project, lambda: _reset(project, name, yes=yes))
